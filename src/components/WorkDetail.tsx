@@ -154,6 +154,7 @@ export function WorkDetail({
     isCodeReviewTask(state, task) ? "review" : "conversation",
   );
   const reviewing = isCodeReviewTask(state, task);
+  const displayedTab = tab === "review" && !reviewing ? "conversation" : tab;
   const workflow = workflowFor(state, task.projectId);
   const status = taskStatus(task, workflow);
   const [changeTarget, setChangeTarget] = useState<CodeReviewFinding>();
@@ -245,8 +246,9 @@ export function WorkDetail({
     setReferences([]);
   }, [task.id]);
   useEffect(() => {
-    if (isCodeReviewTask(state, task)) setTab("review");
-  }, [task.statusId]);
+    if (reviewing) setTab("review");
+    else setTab((current) => (current === "review" ? "conversation" : current));
+  }, [reviewing]);
   useEffect(() => {
     if (initialArtifact) {
       setArtifact(initialArtifact);
@@ -262,7 +264,7 @@ export function WorkDetail({
       followConversation.current = true;
       el.scrollTop = el.scrollHeight;
     }
-  }, [task.messages.length, task.messages.at(-1)?.text, task.id, tab]);
+  }, [task.messages.length, task.messages.at(-1)?.text, task.id, displayedTab]);
   const run = async () => {
     if (teamBlock) {
       notify(teamBlock);
@@ -430,12 +432,6 @@ export function WorkDetail({
     icon: typeof MessageSquare;
     count?: number;
   }> = [
-    {
-      id: "review",
-      label: "Code review",
-      icon: ShieldCheck,
-      count: task.codeReview?.findingCount,
-    },
     { id: "conversation", label: "Conversation", icon: MessageSquare },
     { id: "queue", label: "Queue", icon: ListChecks, count: pending.length },
     {
@@ -446,6 +442,16 @@ export function WorkDetail({
     },
     { id: "runbook", label: "Runbook", icon: ListChecks },
     { id: "changes", label: "Changes", icon: Code2 },
+    ...(reviewing
+      ? [
+          {
+            id: "review" as const,
+            label: "Code review",
+            icon: ShieldCheck,
+            count: task.codeReview?.findingCount,
+          },
+        ]
+      : []),
     {
       id: "artifacts",
       label: "Artifacts",
@@ -579,7 +585,7 @@ export function WorkDetail({
           {tabs.map((item) => (
             <button
               key={item.id}
-              className={tab === item.id ? "active" : ""}
+              className={displayedTab === item.id ? "active" : ""}
               onClick={() => {
                 if (item.id !== "artifacts") setArtifact(null);
                 setTab(item.id);
@@ -597,11 +603,11 @@ export function WorkDetail({
         </div>
         <div
           className={
-            "detail-body" + (tab === "review" ? " is-code-review" : "")
+            "detail-body" + (displayedTab === "review" ? " is-code-review" : "")
           }
         >
           <div className="detail-content">
-            {tab === "review" && (
+            {displayedTab === "review" && (
               <Suspense fallback={<Spinner />}>
                 <CodeReview
                   key={task.id}
@@ -617,7 +623,7 @@ export function WorkDetail({
                 />
               </Suspense>
             )}
-            {tab === "queue" && (
+            {displayedTab === "queue" && (
               <FollowupQueue
                 key={task.id}
                 task={task}
@@ -625,7 +631,7 @@ export function WorkDetail({
                 notify={notify}
               />
             )}
-            {tab === "comments" && (
+            {displayedTab === "comments" && (
               <StoryComments
                 key={task.id}
                 taskId={task.id}
@@ -640,7 +646,7 @@ export function WorkDetail({
                 }}
               />
             )}
-            {tab === "terminal" && (
+            {displayedTab === "terminal" && (
               <Suspense fallback={<Spinner />}>
                 <WorkerTerminal
                   task={task}
@@ -660,7 +666,7 @@ export function WorkDetail({
                 />
               </Suspense>
             )}
-            {tab === "conversation" && (
+            {displayedTab === "conversation" && (
               <>
                 {pending.length > 0 && (
                   <button
@@ -876,7 +882,7 @@ export function WorkDetail({
                 </div>
               </>
             )}
-            {tab === "runbook" && (
+            {displayedTab === "runbook" && (
               <div className="runbook-view">
                 <div className="runbook-intro">
                   <div className="eyebrow">
@@ -944,7 +950,7 @@ export function WorkDetail({
                 </div>
               </div>
             )}
-            {tab === "changes" && (
+            {displayedTab === "changes" && (
               <WorkerChanges
                 task={task}
                 focusTarget={changeTarget}
@@ -960,7 +966,7 @@ export function WorkDetail({
                 }}
               />
             )}
-            {tab === "file" && file && (
+            {displayedTab === "file" && file && (
               <ArtifactPreview
                 key={file.path}
                 file={file}
@@ -971,7 +977,7 @@ export function WorkDetail({
                 onBack={() => setTab("conversation")}
               />
             )}
-            {tab === "artifacts" &&
+            {displayedTab === "artifacts" &&
               (artifact ? (
                 <ArtifactPreview
                   key={artifact.id}
@@ -1005,7 +1011,7 @@ export function WorkDetail({
                   description="Reports, images and HTML files saved by the worker under .memcode/workers/<story-id>/artifacts/ will appear here."
                 />
               ))}
-            {tab === "browser" && (
+            {displayedTab === "browser" && (
               <WorkerBrowser
                 key={task.id}
                 task={task}
@@ -1167,7 +1173,7 @@ export function WorkDetail({
                   void act(() => window.memcode.updateTask(task.id, patch))
                 }
               />
-              {pendingInputs.length > 0 && tab !== "conversation" && (
+              {pendingInputs.length > 0 && displayedTab !== "conversation" && (
                 <button
                   className="worker-reply-link"
                   onClick={() => setTab("conversation")}
