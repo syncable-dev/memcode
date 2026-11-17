@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { projectStoryContribution } from "../runtime/code-review-projection";
+import {
+  projectStoryContribution,
+  projectStorySegments,
+} from "../runtime/code-review-projection";
 
 const original = [
   "// Shared file",
@@ -115,4 +118,77 @@ test("missing anchors, binary content, huge diffs and EOF context changes fail c
     ["first\nold\n", "first\nnew\n", "first\nnew\npeer\n"],
   ])
     assert.equal(projectStoryContribution(before, after, current).ok, false);
+});
+
+test("reverse-chronological segments preserve peer changes through fixes to the same own area", () => {
+  const first = own,
+    peer = first.replace("return 10", "return 20"),
+    fixed = peer.replace("result = 2", "result = 3");
+  const result = projectStorySegments(
+    [
+      { before: original, after: first },
+      { before: peer, after: fixed },
+    ],
+    fixed,
+  );
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.equal(result.baseline, original.replace("return 10", "return 20"));
+    assert.equal(result.hunks, 2);
+  }
+});
+
+test("segments can fix another own area while retaining a peer change between the own hunks", () => {
+  const before =
+      original +
+      "\n// Further separate section\nexport function last() {\n  return 100;\n}\n// EOF\n",
+    first = before.replace("result = 1", "result = 2"),
+    peer = first.replace("return 10", "return 20"),
+    fixed = peer.replace("return 100", "return 200");
+  const result = projectStorySegments(
+    [
+      { before, after: first },
+      { before: peer, after: fixed },
+    ],
+    fixed,
+  );
+  assert.equal(result.ok, true);
+  if (result.ok)
+    assert.equal(result.baseline, before.replace("return 10", "return 20"));
+});
+
+test("segments reject a peer overwrite, ambiguous old contribution and excessive journal length", () => {
+  const overwritten = own.replace("result = 2", "result = 8"),
+    fixed = overwritten.replace("result = 8", "result = 9");
+  assert.equal(
+    projectStorySegments(
+      [
+        { before: original, after: own },
+        { before: overwritten, after: fixed },
+      ],
+      fixed,
+    ).ok,
+    false,
+  );
+  const duplicate =
+      own +
+      "\nexport function first() {\n  const result = 2;\n  return result;\n}\n",
+    next = duplicate.replace("return 10", "return 20");
+  assert.equal(
+    projectStorySegments(
+      [
+        { before: original, after: own },
+        { before: duplicate, after: next },
+      ],
+      next,
+    ).ok,
+    false,
+  );
+  assert.equal(
+    projectStorySegments(
+      Array.from({ length: 17 }, () => ({ before: original, after: own })),
+      own,
+    ).ok,
+    false,
+  );
 });

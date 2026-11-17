@@ -90,6 +90,58 @@ export function projectStoryContribution(
   after: string,
   current: string,
 ): StoryProjection {
+  return projectContribution(before, after, current, Date.now() + 200);
+}
+
+/** Reverse only this story's validated reservation segments, newest first. */
+export function projectStorySegments(
+  segments: ReadonlyArray<{ before: string; after: string }>,
+  current: string,
+): StoryProjection {
+  if (!segments.length || segments.length > 16)
+    return {
+      ok: false,
+      reason: "The journal exceeds the bounded 16-segment projection.",
+    };
+  if (
+    segments.reduce(
+      (size, segment) => size + segment.before.length + segment.after.length,
+      0,
+    ) > 32_000_000
+  )
+    return {
+      ok: false,
+      reason: "The journal exceeds the bounded segment text size.",
+    };
+  const deadline = Date.now() + 500;
+  let baseline = current,
+    hunks = 0;
+  for (let index = segments.length - 1; index >= 0; index--) {
+    const segment = segments[index];
+    if (segment.before === segment.after) continue;
+    const projected = projectContribution(
+      segment.before,
+      segment.after,
+      baseline,
+      deadline,
+    );
+    if (!projected.ok)
+      return {
+        ok: false,
+        reason: `Own journal segment ${index + 1}: ${projected.reason}`,
+      };
+    baseline = projected.baseline;
+    hunks += projected.hunks;
+  }
+  return { ok: true, baseline, hunks };
+}
+
+function projectContribution(
+  before: string,
+  after: string,
+  current: string,
+  deadline: number,
+): StoryProjection {
   const rejected = (reason: string): StoryProjection => ({ ok: false, reason });
   if (
     [before, after, current].some(
@@ -101,9 +153,8 @@ export function projectStoryContribution(
     saved = lines(after);
   if (original.length > 50_000 || saved.length > 50_000)
     return rejected("The exact-context projection exceeds its line bounds.");
-  const deadline = Date.now() + 200;
   const parts = diffArrays(original, saved, {
-    timeout: 100,
+    timeout: Math.max(1, Math.min(100, deadline - Date.now())),
     maxEditLength: 4000,
   });
   if (!parts)
