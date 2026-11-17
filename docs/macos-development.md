@@ -1,6 +1,6 @@
 # Run MemCode from source on macOS
 
-This is the developer preview route. There is no signed macOS download in this checkout, and macOS execution has not yet been validated on a real Mac. The current acceptance evidence is from Windows.
+Use this route to test current `dev` changes on your Mac. If you already have the installed app and want to open your team's board, skip directly to [Join a team](#join-a-team).
 
 ## Install the prerequisites once
 
@@ -19,21 +19,21 @@ Finish the installer before building. See [Tauri's macOS prerequisites](https://
 Authenticate Git with the GitHub account that has access to the private [syncable-dev/memcode repository](https://github.com/syncable-dev/memcode), then run:
 
 ```bash
-git clone https://github.com/syncable-dev/memcode.git
+git clone --branch dev https://github.com/syncable-dev/memcode.git
 cd memcode
 npm ci
 npm run dev
 ```
 
-The first command installs the lockfile's dependencies. The second builds the renderer, local Node runtime and native Rust shell, then opens MemCode. The first native build downloads and compiles Rust dependencies, so it can take considerably longer than later starts. Keep that Terminal open while using development mode.
+`npm ci` installs the lockfile's dependencies. `npm run dev` starts the renderer, local runtime and native shell. The first native build downloads and compiles Rust dependencies. Keep that Terminal open while using development mode.
 
-For an existing clone, finish/stop any local workers, preserve your own source edits, and pull the current `main` branch before installing dependencies. The private repository's published revision is the source of truth; uncommitted changes on another developer's computer are not included in a pull.
+For an existing clean clone already on `dev`, use `git pull --ff-only origin dev`. If you have ongoing fixes on a different branch, commit or otherwise preserve them and integrate `origin/dev` into your working branch before rebuilding.
 
 UI edits hot-reload. Runtime/Rust edits require finishing or stopping active workers, closing MemCode and rerunning `npm run dev`. The current app does not detach and reattach running workers across a desktop restart.
 
 ## Connect Memtrace and a worker
 
-Install Memtrace separately, then use its existing account:
+In the installed app, open the project guide and choose **Connect Memtrace beta**. The installer includes the local engine. For a source build using a separately installed CLI, sign in to that CLI:
 
 ```bash
 npm install -g memtrace
@@ -44,23 +44,28 @@ Open a real local project in MemCode. It discovers `memtrace` on PATH and can st
 
 Install and sign in to at least one supported coding CLI using that provider's official instructions. Then approve its connection in **Workers**. The Cursor desktop editor alone is not a substitute for its Agent CLI. Provider credentials and model configuration stay on the Mac.
 
-You can inspect the board and use Team Sync without starting a coding worker. Team Sync preview invitations use display names and private access capabilities; they are not yet verified Memtrace organization membership.
+You can inspect the board and participate in planning before connecting a worker.
 
 ## Join a team
 
-1. Clone the source repository you will work on to the Mac using Git.
-2. In MemCode, choose **Open existing project** for that clone. Its MemCode board must be empty before joining.
-3. Open **Team**, paste a workspace invitation and enter a display name.
-4. For a remote teammate, the invitation must contain a reachable HTTPS relay address. `localhost` or `127.0.0.1` refers to the Mac itself and cannot connect to another developer's relay.
-5. Check synchronized stories and comments, then connect a worker when ready. Git exchanges source; Team Sync exchanges planning, claims and explicitly published files.
+1. Open **Team**. If your team is listed, select the shared project under **Team projects**.
+2. Otherwise, ask a teammate to open that project on their computer and choose **Team → Invite teammate**. On your Mac, open the project selector, choose **Join a team project**, paste the invitation and select **Continue**. Check the team and project names, choose **Accept and open**, and approve the intended Memtrace account if prompted.
+3. Check **Team** for the planning sync status. Open **Cycles** to see current and completed cycles. Look in **Workspace → Done** for completed stories and clear any board filters that hide them.
+4. When you want to run a worker, choose **Work on this computer** and connect your existing checkout or clone the repository. Team sync carries the board and shared results. Git carries source changes.
 
 See [the Team Sync guide](team-sync-preview.md) for hosting and sharing boundaries.
+
+## Find the product tour and review guide
+
+Open **Docs → Your first project → Watch product tour** to replay the welcome presentation. Choose **Open guided setup** to continue with your project. Inside any story, choose **Story guide** to explore its tabs.
+
+Open **Docs → Code review** for a walkthrough with three illustrated examples. Move a story into the **Code review** lane when you are ready to start a review manually. Its **Code review** tab, between **Changes** and **Artifacts**, keeps the saved findings and measurements available through Acceptance and Done.
 
 ## Current platform limits
 
 - The shared live agent browser currently uses Windows WebView2. It reports unsupported on macOS. Do not use that feature as a claimed macOS acceptance test yet.
 - Native visible-preview screenshot capture is currently implemented for Windows. This is separate from ordinary saved-document rendering.
-- Managed local dictation setup currently targets Windows x64. macOS needs an independently installed local Whisper runtime/server; microphone and transcription behavior still need Mac acceptance testing.
+- For packaged runtime and installer checks, follow the [macOS desktop candidate guide](macos-desktop-candidate.md).
 - `npm run build:native` currently uses `--no-bundle`. It does not produce a signed/notarized `.app` or `.dmg` installer. Use `npm run dev` for this source preview.
 
 If a build fails, share the command, macOS version, Apple Silicon/Intel architecture, Node/Rust versions and the first actual error from Terminal. Keep credentials and private project text out of the shared log.
