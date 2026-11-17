@@ -1,5 +1,20 @@
 # Contributing to MemCode
 
+Bug reports, reproducible examples, design feedback and documentation
+suggestions are welcome. Remove account details, credentials and private
+project data before sharing a report.
+
+MemCode is source-available under the PolyForm Noncommercial License 1.0.0.
+Third-party components retain their original licenses. A contribution must
+not include proprietary Memtrace or MemDB implementation, copied private
+code, secrets or material you do not have permission to submit.
+
+Before submitting source changes, open an issue to agree on scope and contact
+support@memtrace.io to arrange a contributor agreement. Until that agreement
+is in place, maintainers will not merge external source-code contributions.
+No contributor agreement is implied merely by opening an issue or sending
+feedback. This keeps ownership and future commercial licensing explicit.
+
 `dev` is the integration branch and the default pull-request target.
 `main` contains approved release work.
 
@@ -27,8 +42,7 @@ tested it. An approving code-owner review is required before merging.
 Repository write access alone does not permit direct updates to our working
 branches; the maintainer exception is limited to admin and maintain roles.
 
-The repository is currently private. Its existing license applies to the source
-and contributions; see [LICENSE](LICENSE).
+The repository is currently private; see [LICENSE](LICENSE) for its source license.
 
 ## Verification
 
