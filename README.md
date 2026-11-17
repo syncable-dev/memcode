@@ -182,7 +182,11 @@ records native form, consent, queue, discussion and local-speech checks.
 
 ## An honest prototype boundary
 
-A finished process creates an **In review** candidate. It never proves that tests
+A finished worker enters **Code review** when that workflow is configured. Its
+dedicated review screen brings together the story's attributed patch, Memtrace
+findings, measured complexity, observed impact and matching verification.
+Missing or stale measurements remain incomplete. **Ready for acceptance** is a
+separate lane for the developer's final look. Neither lane proves that unrecorded tests
 passed or automatically publishes a change. Review the actual diff and evidence.
 There is no automatic Git merge, push or deployment.
 
@@ -199,9 +203,10 @@ write fencing. The developer owns reconciliation and acceptance of shared change
 
 The app is a single local owner with serialized atomic JSON persistence. The Team Sync
 preview adds a durable command journal and explicit story ownership to shared metadata;
-it does not replicate uncommitted source or Fleet across computers. Production team
-identity, calibrated model routing, authoritative write fencing, independent acceptance
-checks and broader adapter validation are future iterations, tracked in the dogfood
+it does not replicate uncommitted source or Fleet across computers. Account-based
+Team membership uses Memtrace sign-in. Calibrated model routing, authoritative write
+fencing, independent acceptance checks and broader adapter validation remain future
+iterations, tracked in the dogfood
 backlog. See [the product brief](docs/PRODUCT.md) and [design rules](docs/DESIGN.md).
 
 See [the planning comparison](docs/PLANNING.md) for the itsaplan reference and chart
@@ -214,10 +219,12 @@ a hotspot leaving the top results does not prove it was repaired.
 ## Dogfood
 
 Open **MemCode → Roadmap**. Expand an epic, pick a ready story, and use **Plan
-worker** to inspect its measured route. Commit existing project changes before
-activating an epic branch, then launch story workers. Other workers on the same epic
-join that branch. Finish or stop that fleet before switching this project to another
-epic. Review each conversation, runbook and output alongside that worker's recorded
+worker** to inspect its measured route, then launch story workers. Workers on one
+epic share its branch and checkout. With an engine advertising the owned-worktree
+protocol, other epics run concurrently in separate Git worktrees that share Git
+storage. Their graphs and source certificates remain checkout-specific; an older
+engine retains the sequential execution path. See [parallel epics](docs/parallel-epics.md)
+for integration, prerequisite and resource limits. Review each conversation, runbook and output alongside that worker's recorded
 checkpoint diffs. Attribution comes from worker checkpoints, rather than assigning
 the complete shared branch diff to every card. See [reviewing the work](docs/review-and-previews.md)
 for saved comments, file links and rich previews. **Sync build plan** adds

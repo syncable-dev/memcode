@@ -1,23 +1,8 @@
 import type { AppState, Project, Stage, WorkItem } from "../shared";
 import type { WorkflowState, ViewConfig } from "./types";
-import { stages } from "../shared";
-import { stageLabel } from "../domain";
-
-const colors = {
-  planned: "#9aa991",
-  working: "#21ad89",
-  review: "#c19c51",
-  done: "#7fa890",
-};
+import { reviewWorkflowStates } from "../code-review-workflow";
 export function defaultWorkflow(projectId: string): WorkflowState[] {
-  return stages.map((stage, order) => ({
-    id: `${projectId}:${stage}`,
-    projectId,
-    name: stageLabel(stage),
-    stage,
-    color: colors[stage],
-    order,
-  }));
+  return reviewWorkflowStates(projectId);
 }
 export function workflowFor(
   state: AppState,
@@ -37,7 +22,12 @@ export function taskStatus(
   return (
     states.find(
       (status) => status.id === task.statusId && status.stage === task.stage,
-    ) ?? states.find((status) => status.stage === task.stage)!
+    ) ??
+    states.find(
+      (status) =>
+        status.stage === task.stage && status.id === `${task.projectId}:review`,
+    ) ??
+    states.find((status) => status.stage === task.stage)!
   );
 }
 export function filterWork(tasks: WorkItem[], config: ViewConfig): WorkItem[] {

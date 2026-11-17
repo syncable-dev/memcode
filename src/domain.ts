@@ -57,7 +57,7 @@ export function stageLabel(stage: Stage): string {
   return {
     planned: "Planned",
     working: "In progress",
-    review: "In review",
+    review: "Ready for acceptance",
     done: "Done",
   }[stage];
 }
