@@ -2,11 +2,19 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
-import type { ChildProcess, spawn } from "node:child_process";
+import {
+  spawn as spawnProcess,
+  type ChildProcess,
+  type spawn,
+} from "node:child_process";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   ManagedMemtraceOwners,
   pendingMemtraceOwner,
   memtraceOwnerTimeoutMs,
+  memtraceOwnerShutdownTimeoutMs,
 } from "../runtime/memtrace-owner.ts";
 
 const pending = () =>
@@ -51,6 +59,150 @@ test("pending owner is a distinct cold-start state, never generic wrong-store/au
   assert.equal(pendingMemtraceOwner(Error("wrong_store")), false);
   assert.equal(pendingMemtraceOwner(Error("authentication expired")), false);
 });
+
+test("owner shutdown budget includes native durable flush and sidecar grace", () => {
+  assert.equal(memtraceOwnerShutdownTimeoutMs({}), 135000);
+  assert.equal(
+    memtraceOwnerShutdownTimeoutMs({ MEMTRACE_MCP_SHUTDOWN_FLUSH_SECS: "300" }),
+    315000,
+  );
+  assert.equal(
+    memtraceOwnerShutdownTimeoutMs({
+      MEMTRACE_SHUTDOWN_FLUSH_TIMEOUT_SECS: "300",
+      MEMTRACE_MEMDB_SIDECAR_STOP_SECS: "40",
+    }),
+    355000,
+  );
+  assert.equal(
+    memtraceOwnerShutdownTimeoutMs({ MEMTRACE_MCP_SHUTDOWN_FLUSH_SECS: "-1" }),
+    135000,
+  );
+});
+
+test(
+  "Windows owned owner receives its native stop event and finishes a flush longer than the SDK close budget",
+  { skip: process.platform !== "win32", timeout: 20000 },
+  async () => {
+    const directory = await mkdtemp(join(tmpdir(), "memcode-owned-grace-")),
+      ready = join(directory, "ready"),
+      finished = join(directory, "flushed"),
+      fixtureScript = join(directory, "owner.ps1");
+    await writeFile(
+      fixtureScript,
+      `param([string]$ReadyPath,[string]$FinishedPath)
+$event = [System.Threading.EventWaitHandle]::new($false,[System.Threading.EventResetMode]::ManualReset,('Local\\memtrace-stop-' + $PID))
+[System.IO.File]::WriteAllText($ReadyPath,'ready')
+$null=$event.WaitOne()
+Start-Sleep -Milliseconds 2700
+[System.IO.File]::WriteAllText($FinishedPath,'flushed')
+$event.Dispose()
+exit 0
+`,
+    );
+    const borrowed = spawnProcess(
+      process.execPath,
+      ["-e", "setInterval(()=>{},1000)"],
+      { stdio: "ignore", windowsHide: true },
+    );
+    let owned: ChildProcess | undefined;
+    const owners = new ManagedMemtraceOwners({
+      spawn: (() =>
+        (owned = spawnProcess(
+          join(
+            process.env.SystemRoot ?? "C:/Windows",
+            "System32/WindowsPowerShell/v1.0/powershell.exe",
+          ),
+          [
+            "-NoProfile",
+            "-NonInteractive",
+            "-File",
+            fixtureScript,
+            ready,
+            finished,
+          ],
+          { stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
+        ))) as unknown as typeof spawn,
+      timeoutMs: 10000,
+      pollMs: 20,
+      stopGraceMs: 6000,
+    });
+    try {
+      await owners.ready(scope, command, {}, async () => {
+        if ((await readFile(ready, "utf8").catch(() => "")) !== "ready")
+          throw pending();
+      });
+      const started = Date.now();
+      await owners.release(scope.dataDirectory);
+      assert.ok(
+        Date.now() - started >= 2700,
+        "must not force the owner out after two seconds",
+      );
+      assert.equal(await readFile(finished, "utf8"), "flushed");
+      assert.equal(owned?.exitCode, 0);
+      assert.equal(owned?.signalCode, null);
+      assert.equal(borrowed.exitCode, null, "unrelated process remains alive");
+    } finally {
+      await owners.close();
+      borrowed.kill();
+      if (owned?.exitCode === null) owned.kill();
+      await rm(directory, { recursive: true, force: true, maxRetries: 3 });
+    }
+  },
+);
+
+test(
+  "Windows forced retirement stops only the exact owned launcher tree after the grace bound",
+  { skip: process.platform !== "win32", timeout: 15000 },
+  async () => {
+    const directory = await mkdtemp(join(tmpdir(), "memcode-owned-fallback-")),
+      ready = join(directory, "tree.json");
+    const borrowed = spawnProcess(
+      process.execPath,
+      ["-e", "setInterval(()=>{},1000)"],
+      { stdio: "ignore", windowsHide: true },
+    );
+    let owned: ChildProcess | undefined,
+      descendant = 0;
+    const owners = new ManagedMemtraceOwners({
+      spawn: (() =>
+        (owned = spawnProcess(
+          process.execPath,
+          [
+            "-e",
+            `const {spawn}=require('node:child_process'); const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore',windowsHide:true}); require('node:fs').writeFileSync(process.argv[1],JSON.stringify({pid:child.pid})); setInterval(()=>{},1000);`,
+            ready,
+          ],
+          { stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
+        ))) as unknown as typeof spawn,
+      timeoutMs: 10000,
+      pollMs: 20,
+      stopGraceMs: 100,
+    });
+    try {
+      await owners.ready(scope, command, {}, async () => {
+        try {
+          descendant = JSON.parse(await readFile(ready, "utf8")).pid;
+        } catch {
+          throw pending();
+        }
+      });
+      await owners.release(scope.dataDirectory);
+      assert.notEqual(owned?.exitCode, null);
+      assert.throws(() => process.kill(descendant, 0), /ESRCH/);
+      assert.equal(borrowed.exitCode, null);
+    } finally {
+      await owners.close();
+      borrowed.kill();
+      if (owned?.exitCode === null) owned.kill();
+      if (descendant) {
+        try {
+          process.kill(descendant);
+        } catch {}
+      }
+      await rm(directory, { recursive: true, force: true, maxRetries: 3 });
+    }
+  },
+);
 
 test("a reachable owner is borrowed without a process or shutdown ownership", async () => {
   const f = fixture();
@@ -269,28 +421,52 @@ test("native recovery progress reaches the connection observer before readiness"
 });
 
 test("first model download and embedding setup progress is visible, bounded and redacted before readiness", async () => {
-  const f = fixture(), notes: string[] = [];
+  const f = fixture(),
+    notes: string[] = [];
   const progress = [
-    'Downloading model files token=private-download-token',
-    'Loading embedding model password=private-model-password',
-    'Compiling CoreML api_key=private-coreml-key',
-    'Creating ONNX session Authorization: Bearer private-onnx-token ' + 'x'.repeat(700),
+    "Downloading model files token=private-download-token",
+    "Loading embedding model password=private-model-password",
+    "Compiling CoreML api_key=private-coreml-key",
+    "Creating ONNX session Authorization: Bearer private-onnx-token " +
+      "x".repeat(700),
   ];
   let probes = 0;
   try {
-    await f.owners.ready(scope, command, {}, async () => {
-      probes++;
-      if (probes === 1) throw pending();
-      if (probes <= progress.length + 1) {
-        f.child.stderr!.emit('data', Buffer.from('\u001b[32m' + progress[probes - 2] + '\u001b[0m\n'));
-        throw pending();
-      }
-    }, note => notes.push(note));
-    for (const label of ['Downloading model files', 'Loading embedding model', 'Compiling CoreML', 'Creating ONNX session']) {
-      assert.ok(notes.some(note => note.includes(label)), label + ' must reach the user during setup');
+    await f.owners.ready(
+      scope,
+      command,
+      {},
+      async () => {
+        probes++;
+        if (probes === 1) throw pending();
+        if (probes <= progress.length + 1) {
+          f.child.stderr!.emit(
+            "data",
+            Buffer.from("\u001b[32m" + progress[probes - 2] + "\u001b[0m\n"),
+          );
+          throw pending();
+        }
+      },
+      (note) => notes.push(note),
+    );
+    for (const label of [
+      "Downloading model files",
+      "Loading embedding model",
+      "Compiling CoreML",
+      "Creating ONNX session",
+    ]) {
+      assert.ok(
+        notes.some((note) => note.includes(label)),
+        label + " must reach the user during setup",
+      );
     }
-    assert.ok(notes.every(note => note.length <= 512));
-    assert.doesNotMatch(notes.join('\n'), /private-download-token|private-model-password|private-coreml-key|private-onnx-token|\u001b/);
-    assert.equal(notes.at(-1), 'The local Memtrace engine is ready.');
-  } finally { await f.owners.close(); }
+    assert.ok(notes.every((note) => note.length <= 512));
+    assert.doesNotMatch(
+      notes.join("\n"),
+      /private-download-token|private-model-password|private-coreml-key|private-onnx-token|\u001b/,
+    );
+    assert.equal(notes.at(-1), "The local Memtrace engine is ready.");
+  } finally {
+    await f.owners.close();
+  }
 });

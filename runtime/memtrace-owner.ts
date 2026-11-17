@@ -1,6 +1,7 @@
 import { spawn, execFile, type ChildProcess } from "node:child_process";
 import { promisify, stripVTControlCharacters } from "node:util";
 import { join } from "node:path";
+import { readFile } from "node:fs/promises";
 import { setTimeout as pause } from "node:timers/promises";
 import type { Command } from "./commands";
 import type { projectMcpWorkspace } from "./memtrace-workspace";
@@ -13,6 +14,8 @@ type OwnedProcess = {
   startedAt: number;
   output: string;
   progress?: string;
+  dataDirectory: string;
+  environment: Record<string, string>;
 };
 const execute = promisify(execFile);
 
@@ -24,6 +27,27 @@ export function memtraceOwnerTimeoutMs(env: Record<string, string>): number {
       ? Math.min(configured, 3600)
       : 900;
   return (seconds + 30) * 1000;
+}
+
+/** Match native durable-flush budgets, rather than the MCP SDK's two-second EOF window. */
+export function memtraceOwnerShutdownTimeoutMs(
+  env: Record<string, string>,
+): number {
+  const seconds = (name: string, fallback: number, ceiling: number) => {
+    const value = Number(env[name]);
+    return Number.isInteger(value) && value > 0
+      ? Math.min(value, ceiling)
+      : fallback;
+  };
+  return (
+    (Math.max(
+      seconds("MEMTRACE_MCP_SHUTDOWN_FLUSH_SECS", 120, 3600),
+      seconds("MEMTRACE_SHUTDOWN_FLUSH_TIMEOUT_SECS", 10, 300) +
+        seconds("MEMTRACE_MEMDB_SIDECAR_STOP_SECS", 30, 3600),
+    ) +
+      15) *
+    1000
+  );
 }
 
 function diagnostic(value: string): string {
@@ -63,35 +87,146 @@ export function disconnectedMemtraceClient(error: unknown): boolean {
   return /connection closed|not connected|transport (?:is )?closed/i.test(text);
 }
 
-async function stopOwnedProcess(child: ChildProcess): Promise<void> {
-  if (!child.pid || child.exitCode !== null || child.signalCode !== null)
-    return;
+// The native Windows daemon exposes this exact per-PID stop event. Process
+// handles pin each observed child identity; no store lookup or global stop is used.
+const WINDOWS_OWNED_STOP = `
+param([int]$RootPid, [int]$GraceMs)
+$ErrorActionPreference = 'Stop'
+$owned = [System.Collections.Generic.List[System.Diagnostics.Process]]::new()
+$seen = [System.Collections.Generic.HashSet[int]]::new()
+function Add-OwnedTree {
+  $table = @(Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId)
+  $queue = [System.Collections.Generic.Queue[int]]::new()
+  $queue.Enqueue($RootPid)
+  foreach ($known in $owned) { if (-not $known.HasExited) { $queue.Enqueue($known.Id) } }
+  while ($queue.Count -gt 0) {
+    $target = $queue.Dequeue()
+    if ($seen.Add($target)) {
+      try { $process = [System.Diagnostics.Process]::GetProcessById($target); $null = $process.Handle; $owned.Add($process) } catch {}
+    }
+    foreach ($entry in $table) { if ($entry.ParentProcessId -eq $target -and -not $seen.Contains([int]$entry.ProcessId)) { $queue.Enqueue([int]$entry.ProcessId) } }
+  }
+}
+try {
+  Add-OwnedTree
+  $requested = 0
+  foreach ($process in $owned) {
+    if ($process.HasExited) { continue }
+    try { $event = [System.Threading.EventWaitHandle]::OpenExisting('Local\\memtrace-stop-' + $process.Id); try { if ($event.Set()) { $requested++ } } finally { $event.Dispose() } } catch {}
+  }
+  $window = if ($requested -gt 0) { $GraceMs } else { [Math]::Min($GraceMs, 5000) }
+  $deadline = [DateTime]::UtcNow.AddMilliseconds($window)
+  while ([DateTime]::UtcNow -lt $deadline -and @($owned | Where-Object { -not $_.HasExited }).Count -gt 0) { Start-Sleep -Milliseconds 100 }
+  $forced = 0
+  if (@($owned | Where-Object { -not $_.HasExited }).Count -gt 0) {
+    Add-OwnedTree
+    for ($index = $owned.Count - 1; $index -ge 0; $index--) {
+      $process = $owned[$index]
+      if (-not $process.HasExited) { try { $process.Kill(); $forced++ } catch {} }
+    }
+  }
+  foreach ($process in $owned) { if (-not $process.HasExited) { $null = $process.WaitForExit(5000) } }
+  $survivors = @($owned | Where-Object { -not $_.HasExited } | ForEach-Object { $_.Id })
+  @{requested=$requested; forced=$forced; survivors=$survivors} | ConvertTo-Json -Compress
+} finally { foreach ($process in $owned) { $process.Dispose() } }
+`;
+
+async function stopOwnedProcess(
+  record: OwnedProcess,
+  graceMs?: number,
+): Promise<void> {
+  const child = record.child,
+    pid = child.pid;
+  if (!pid || child.exitCode !== null || child.signalCode !== null) return;
+  const budget = graceMs ?? memtraceOwnerShutdownTimeoutMs(record.environment);
   if (process.platform === "win32") {
-    // Includes the npm shim's native child, and only this spawned process tree.
-    // Never use `memtrace stop`: it could stop an owner borrowed from the user.
-    await execute(
-      join(process.env.SystemRoot ?? "C:\\Windows", "System32", "taskkill.exe"),
-      ["/PID", String(child.pid), "/T", "/F"],
-      { windowsHide: true, timeout: 5000, maxBuffer: 16000 },
-    ).catch(() => {
-      child.kill();
-    });
-  } else {
-    const exited = new Promise<void>((done) =>
-      child.once("close", () => done()),
+    const shell = join(
+      process.env.SystemRoot ?? "C:/Windows",
+      "System32/WindowsPowerShell/v1.0/powershell.exe",
     );
     try {
-      process.kill(-child.pid, "SIGTERM");
-    } catch {
-      child.kill("SIGTERM");
+      // Script is constant; the only arguments are the PID we spawned and a bounded budget.
+      const { stdout } = await execute(
+        shell,
+        [
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          `& { ${WINDOWS_OWNED_STOP} }`,
+          String(pid),
+          String(budget),
+        ],
+        {
+          windowsHide: true,
+          timeout: budget + 15000,
+          maxBuffer: 16000,
+        },
+      );
+      const result = JSON.parse(stdout.trim());
+      if (Array.isArray(result.survivors) && result.survivors.length)
+        throw Error(
+          "An owned Memtrace process did not stop after its shutdown budget.",
+        );
+      if (result.forced > 0)
+        console.warn(
+          "An owned Memtrace engine exceeded graceful retirement; its exact process tree was stopped. Its next open may require recovery.",
+        );
+    } catch (error) {
+      if (child.exitCode === null && child.signalCode === null)
+        await execute(
+          join(process.env.SystemRoot ?? "C:/Windows", "System32/taskkill.exe"),
+          ["/PID", String(pid), "/T", "/F"],
+          {
+            windowsHide: true,
+            timeout: 5000,
+            maxBuffer: 16000,
+          },
+        ).catch(() => child.kill());
+      throw error;
     }
-    await Promise.race([exited, pause(3000)]);
-    if (child.exitCode === null && child.signalCode === null) {
-      try {
-        process.kill(-child.pid, "SIGKILL");
-      } catch {
-        child.kill("SIGKILL");
+  } else {
+    let owner = pid;
+    // An npm launcher can parent the native owner. Signal only a process in
+    // this detached owned group, so a backend borrowed from another app survives.
+    try {
+      const state = JSON.parse(
+        await readFile(join(record.dataDirectory, "daemon-state.json"), "utf8"),
+      );
+      if (Number.isSafeInteger(state.pid) && state.pid > 0) {
+        const { stdout } = await execute(
+          "ps",
+          ["-o", "pgid=", "-p", String(state.pid)],
+          { timeout: 3000 },
+        );
+        if (Number(stdout.trim()) === pid) owner = state.pid;
       }
+    } catch {
+      /* An owner may not have published yet. The exact launcher is still ours. */
+    }
+    try {
+      process.kill(owner, "SIGTERM");
+    } catch {
+      /* It already exited. */
+    }
+    const alive = () => {
+      try {
+        process.kill(-pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    const deadline = Date.now() + budget;
+    while (alive() && Date.now() < deadline) await pause(100);
+    if (alive()) {
+      try {
+        process.kill(-pid, "SIGKILL");
+      } catch {
+        /* Group finished meanwhile. */
+      }
+      console.warn(
+        "An owned Memtrace engine exceeded graceful retirement; its exact process group was stopped. Its next open may require recovery.",
+      );
     }
   }
 }
@@ -101,6 +236,7 @@ interface OwnerOptions {
   stop?: (child: ChildProcess) => Promise<void>;
   timeoutMs?: number;
   pollMs?: number;
+  stopGraceMs?: number;
 }
 
 /** Only owns children it spawned; an already reachable owner is always borrowed. */
@@ -167,7 +303,13 @@ export class ManagedMemtraceOwners {
           stdio: ["ignore", "pipe", "pipe"],
         },
       );
-      owned = { child, startedAt: Date.now(), output: "" };
+      owned = {
+        child,
+        startedAt: Date.now(),
+        output: "",
+        dataDirectory: scope.dataDirectory,
+        environment: env,
+      };
       this.owned.set(scope.dataDirectory, owned);
       const record = owned;
       child.once("error", (error) => {
@@ -252,7 +394,7 @@ export class ManagedMemtraceOwners {
     } catch (error) {
       if (this.owned.get(scope.dataDirectory) === owned) {
         this.owned.delete(scope.dataDirectory);
-        await (this.options.stop ?? stopOwnedProcess)(owned.child);
+        await this.stop(owned);
       }
       if (this.abort.signal.aborted)
         throw Error("The Memtrace connection is closing.");
@@ -264,17 +406,18 @@ export class ManagedMemtraceOwners {
     const record = this.owned.get(dataDirectory);
     if (!record) return;
     this.owned.delete(dataDirectory);
-    await (this.options.stop ?? stopOwnedProcess)(record.child);
+    await this.stop(record);
   }
 
   async close(): Promise<void> {
     this.abort.abort();
     const owned = [...this.owned.values()];
     this.owned.clear();
-    await Promise.allSettled(
-      owned.map((record) =>
-        (this.options.stop ?? stopOwnedProcess)(record.child),
-      ),
-    );
+    await Promise.allSettled(owned.map((record) => this.stop(record)));
+  }
+  private stop(record: OwnedProcess): Promise<void> {
+    return this.options.stop
+      ? this.options.stop(record.child)
+      : stopOwnedProcess(record, this.options.stopGraceMs);
   }
 }

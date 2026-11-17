@@ -154,14 +154,17 @@ export class MemtraceEngine {
     try {
       await this.opening.get(project.id)?.catch(() => {});
       const store = this.scopes.get(project.id)?.dataDirectory;
-      await this.releaseBinding(project.id);
-      if (
-        store &&
-        ![...this.scopes.values()].some(
-          (scope) => scope.dataDirectory === store,
+      try {
+        await this.releaseBinding(project.id);
+      } finally {
+        if (
+          store &&
+          ![...this.scopes.values()].some(
+            (scope) => scope.dataDirectory === store,
+          )
         )
-      )
-        await this.owners.release(store);
+          await this.owners.release(store);
+      }
       this.bindingPaths.delete(project.id);
       this.watching.delete(project.id);
       this.watchingPaths.delete(project.id);
@@ -452,16 +455,16 @@ export class MemtraceEngine {
           peer ? { ...peer, origin: "memcode" } : { ...watch },
         );
       } else if (connection) {
-        const result = await connection.client.callTool(
-          { name: "unwatch_directory", arguments: { path: watch.path } },
-          undefined,
-          { timeout: 5000 },
-        );
-        if (
-          (result as Json).isError &&
-          !/not watching/i.test(JSON.stringify(result))
-        )
-          unwrap(result);
+        // A timed-out unwatch must not leave this owned MCP/graph alive.
+        // Closing the session remains mandatory; native owner retirement below
+        // drains the exact graph process this app started.
+        await connection.client
+          .callTool(
+            { name: "unwatch_directory", arguments: { path: watch.path } },
+            undefined,
+            { timeout: 5000 },
+          )
+          .catch(() => undefined);
       }
     }
     this.watches.delete(projectId);
@@ -514,6 +517,11 @@ export class MemtraceEngine {
       // back to another branch's semantic index.
       if (project.analysisCheckout === "owned-worktree-v1")
         env.MEMTRACE_SKIP_EMBED = "1";
+      // The SDK stops stdio children after a two-second EOF budget. A native
+      // graph owner needs a durable flush, so owned epics attach as clients
+      // only; ready() starts a separately tracked headless owner when cold.
+      if (project.analysisCheckout === "owned-worktree-v1")
+        env.MEMTRACE_MCP_ATTACH_ONLY = "1";
     }
     let active: { client: Client; transport: StdioClientTransport } | undefined;
     const disconnect = async () => {
@@ -531,6 +539,9 @@ export class MemtraceEngine {
         args: [
           ...command.prefix,
           "mcp",
+          ...(project.analysisCheckout === "owned-worktree-v1"
+            ? ["--attach-only"]
+            : []),
           ...(local
             ? ["--workspace-file", local.workspaceFile]
             : scope.workspace
@@ -897,14 +908,16 @@ export class MemtraceEngine {
     );
     this.watches.clear();
     this.watchChecked.clear();
-    await this.owners.close();
     await Promise.allSettled(
       [...this.connecting].map((client) => client.close()),
     );
-    await Promise.allSettled([...this.opening.values()]);
     await Promise.allSettled(
       [...this.clients.values()].map((c) => c.client.close()),
     );
+    // No attached MCP may remain to elect itself after a forced owner exit.
+    // Close transports first; then abort bootstrap and drain owned native trees.
+    await this.owners.close();
+    await Promise.allSettled([...this.opening.values()]);
     this.clients.clear();
     this.scopes.clear();
     this.bindingPaths.clear();
