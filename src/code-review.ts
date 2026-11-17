@@ -137,6 +137,13 @@ export interface StoryReviewRun {
       beforeHash?: string;
       afterHash?: string;
       attribution: "reservation" | "legacy" | "discontinuous";
+      /** Own journal hashes stay intact when later disjoint peer edits are present. */
+      projection?: {
+        method: "unique-exact-context";
+        baselineHash: string;
+        currentHash: string;
+        hunks: number;
+      };
     }>;
     additions: number;
     deletions: number;
