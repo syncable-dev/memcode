@@ -166,6 +166,10 @@ try {
     path: join(out, "tauri-native-main.png"),
     animations: "disabled",
   });
+  await page.getByRole("button", { name: /^Settings/ }).click();
+  await expect(page.getByText("Development build", { exact: true })).toBeVisible();
+  await page.screenshot({ path: join(out, "tauri-native-settings.png"), animations: "disabled" });
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
   if (process.env.MEMCODE_SMOKE_SCOPE !== "packaging")
     await verifyPlanning(page, call, out);
   const artifact = result.state.artifacts.find(

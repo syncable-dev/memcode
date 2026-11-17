@@ -12,6 +12,7 @@ mod startup;
 mod state_patch;
 mod terminal;
 mod updates;
+mod update_cache;
 mod workspace;
 
 use bridge::RuntimeBridge;
