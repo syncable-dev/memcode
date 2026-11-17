@@ -32,28 +32,40 @@ export const verifiedIndexRevision = (
   value: Json | null | undefined,
   project: Project,
   repoId: string,
-) =>
-  (project.analysisCheckout !== "owned-worktree-v1" ||
-    (value?.checkout_mode === "owned-worktree-v1" &&
-      value?.graph_scope === "owned_worktree_graph" &&
-      value?.repo_id === repoId &&
-      typeof value.worktree === "string" &&
-      pathKey(value.worktree) === pathKey(project.path!) &&
-      value?.source_unchanged_during_observation === true &&
-      value?.graph_revision?.publication_unchanged_during_call === true)) &&
-  value?.ready === true &&
-  value.branch === project.branch &&
-  (!value.repo_id || value.repo_id === repoId) &&
-  (!value.worktree || pathKey(value.worktree) === pathKey(project.path!)) &&
-  value.source_unchanged_during_observation !== false &&
-  value.requested_source_matches !== false &&
-  value.requested_revision_matches !== false &&
-  value.default_branch_matches !== false &&
-  value.publication?.status !== "partial" &&
-  value.status !== "partial" &&
-  value.graph_revision?.status !== "partial" &&
-  value.retry_query_group !== true &&
-  value.graph_revision?.publication_unchanged_during_call !== false;
+) => {
+  // Current native responses carry the publication boundary in the MCP
+  // envelope. Older engines returned it at the top level. Prefer the envelope
+  // even when it explicitly reports instability; never replace it with an older
+  // top-level success value.
+  const graphRevision = value?._meta?.graph_revision ?? value?.graph_revision;
+  return (
+    (graphRevision == null ||
+      (typeof graphRevision === "object" && !Array.isArray(graphRevision))) &&
+    (project.analysisCheckout !== "owned-worktree-v1" ||
+      (value?.checkout_mode === "owned-worktree-v1" &&
+        value?.graph_scope === "owned_worktree_graph" &&
+        value?.repo_id === repoId &&
+        typeof value.worktree === "string" &&
+        pathKey(value.worktree) === pathKey(project.path!) &&
+        value?.source_unchanged_during_observation === true &&
+        graphRevision?.publication_unchanged_during_call === true)) &&
+    value?.ready === true &&
+    value.branch === project.branch &&
+    (!value.repo_id || value.repo_id === repoId) &&
+    (!value.worktree ||
+      (typeof value.worktree === "string" &&
+        pathKey(value.worktree) === pathKey(project.path!))) &&
+    value.source_unchanged_during_observation !== false &&
+    value.requested_source_matches !== false &&
+    value.requested_revision_matches !== false &&
+    value.default_branch_matches !== false &&
+    value.publication?.status !== "partial" &&
+    value.status !== "partial" &&
+    graphRevision?.status !== "partial" &&
+    value.retry_query_group !== true &&
+    graphRevision?.publication_unchanged_during_call !== false
+  );
+};
 
 /** A completed parse/embed job can precede the independent source certificate. */
 export async function waitForIndexPublication(
