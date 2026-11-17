@@ -102,6 +102,153 @@ test("an owned epic rejects a canonical or incomplete certificate even when it s
     false,
   );
 });
+
+// Shape captured from the native owned-worktree acceptance run (6ec252fb6).
+// Only local paths and opaque revision tokens are replaced with fixture values.
+const nativeOwnedProject: Project = {
+  ...project,
+  branch: "epic/a",
+  analysisCheckout: "owned-worktree-v1",
+};
+const nativeOwnedRevision = {
+  _meta: {
+    graph_revision: {
+      publication_unchanged_during_call: true,
+      token: "fixture-graph-publication",
+    },
+  },
+  ambiguous_indexed_files: false,
+  branch: "epic/a",
+  checkout_mode: "owned-worktree-v1",
+  default_branch_matches: true,
+  default_query_branch: "epic/a",
+  graph_scope: "owned_worktree_graph",
+  indexed_file_count: 1,
+  indexing_revision: "fixture-indexing-revision",
+  mismatched_files: 0,
+  mismatched_paths: [],
+  publication: { status: "published", token: "fixture-graph-publication" },
+  ready: true,
+  repo_id: "fixture",
+  requested_revision_matches: true,
+  requested_source_matches: true,
+  retry_query_group: false,
+  scope:
+    "repository graph and supported source files; Cortex has independent revisions",
+  source_commit: "fixture-commit",
+  source_file_count: 1,
+  source_revision: "fixture-source-revision",
+  source_unchanged_during_observation: true,
+  status: "complete",
+  token: "fixture-query-token",
+  worktree: project.path,
+};
+
+test("a native owned certificate uses the MCP publication envelope and keeps exact checkout guards", () => {
+  assert.equal(
+    verifiedIndexRevision(nativeOwnedRevision, nativeOwnedProject, "fixture"),
+    true,
+  );
+  for (const patch of [
+    { branch: "epic/b" },
+    { repo_id: "another-repo" },
+    { repo_id: undefined },
+    { worktree: project.path + "/another-checkout" },
+    { worktree: 42 },
+    { worktree: undefined },
+    { checkout_mode: undefined },
+    { graph_scope: "repository_graph" },
+    { source_unchanged_during_observation: false },
+    { requested_source_matches: false },
+    { requested_revision_matches: false },
+    { default_branch_matches: false },
+    { publication: { status: "partial" } },
+    { status: "partial" },
+    { retry_query_group: true },
+  ]) {
+    assert.equal(
+      verifiedIndexRevision(
+        { ...nativeOwnedRevision, ...patch },
+        nativeOwnedProject,
+        "fixture",
+      ),
+      false,
+      JSON.stringify(patch),
+    );
+  }
+});
+
+test("an unstable or malformed native envelope cannot be hidden by legacy success metadata", () => {
+  for (const graphRevision of [
+    { publication_unchanged_during_call: false },
+    { status: "partial", publication_unchanged_during_call: true },
+    { publication_unchanged_during_call: "true" },
+    {},
+    true,
+    "ready",
+    [],
+  ]) {
+    const value = {
+      ...nativeOwnedRevision,
+      _meta: { graph_revision: graphRevision },
+      graph_revision: { publication_unchanged_during_call: true },
+    };
+    assert.equal(
+      verifiedIndexRevision(value, nativeOwnedProject, "fixture"),
+      false,
+      JSON.stringify(graphRevision),
+    );
+  }
+  for (const graphRevision of [
+    { publication_unchanged_during_call: false },
+    { status: "partial", publication_unchanged_during_call: true },
+    true,
+    "ready",
+    [],
+  ]) {
+    assert.equal(
+      verifiedIndexRevision(
+        {
+          ...nativeOwnedRevision,
+          _meta: { graph_revision: graphRevision },
+          graph_revision: { publication_unchanged_during_call: true },
+        },
+        { ...nativeOwnedProject, analysisCheckout: undefined },
+        "fixture",
+      ),
+      false,
+    );
+  }
+});
+
+test("publication polling adopts the native envelope only after its boundary settles", async () => {
+  let reads = 0;
+  assert.equal(
+    await waitForIndexPublication(
+      {
+        call: async (_project, name, args) => {
+          assert.equal(name, "get_query_revision");
+          assert.deepEqual(args, { repo_id: "fixture", branch: "epic/a" });
+          reads++;
+          return {
+            ...nativeOwnedRevision,
+            _meta: {
+              graph_revision: {
+                publication_unchanged_during_call: reads > 1,
+              },
+            },
+          };
+        },
+      },
+      nativeOwnedProject,
+      "fixture",
+      () => {},
+      clock(),
+    ),
+    "fixture",
+  );
+  assert.equal(reads, 2);
+});
 const job = (patch: Record<string, unknown> = {}) => ({
   id: "existing-job",
   repo_id: "fixture",
