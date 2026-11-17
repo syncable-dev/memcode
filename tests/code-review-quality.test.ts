@@ -168,6 +168,55 @@ test("uses projected baseline hashes and preserves disjoint peer code on both si
   assert.equal(values[0].comparison?.status, "matched");
   assert(native.calls.every((call) => call.source_content.includes(peer)));
 });
+
+test("quality excludes verified untouched graph callers while keeping unresolved metric rows visible", async () => {
+  const before =
+    "function main(){return 1;}\nfunction caller(){return main();}\n";
+  const after =
+    "function main(){return 2;}\nfunction caller(){return main();}\n";
+  const native = engine(
+    before,
+    [row("main", 1, 1), row("caller", 2, 2)],
+    [row("main", 1, 1), row("caller", 2, 2)],
+  );
+  const values = await compareCapturedQuality(
+    capture(before, after),
+    [metric(), metric("caller"), metric("unresolved")],
+    native.call,
+    {},
+  );
+  assert.deepEqual(
+    values.map((value) => value.symbol),
+    ["main", "unresolved"],
+  );
+  assert.equal(values[0].comparison?.status, "matched");
+  assert.equal(values[1].comparison?.status, "unavailable");
+});
+
+test("verified untouched context rows release the budget before changed-only rows are added", async () => {
+  const unchanged = Array.from(
+    { length: 24 },
+    (_, i) => `function context${i}(){return ${i};}\n`,
+  ).join("");
+  const before = unchanged,
+    after = unchanged + "function own(){return 42;}\n";
+  const context = Array.from({ length: 24 }, (_, i) =>
+    row(`context${i}`, i + 1, i + 1),
+  );
+  const native = engine(before, context, [...context, row("own", 25, 25)]);
+  const result = await captureQuality(
+    capture(before, after),
+    Array.from({ length: 24 }, (_, i) => metric(`context${i}`)),
+    native.call,
+    {},
+  );
+  assert.deepEqual(
+    result.metrics.map((value) => value.symbol),
+    ["own"],
+  );
+  assert.equal(result.metrics[0].comparison?.status, "added");
+  assert.equal(result.coverage.omittedFunctions, 0);
+});
 test("added and removed functions are measured separately without a zero baseline", async () => {
   const added = "function main() { return 1; }\n";
   const addEngine = engine("", [], [row("main", 1, 1)]);

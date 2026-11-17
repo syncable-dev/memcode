@@ -245,6 +245,20 @@ export async function compareCapturedQuality(
         ...oldRows.filter((row) => touched(row, changes.before)).map(identity),
         ...newRows.filter((row) => touched(row, changes.after)).map(identity),
       ]);
+      // Graph change detection may include callers or neighbouring declarations
+      // in a diff hunk's context. They remain in the impact graph, but a uniquely
+      // verified untouched declaration is not part of this story's quality set.
+      // Remove those rows before enforcing the changed-declaration row budget.
+      for (let index = existing.length - 1; index >= 0; index--) {
+        const metric = existing[index];
+        const declarations = newRows.filter(
+          (row) => (row.scope_path || row.name) === metric.symbol,
+        );
+        if (declarations.length === 1 && !ids.has(identity(declarations[0]))) {
+          result.splice(result.indexOf(metric), 1);
+          existing.splice(index, 1);
+        }
+      }
       const hasAdded = [...ids].some(
         (id) => !oldGroups.has(id) && newGroups.has(id),
       );

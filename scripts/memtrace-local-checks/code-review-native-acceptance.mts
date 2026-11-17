@@ -242,6 +242,9 @@ test('receipt calls format',()=>assert.equal(receipt(2),'Total: $2.00'));
       analysisSha256: hash(
         await readFile(join(app, "runtime/code-review-analysis.ts")),
       ),
+      qualitySha256: hash(
+        await readFile(join(app, "runtime/code-review-quality.ts")),
+      ),
       snapshotSha256: hash(
         await readFile(join(app, "runtime/code-review-snapshot.ts")),
       ),
