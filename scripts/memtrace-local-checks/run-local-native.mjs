@@ -19,6 +19,7 @@ import { homedir, tmpdir } from "node:os";
 import { createRequire } from "node:module";
 import { execFileSync, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { expectedEngineCommit } from "./source-selection.mjs";
 
 const directory = fileURLToPath(new URL(".", import.meta.url));
 const args = process.argv.slice(2),
@@ -50,7 +51,7 @@ const sourceCommit = execFileSync("git", ["-C", source, "rev-parse", "HEAD"], {
 }).trim();
 assert.equal(
   sourceCommit,
-  "6ec252fb65599d3a2aaae8df7daf5ae934c6a58a",
+  expectedEngineCommit(args),
   "Use the exact candidate engine source.",
 );
 execFileSync(
@@ -298,6 +299,9 @@ try {
       OWNED_NATIVE_DIRECT_ONLY: selected === "direct" ? "1" : "0",
       OWNED_NATIVE_LEGACY_ONLY: selected === "legacy" ? "1" : "0",
       OWNED_NATIVE_EXPECTED_ENGINE_SHA: componentProvenance.candidateMainSha256,
+      MEMCODE_EXPECT_SOURCE_QUALITY: args.includes("--require-source-quality")
+        ? "1"
+        : "0",
     };
     assert.equal(env.RUST_MIN_STACK, undefined);
     console.log(

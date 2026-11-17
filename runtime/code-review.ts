@@ -3,7 +3,16 @@ import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { AppState, Project, WorkItem } from "../src/shared";
 import { isActive } from "../src/domain";
-import { codeReviewPhases, type StoryReviewRun } from "../src/code-review";
+import {
+  activeCodeReviewFindings,
+  codeReviewDismissalReasons,
+  codeReviewPhases,
+  reviewFindingDisposition,
+  type CodeReviewDismissalReason,
+  type CodeReviewFinding,
+  type StoryReviewRun,
+} from "../src/code-review";
+import type { StoryAuthor } from "../src/story-comments";
 import {
   captureStoryReview,
   type StoryReviewCapture,
@@ -39,6 +48,7 @@ interface ReviewHooks {
   implementationStarting?(taskId: string): boolean;
   capacityChanged?(): void;
   settled?(task: WorkItem, project: Project): Promise<void>;
+  actor?(task: WorkItem): StoryAuthor | undefined;
 }
 interface ReviewDependencies {
   capture?: typeof captureStoryReview;
@@ -67,6 +77,23 @@ const timestamp = () => new Date().toISOString();
 const terminal = (run: StoryReviewRun) =>
   !["queued", "running"].includes(run.state);
 const clone = <T>(value: T): T => structuredClone(value);
+const findingEvidenceHash = ({
+  evidenceHash: _prior,
+  ...finding
+}: CodeReviewFinding) =>
+  createHash("sha256").update(JSON.stringify(finding)).digest("hex");
+const bindFindingEvidence = (run: StoryReviewRun) => {
+  for (const finding of run.findings)
+    finding.evidenceHash = findingEvidenceHash(finding);
+  if (run.state === "completed" && run.findingDispositions?.length)
+    run.outcome =
+      activeCodeReviewFindings(run).length ||
+      run.checks.some((check) => check.state === "failed")
+        ? "changes-requested"
+        : run.coverage.complete
+          ? "ready"
+          : "incomplete";
+};
 class ReviewStopped extends Error {}
 class ReviewSourceChanged extends Error {}
 
@@ -200,6 +227,7 @@ export class CodeReviewManager {
     return pending;
   }
   private async persist(saved: SavedReview): Promise<void> {
+    bindFindingEvidence(saved.run);
     saved.run.updatedAt = timestamp();
     const directory = this.directory(saved.run.taskId),
       path = join(directory, saved.run.id + ".json");
@@ -224,10 +252,50 @@ export class CodeReviewManager {
         state: saved.run.state,
         outcome: saved.run.outcome,
         updatedAt: saved.run.updatedAt,
-        findingCount: saved.run.findings.length,
+        findingCount: activeCodeReviewFindings(saved.run).length,
         phase: saved.run.phases.find((phase) => phase.state === "running")?.id,
       };
     await this.changed();
+  }
+  /** The current-run pointer is unchanged; the final report rename commits triage. */
+  private async persistDisposition(
+    current: SavedReview,
+    candidate: SavedReview,
+    task: WorkItem,
+  ): Promise<void> {
+    bindFindingEvidence(candidate.run);
+    candidate.run.updatedAt = timestamp();
+    const directory = this.directory(candidate.run.taskId),
+      path = join(directory, candidate.run.id + ".json"),
+      previousSummary = clone(task.codeReview);
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    // Prepare without publishing any mutation to the cache or workspace summary.
+    await writeFile(path + ".next", JSON.stringify(candidate), { mode: 0o600 });
+    task.codeReview = {
+      runId: candidate.run.id,
+      state: candidate.run.state,
+      outcome: candidate.run.outcome,
+      updatedAt: candidate.run.updatedAt,
+      findingCount: activeCodeReviewFindings(candidate.run).length,
+      phase: candidate.run.phases.find((phase) => phase.state === "running")
+        ?.id,
+    };
+    try {
+      // Save the derived summary first. If this or the final rename fails, the
+      // authoritative report and in-memory review both retain the old decision.
+      await this.changed();
+      await replaceWorkspace(path + ".next", path);
+      this.saved.set(candidate.run.taskId, candidate);
+    } catch (error) {
+      task.codeReview = previousSummary;
+      this.saved.set(current.run.taskId, current);
+      // A notification failure can follow a successful workspace write. Try to
+      // save its restored summary too; acceptance still reads the old report.
+      await Promise.resolve()
+        .then(() => this.changed())
+        .catch(() => {});
+      throw error;
+    }
   }
   private async load(taskId: string): Promise<SavedReview | null> {
     const cached = this.saved.get(taskId);
@@ -250,12 +318,16 @@ export class CodeReviewManager {
           value.run?.version !== 1 ||
           value.run.taskId !== taskId ||
           !Array.isArray(value.run.findings) ||
+          (value.run.findingDispositions !== undefined &&
+            !Array.isArray(value.run.findingDispositions)) ||
           !Array.isArray(value.run.phases) ||
           !Array.isArray(value.run.messages)
         )
           throw Error(
             "This saved review is not recognized. Start a new review; the saved file was preserved.",
           );
+        const savedOutcome = value.run.outcome;
+        bindFindingEvidence(value.run);
         const interrupted = !terminal(value.run);
         value.automaticRetries = value.automaticRetries === 1 ? 1 : 0;
         const interruptedReviewer = value.run.reviewer?.state === "running";
@@ -273,7 +345,12 @@ export class CodeReviewManager {
             note: "The app stopped before this reviewer answer completed. Ask again to continue.",
           };
         this.saved.set(taskId, value);
-        if (interrupted || interruptedReviewer) await this.persist(value);
+        if (
+          interrupted ||
+          interruptedReviewer ||
+          savedOutcome !== value.run.outcome
+        )
+          await this.persist(value);
         return value;
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
@@ -674,6 +751,7 @@ export class CodeReviewManager {
         assertActive();
         run.findings = result.findings;
         run.metrics = result.metrics;
+        run.qualityComparison = result.qualityComparison;
         run.impact = result.impact;
         run.snapshot.sourceRevision = result.sourceRevision;
         run.snapshot.graphRevision = result.graphRevision;
@@ -794,7 +872,7 @@ export class CodeReviewManager {
   }
   private explanation(run: StoryReviewRun): string {
     return (
-      `Memtrace review · deterministic evidence\n\n${run.findings.length} findings across ${run.snapshot.files.length} recorded files. ${run.metrics.length} changed functions measured.\n\n` +
+      `Memtrace review · deterministic evidence\n\n${activeCodeReviewFindings(run).length} active findings across ${run.snapshot.files.length} recorded files. ${run.metrics.length} changed functions measured.\n\n` +
       (run.outcome === "ready"
         ? "The available detectors, graph measurements and linked verification completed against one stable source snapshot. Ready for your final look; this does not automatically mark the story done."
         : run.outcome === "not-applicable"
@@ -803,6 +881,131 @@ export class CodeReviewManager {
             ? "Review the findings and failed checks. Select findings to send them back to the implementation worker."
             : "The review is incomplete. Resolve the coverage notes or missing checks before acceptance.")
     );
+  }
+
+  async dismissFinding(
+    taskId: string,
+    runId: string,
+    findingId: string,
+    reason: CodeReviewDismissalReason,
+    explanation: string,
+  ): Promise<StoryReviewRun> {
+    if (!codeReviewDismissalReasons.some((item) => item.id === reason))
+      throw Error("Choose a reason for dismissing this finding.");
+    const text = typeof explanation === "string" ? explanation.trim() : "";
+    if (!text || text.length > 2000)
+      throw Error("Explain the dismissal in 1 to 2,000 characters.");
+    return this.changeFindingDisposition(taskId, runId, findingId, {
+      status: "dismissed",
+      reason,
+      explanation: text,
+    });
+  }
+
+  async reopenFinding(
+    taskId: string,
+    runId: string,
+    findingId: string,
+  ): Promise<StoryReviewRun> {
+    return this.changeFindingDisposition(taskId, runId, findingId, {
+      status: "reopened",
+    });
+  }
+
+  private async changeFindingDisposition(
+    taskId: string,
+    runId: string,
+    findingId: string,
+    decision: {
+      status: "dismissed" | "reopened";
+      reason?: CodeReviewDismissalReason;
+      explanation?: string;
+    },
+  ): Promise<StoryReviewRun> {
+    return this.exclusive(taskId, async () => {
+      if (this.closed) throw Error("The local review service is closing.");
+      const current = await this.current(taskId, runId),
+        saved = clone(current),
+        task = this.task(taskId),
+        run = saved.run;
+      const requireEditable = () => {
+        if (this.task(taskId) !== task)
+          throw Error(
+            "The story changed while saving this decision. Reload its review.",
+          );
+        if (!this.inReviewLane(task))
+          throw Error(
+            "Move this story to the Code review lane to change a finding.",
+          );
+        if (run.state !== "completed" || !this.quiet(task))
+          throw Error(
+            "Wait for a current completed review before changing a finding.",
+          );
+        if (
+          this.reviewerControllers.has(runId) ||
+          run.reviewer?.state === "running"
+        )
+          throw Error(
+            "Wait for the reviewer's answer before changing a finding.",
+          );
+      };
+      requireEditable();
+      const finding = run.findings.find((item) => item.id === findingId);
+      if (!finding)
+        throw Error("This finding is not part of the current review.");
+      if (await this.stale(current))
+        throw Error(
+          "The source changed. Run a fresh review before changing a finding.",
+        );
+      requireEditable();
+      bindFindingEvidence(run);
+      const previous = reviewFindingDisposition(run, findingId);
+      if (decision.status === "dismissed" && previous?.status === "dismissed")
+        throw Error(
+          "This finding is already dismissed. Reopen it before changing the reason.",
+        );
+      if (decision.status === "reopened" && previous?.status !== "dismissed")
+        throw Error("This finding is not dismissed.");
+      if ((run.findingDispositions?.length ?? 0) >= 500)
+        throw Error(
+          "This review has reached its decision history limit. Start a fresh review.",
+        );
+      const actor = this.hooks.actor?.(task) ?? {
+        id: "local-owner",
+        name: "Local user",
+        source: "local" as const,
+      };
+      const at = timestamp();
+      (run.findingDispositions ??= []).push({
+        id: randomUUID(),
+        findingId,
+        ...decision,
+        at,
+        actor: clone(actor),
+        snapshotId: run.snapshot.id,
+        patchHash: run.snapshot.patchHash,
+        evidenceHash: finding.evidenceHash!,
+      });
+      // A human dismissal changes triage, never detector evidence, checks or coverage.
+      run.outcome =
+        activeCodeReviewFindings(run).length ||
+        run.checks.some((check) => check.state === "failed")
+          ? "changes-requested"
+          : run.coverage.complete
+            ? "ready"
+            : "incomplete";
+      run.messages.push({
+        id: randomUUID(),
+        role: "system",
+        at,
+        text:
+          decision.status === "dismissed"
+            ? `Human review decision · finding dismissed\n\n${finding.title}\n\n${codeReviewDismissalReasons.find((item) => item.id === decision.reason)!.label}: ${decision.explanation}\n\nSaved by ${actor.name}. This decision applies only to this review snapshot. The detector evidence and verification results are unchanged.`
+            : `Human review decision · finding reopened\n\n${finding.title}\n\nReopened by ${actor.name}. It is active again; the earlier dismissal remains in the decision history.`,
+      });
+      await this.persistDisposition(current, saved, task);
+      return clone(run);
+    });
   }
 
   async cancel(taskId: string, runId: string): Promise<void> {
@@ -1166,10 +1369,14 @@ export class CodeReviewManager {
       )
         throw Error("Choose findings from this review.");
       const selected = findingIds.map((id) =>
-        saved.run.findings.find((finding) => finding.id === id),
+        activeCodeReviewFindings(saved.run).find(
+          (finding) => finding.id === id,
+        ),
       );
       if (selected.some((finding) => !finding))
-        throw Error("A selected finding is not part of this review.");
+        throw Error(
+          "A selected finding is not part of the active findings in this review. Reopen dismissed findings before requesting a fix.",
+        );
       if ((!selected.length && !input.trim()) || input.length > 20000)
         throw Error("Select a finding or describe the changes you want.");
       const brief =
@@ -1209,6 +1416,13 @@ export class CodeReviewManager {
       const reason = inputReason?.trim() ?? "";
       if (reason.length > 2000)
         throw Error("Keep the coverage decision to 2,000 characters.");
+      if (
+        activeCodeReviewFindings(saved.run).length ||
+        saved.run.checks.some((check) => check.state === "failed")
+      )
+        throw Error(
+          "Resolve active findings and failed checks before final acceptance.",
+        );
       const withCoverageNotes =
         saved.run.state === "completed" &&
         saved.run.outcome === "incomplete" &&

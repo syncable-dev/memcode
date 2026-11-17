@@ -7,10 +7,12 @@ import type {
   CodeReviewEvidence,
   CodeReviewEngineAudit,
   CodeReviewProvenance,
+  CodeReviewComparisonCoverage,
   StoryReviewRun,
 } from "../src/code-review";
 import type { StoryReviewCapture } from "./code-review-snapshot";
 import { reviewPublicationTransition } from "./review-analysis-prepare";
+import { compareCapturedQuality } from "./code-review-quality";
 
 type Json = Record<string, any>;
 export interface ReviewEngine {
@@ -23,6 +25,7 @@ export interface AnalysisProgress {
 export interface StoryReviewAnalysis {
   findings: CodeReviewFinding[];
   metrics: CodeReviewMetric[];
+  qualityComparison?: CodeReviewComparisonCoverage;
   impact: StoryReviewRun["impact"];
   limitations: string[];
   sourceRevision: string | null;
@@ -627,8 +630,8 @@ async function analyzeStableGroup(
     phase: "quality",
     note: "Measuring the functions and methods touched by this story.",
   });
-  const metrics: CodeReviewMetric[] = [],
-    symbols: Json[] = [];
+  let metrics: CodeReviewMetric[] = [];
+  const symbols: Json[] = [];
   try {
     const detected = await call("detect_changes", {
       ...scope,
@@ -737,6 +740,30 @@ async function analyzeStableGroup(
     assertActive();
     limitations.add(`Changed-symbol coverage: ${(error as Error).message}`);
   }
+
+  let sourceQuality = false;
+  try {
+    // Capability reads are not graph evidence. Keep them out of this group's
+    // publication observations; old engines must not scan for a literal '*'.
+    const capabilities = await engine.call(
+      project,
+      "get_checkout_capabilities",
+      {},
+    );
+    assertActive();
+    sourceQuality = capabilities?.source_quality_v1 === true;
+  } catch {
+    assertActive();
+  }
+  const compared = await compareCapturedQuality(
+    capture,
+    metrics,
+    call,
+    scope,
+    sourceQuality,
+  );
+  metrics = compared.metrics;
+  assertActive();
 
   await progress({
     phase: "impact",
@@ -860,6 +887,7 @@ async function analyzeStableGroup(
   return {
     findings,
     metrics,
+    qualityComparison: compared.coverage,
     impact: {
       symbols: symbols.length ? affected.size : null,
       files: symbols.length ? files.size : null,

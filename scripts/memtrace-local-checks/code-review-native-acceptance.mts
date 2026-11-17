@@ -250,7 +250,7 @@ test('receipt calls format',()=>assert.equal(receipt(2),'Total: $2.00'));
       ),
     };
     report.engine = {
-      nativeSourceCommit: "6ec252fb65599d3a2aaae8df7daf5ae934c6a58a",
+      nativeSourceCommit: git(nativeSource, "rev-parse", "HEAD"),
       sha256: hash(await readFile(join(candidate, nativeName))),
     };
     assert.equal(
@@ -564,6 +564,24 @@ test('receipt calls format',()=>assert.equal(receipt(2),'Total: $2.00'));
       ),
       "Native measured quality must reach every story",
     );
+    if (process.env.MEMCODE_EXPECT_SOURCE_QUALITY === "1") {
+      assert.ok(
+        runs.every((run) =>
+          run.metrics.some(
+            (metric) =>
+              metric.comparison?.status === "matched" &&
+              /^[a-f0-9]{64}$/.test(metric.comparison.beforeSourceHash ?? "") &&
+              /^[a-f0-9]{64}$/.test(metric.comparison.afterSourceHash ?? "") &&
+              metric.before?.cognitive !== null &&
+              metric.before?.cognitive !== undefined &&
+              metric.before?.maintainabilityIndex !== null &&
+              metric.before?.maintainabilityIndex !== undefined,
+          ),
+        ),
+        "Every story must include actual source-bound before/after native measurements",
+      );
+      report.sourceQualityComparisonsVerified = true;
+    }
     assert.ok(
       runs.every((run) => run.checks.some((c) => c.state === "passed")),
       "Actual linked checks must reach every story",
@@ -630,6 +648,15 @@ test('receipt calls format',()=>assert.equal(receipt(2),'Total: $2.00'));
       rerun.metrics.length > 0,
       "Follow-up must retain attributable AST measurements",
     );
+    if (process.env.MEMCODE_EXPECT_SOURCE_QUALITY === "1")
+      assert.ok(
+        rerun.metrics.some(
+          (metric) =>
+            metric.comparison?.status === "matched" &&
+            metric.before?.cognitive != null,
+        ),
+        "Fix/review must preserve exact native before/after measurements across peer-safe journal segments",
+      );
     assert.ok(
       rerun.checks.some((c) => c.state === "passed"),
       "Follow-up must retain linked verification",

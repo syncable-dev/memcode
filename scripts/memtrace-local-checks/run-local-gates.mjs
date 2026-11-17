@@ -5,6 +5,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { expectedEngineCommit } from "./source-selection.mjs";
 const args = process.argv.slice(2),
   option = (name) => {
     const i = args.indexOf(name);
@@ -18,7 +19,7 @@ assert.equal(process.arch, "arm64");
 const sourceCommit = execFileSync("git", ["-C", source, "rev-parse", "HEAD"], {
   encoding: "utf8",
 }).trim();
-assert.equal(sourceCommit, "6ec252fb65599d3a2aaae8df7daf5ae934c6a58a");
+assert.equal(sourceCommit, expectedEngineCommit(args));
 const { parseUnitGate, fastTestProfile } = await import(
   pathToFileURL(join(source, "scripts/run-memcode-engine-unit-gates.mjs")).href
 );

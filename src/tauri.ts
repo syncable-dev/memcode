@@ -334,6 +334,16 @@ export async function installNativeBridge(): Promise<void> {
     startCodeReview: (taskId) => call("code-review:start", { taskId }),
     cancelCodeReview: (taskId, runId) =>
       call("code-review:cancel", { taskId, runId }),
+    dismissCodeReviewFinding: (taskId, runId, findingId, reason, explanation) =>
+      call("code-review:dismiss-finding", {
+        taskId,
+        runId,
+        findingId,
+        reason,
+        explanation,
+      }),
+    reopenCodeReviewFinding: (taskId, runId, findingId) =>
+      call("code-review:reopen-finding", { taskId, runId, findingId }),
     sendCodeReviewMessage: (taskId, runId, text) =>
       call("code-review:discuss", { taskId, runId, text }),
     requestCodeReviewFixes: (taskId, runId, findingIds, text) =>

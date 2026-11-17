@@ -81,6 +81,20 @@ test("the actual runtime routes a card into its dedicated review and final accep
           { taskId: story.id, runId: "unstarted", findingIds: [] },
         ],
         ["code-review:accept", { taskId: story.id, runId: "unstarted" }],
+        [
+          "code-review:dismiss-finding",
+          {
+            taskId: story.id,
+            runId: "unstarted",
+            findingId: "finding",
+            reason: "other",
+            explanation: "A documented human decision",
+          },
+        ],
+        [
+          "code-review:reopen-finding",
+          { taskId: story.id, runId: "unstarted", findingId: "finding" },
+        ],
       ] as const)
         await assert.rejects(
           runtime.request(method, input),
@@ -111,6 +125,39 @@ test("the actual runtime routes a card into its dedicated review and final accep
     assert.equal(review?.outcome, "not-applicable");
     assert.equal(review?.findings.length, 0);
     assert.equal(review?.metrics.length, 0);
+    await assert.rejects(
+      runtime.request("code-review:dismiss-finding", {
+        taskId: story.id,
+        runId: review!.id,
+        findingId: "finding",
+        reason: "other",
+        explanation: "A documented human decision",
+      }),
+      /not part/,
+    );
+    await assert.rejects(
+      runtime.request("code-review:reopen-finding", {
+        taskId: story.id,
+        runId: review!.id,
+        findingId: "finding",
+      }),
+      /not part/,
+    );
+    for (const input of [
+      { reason: "unsupported", explanation: "A reason" },
+      { reason: "other", explanation: " " },
+      { reason: "other", explanation: "x".repeat(2001) },
+      { reason: "other", explanation: "A reason", actor: { name: "Forged" } },
+    ])
+      await assert.rejects(
+        runtime.request("code-review:dismiss-finding", {
+          taskId: story.id,
+          runId: review!.id,
+          findingId: "finding",
+          ...input,
+        }),
+        /Invalid|Too|Unrecognized/,
+      );
     await runtime.request("code-review:accept", {
       taskId: story.id,
       runId: review!.id,

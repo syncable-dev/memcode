@@ -50,6 +50,7 @@ import { ManagedRetrievalAssistant } from "./context/managed-assistant";
 import { ProductTelemetry, observeTelemetryMutation } from "./telemetry";
 import { runTaskVerification } from "./verification";
 import { CodeReviewManager } from "./code-review";
+import { codeReviewDismissalReasons } from "../src/code-review";
 import {
   prepareReviewAnalysis,
   repairReviewPublication,
@@ -1116,6 +1117,8 @@ export async function createRuntime(
     workers,
   );
   codeReviews = new CodeReviewManager(store.dir, state, engine, changed, {
+    actor: (item) =>
+      team?.identity(item.projectId) ?? connections.account.current.principal,
     reviewProject: (item, parent) => epicAnalysisProject(parent, item),
     engineVersion: (item) => engine.versionFor(item.id) ?? "Not reported",
     reviewer: createReadonlyReviewAgent(store.dir, state),
@@ -1183,6 +1186,34 @@ export async function createRuntime(
   });
   register("code-review:cancel", reviewRun, ({ taskId, runId }) =>
     codeReviews.cancel(taskId, runId),
+  );
+  register(
+    "code-review:dismiss-finding",
+    reviewRun
+      .extend({
+        findingId: identifier,
+        reason: z.enum(codeReviewDismissalReasons.map((item) => item.id)),
+        explanation: nonempty.max(2000),
+      })
+      .strict(),
+    ({ taskId, runId, findingId, reason, explanation }) => {
+      requireReviewLane(taskId);
+      return codeReviews.dismissFinding(
+        taskId,
+        runId,
+        findingId,
+        reason,
+        explanation,
+      );
+    },
+  );
+  register(
+    "code-review:reopen-finding",
+    reviewRun.extend({ findingId: identifier }).strict(),
+    ({ taskId, runId, findingId }) => {
+      requireReviewLane(taskId);
+      return codeReviews.reopenFinding(taskId, runId, findingId);
+    },
   );
   register(
     "code-review:discuss",

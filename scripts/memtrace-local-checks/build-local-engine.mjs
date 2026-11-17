@@ -5,6 +5,7 @@ import { createReadStream } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { spawn, execFileSync } from "node:child_process";
+import { expectedEngineCommit } from "./source-selection.mjs";
 const args = process.argv.slice(2),
   option = (name) => {
     const i = args.indexOf(name);
@@ -18,7 +19,7 @@ assert.equal(process.arch, "arm64");
 const git = (...a) =>
   execFileSync("git", ["-C", source, ...a], { encoding: "utf8" }).trim();
 const sourceCommit = git("rev-parse", "HEAD");
-assert.equal(sourceCommit, "6ec252fb65599d3a2aaae8df7daf5ae934c6a58a");
+assert.equal(sourceCommit, expectedEngineCommit(args));
 git(
   "diff",
   "--exit-code",

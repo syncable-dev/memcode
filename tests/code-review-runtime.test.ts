@@ -1,10 +1,21 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AppState, WorkItem } from "../src/shared";
-import type { StoryReviewRun } from "../src/code-review";
+import {
+  activeCodeReviewFindings,
+  reviewFindingDisposition,
+  type StoryReviewRun,
+} from "../src/code-review";
 import type { StoryReviewCapture } from "../runtime/code-review-snapshot";
 import { initialState } from "../src/seed";
 import { CodeReviewManager } from "../runtime/code-review";
@@ -197,6 +208,7 @@ async function fixture() {
   };
   const manager = (
     extra: Partial<ConstructorParameters<typeof CodeReviewManager>[4]> = {},
+    onChanged?: () => unknown | Promise<unknown>,
   ) =>
     new CodeReviewManager(
       directory,
@@ -204,6 +216,7 @@ async function fixture() {
       engine,
       () => {
         notices++;
+        return onChanged?.();
       },
       { ...hooks, ...extra },
       deps,
@@ -930,6 +943,501 @@ test("missing expected AST maintainability stays unknown and makes coverage part
     assert.equal(zero.metrics[0].halsteadVolume, 0);
     assert.equal(zero.outcome, "ready");
   } finally {
+    await f.close();
+  }
+});
+
+function addReviewFinding(f: Awaited<ReturnType<typeof fixture>>) {
+  f.answers.find_code_review_issues.issues = [
+    {
+      pattern_id: "unsafe_return",
+      _source: "ast",
+      severity: "High",
+      path: "src/main.ts",
+      line: 1,
+      message: "The changed return skips validation.",
+      evidence: { callee: "validate" },
+    },
+  ];
+}
+
+test("dismissals persist evidence-bound human reasons and reopen without removing detector evidence", async () => {
+  const f = await fixture(),
+    client = f.manager({
+      actor: () => ({
+        id: "account-1",
+        name: "Test reviewer",
+        source: "memtrace",
+      }),
+    });
+  let restored: CodeReviewManager | undefined;
+  try {
+    addReviewFinding(f);
+    await client.start("t");
+    const original = await f.settled(client),
+      finding = original.findings[0];
+    const dismissed = await client.dismissFinding(
+      "t",
+      original.id,
+      finding.id,
+      "false-positive",
+      " The caller has already validated this value. ",
+    );
+    assert.deepEqual(
+      dismissed.findings,
+      original.findings,
+      "detector evidence is immutable",
+    );
+    assert.deepEqual(dismissed.checks, original.checks);
+    assert.deepEqual(dismissed.coverage, original.coverage);
+    assert.equal(activeCodeReviewFindings(dismissed).length, 0);
+    assert.equal(dismissed.outcome, "ready");
+    assert.equal(f.task.codeReview?.findingCount, 0);
+    assert.equal(
+      f.accepted(),
+      0,
+      "triage never automatically accepts the story",
+    );
+    const decision = reviewFindingDisposition(dismissed, finding.id)!;
+    assert.equal(
+      decision.explanation,
+      "The caller has already validated this value.",
+    );
+    assert.deepEqual(decision.actor, {
+      id: "account-1",
+      name: "Test reviewer",
+      source: "memtrace",
+    });
+    assert.equal(decision.snapshotId, original.snapshot.id);
+    assert.equal(decision.patchHash, original.snapshot.patchHash);
+    assert.match(decision.evidenceHash, /^[a-f0-9]{64}$/);
+    assert.equal(decision.evidenceHash, finding.evidenceHash);
+    assert.ok(Number.isFinite(Date.parse(decision.at)));
+    await assert.rejects(
+      client.requestFixes("t", original.id, [finding.id]),
+      /Reopen dismissed/,
+    );
+    assert.equal(f.fixes.length, 0);
+    await assert.rejects(
+      client.dismissFinding(
+        "t",
+        original.id,
+        finding.id,
+        "other",
+        "Another explanation",
+      ),
+      /already dismissed/,
+    );
+    await client.close();
+    restored = f.manager();
+    assert.deepEqual(
+      (await restored.get("t"))?.findingDispositions,
+      dismissed.findingDispositions,
+    );
+    const reopened = await restored.reopenFinding("t", original.id, finding.id);
+    assert.equal(activeCodeReviewFindings(reopened).length, 1);
+    assert.equal(reopened.outcome, "changes-requested");
+    assert.equal(f.task.codeReview?.findingCount, 1);
+    assert.equal(reopened.findingDispositions!.length, 2);
+    assert.equal(reopened.findingDispositions![0].status, "dismissed");
+    assert.equal(reopened.findingDispositions![1].status, "reopened");
+    assert.deepEqual(reopened.findingDispositions![1].actor, {
+      id: "local-owner",
+      name: "Local user",
+      source: "local",
+    });
+    await assert.rejects(restored.accept("t", original.id), /Resolve active/);
+    await assert.rejects(
+      restored.reopenFinding("t", original.id, finding.id),
+      /not dismissed/,
+    );
+    await restored.dismissFinding(
+      "t",
+      original.id,
+      finding.id,
+      "accepted-risk",
+      "This risk is acceptable for the controlled prototype.",
+    );
+    await restored.accept("t", original.id);
+    assert.equal(f.accepted(), 1);
+  } finally {
+    await restored?.close();
+    await client.close();
+    await f.close();
+  }
+});
+
+test("dismissal input, current run, current source and review-lane guards are enforced", async () => {
+  const f = await fixture();
+  try {
+    addReviewFinding(f);
+    await f.instance.start("t");
+    const run = await f.settled(),
+      id = run.findings[0].id;
+    for (const [reason, explanation] of [
+      ["unknown", "Why"],
+      ["other", "   "],
+      ["other", "x".repeat(2001)],
+    ])
+      await assert.rejects(
+        f.instance.dismissFinding("t", run.id, id, reason as any, explanation),
+        /reason|2,000/,
+      );
+    await assert.rejects(
+      f.instance.dismissFinding("t", "earlier-run", id, "other", "Why"),
+      /current review/,
+    );
+    await assert.rejects(
+      f.instance.dismissFinding("t", run.id, "unknown", "other", "Why"),
+      /not part/,
+    );
+    f.task.stage = "done";
+    const saved = await f.instance.get("t");
+    assert.equal(
+      saved?.id,
+      run.id,
+      "saved results remain readable after lane exit",
+    );
+    await assert.rejects(
+      f.instance.dismissFinding("t", run.id, id, "other", "Why"),
+      /Code review lane/,
+    );
+    f.task.stage = "review";
+    f.task.run.state = "running";
+    await assert.rejects(
+      f.instance.dismissFinding("t", run.id, id, "other", "Why"),
+      /current completed review/,
+    );
+    f.task.run.state = "finished";
+    f.setBinding("new-source");
+    await assert.rejects(
+      f.instance.dismissFinding("t", run.id, id, "other", "Why"),
+      /source changed/,
+    );
+    assert.equal(
+      (await f.instance.get("t"))?.findingDispositions?.length ?? 0,
+      0,
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test("a stale dismissal cannot be reopened against changed code", async () => {
+  const f = await fixture();
+  try {
+    addReviewFinding(f);
+    await f.instance.start("t");
+    const run = await f.settled(),
+      id = run.findings[0].id;
+    await f.instance.dismissFinding(
+      "t",
+      run.id,
+      id,
+      "not-applicable",
+      "This path is excluded by the public contract.",
+    );
+    f.setBinding("new-source");
+    await assert.rejects(
+      f.instance.reopenFinding("t", run.id, id),
+      /source changed/,
+    );
+    assert.equal((await f.instance.get("t"))?.findingDispositions?.length, 1);
+  } finally {
+    await f.close();
+  }
+});
+
+test("dismissing every finding cannot hide failed checks or incomplete coverage", async (t) => {
+  for (const mode of ["failed-checks", "missing-quality"])
+    await t.test(mode, async () => {
+      const f = await fixture();
+      try {
+        addReviewFinding(f);
+        if (mode === "failed-checks") f.task.run.checks!.failed = 1;
+        else
+          f.answers.get_function_quality_metrics.function.cognitive_complexity =
+            null;
+        await f.instance.start("t");
+        const run = await f.settled();
+        const after = await f.instance.dismissFinding(
+          "t",
+          run.id,
+          run.findings[0].id,
+          "false-positive",
+          "The detector missed the caller's validation.",
+        );
+        assert.deepEqual(after.coverage, run.coverage);
+        assert.deepEqual(after.checks, run.checks);
+        assert.equal(activeCodeReviewFindings(after).length, 0);
+        assert.equal(
+          after.outcome,
+          mode === "failed-checks" ? "changes-requested" : "incomplete",
+        );
+        await assert.rejects(f.instance.accept("t", run.id), /Resolve/);
+        if (mode === "failed-checks")
+          await assert.rejects(
+            f.instance.accept("t", run.id, "I dismissed the finding"),
+            /failed checks/,
+          );
+      } finally {
+        await f.close();
+      }
+    });
+});
+
+test("a new review never inherits dismissed findings from an earlier snapshot", async () => {
+  const f = await fixture();
+  try {
+    addReviewFinding(f);
+    await f.instance.start("t");
+    const run = await f.settled();
+    await f.instance.dismissFinding(
+      "t",
+      run.id,
+      run.findings[0].id,
+      "other",
+      "A deliberate tradeoff for this review only.",
+    );
+    await f.instance.start("t");
+    const next = await f.settled();
+    assert.notEqual(next.id, run.id);
+    assert.equal(next.findingDispositions?.length ?? 0, 0);
+    assert.equal(activeCodeReviewFindings(next).length, 1);
+    assert.equal(next.outcome, "changes-requested");
+    const entries = await readdir(join(f.directory, "code-reviews"), {
+      recursive: true,
+    });
+    assert.ok(
+      entries.some((path) => path.endsWith(run.id + ".json")),
+      "earlier audit remains saved",
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test("changed saved detector evidence invalidates its dismissal; old reviews without dispositions still load", async () => {
+  const f = await fixture();
+  let restored: CodeReviewManager | undefined;
+  try {
+    addReviewFinding(f);
+    await f.instance.start("t");
+    const run = await f.settled();
+    await f.instance.dismissFinding(
+      "t",
+      run.id,
+      run.findings[0].id,
+      "other",
+      "A measured exception for this exact evidence.",
+    );
+    await f.instance.close();
+    const entries = await readdir(join(f.directory, "code-reviews"), {
+      recursive: true,
+    });
+    const savedPath = join(
+      f.directory,
+      "code-reviews",
+      entries.find((path) => path.endsWith(run.id + ".json"))!,
+    );
+    const saved = JSON.parse(await readFile(savedPath, "utf8"));
+    saved.run.findings[0].explanation += " New detector evidence.";
+    await writeFile(savedPath, JSON.stringify(saved));
+    restored = f.manager();
+    const after = (await restored.get("t"))!;
+    assert.equal(
+      after.findingDispositions!.length,
+      1,
+      "audit is not silently deleted",
+    );
+    assert.equal(
+      reviewFindingDisposition(after, after.findings[0].id),
+      undefined,
+    );
+    assert.equal(activeCodeReviewFindings(after).length, 1);
+    assert.equal(after.outcome, "changes-requested");
+    await assert.rejects(restored.accept("t", run.id), /Resolve active/);
+    await restored.close();
+    delete saved.run.findingDispositions;
+    delete saved.run.findings[0].evidenceHash;
+    await writeFile(savedPath, JSON.stringify(saved));
+    restored = f.manager();
+    const legacy = (await restored.get("t"))!;
+    assert.equal(activeCodeReviewFindings(legacy).length, 1);
+    assert.match(legacy.findings[0].evidenceHash!, /^[a-f0-9]{64}$/);
+  } finally {
+    await restored?.close();
+    await f.close();
+  }
+});
+
+test("a reviewer answer and finding decisions cannot race one another", async () => {
+  const f = await fixture();
+  let answerCount = 0,
+    entered!: () => void,
+    release: (() => void) | undefined;
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const client = f.manager({
+    reviewer: {
+      ask: async () => {
+        if (++answerCount > 1) {
+          entered();
+          await new Promise<void>((resolve) => {
+            release = resolve;
+          });
+        }
+        return {
+          harness: "cursor",
+          model: "test-model",
+          text: "The evidence is unchanged.",
+        };
+      },
+    },
+  });
+  try {
+    addReviewFinding(f);
+    await client.start("t");
+    const run = await f.settled(client),
+      id = run.findings[0].id;
+    const answer = client.discuss("t", run.id, "Explain this finding.");
+    await started;
+    await assert.rejects(
+      client.dismissFinding(
+        "t",
+        run.id,
+        id,
+        "false-positive",
+        "The call is already checked.",
+      ),
+      /reviewer's answer/,
+    );
+    assert.equal((await client.get("t"))?.findingDispositions?.length ?? 0, 0);
+    release!();
+    await answer;
+    assert.equal(
+      (
+        await client.dismissFinding(
+          "t",
+          run.id,
+          id,
+          "false-positive",
+          "The call is already checked.",
+        )
+      ).outcome,
+      "ready",
+    );
+  } finally {
+    release?.();
+    await client.close();
+    await f.close();
+  }
+});
+
+test("a real failed decision-file write cannot leave an unsaved dismissal active", async () => {
+  const f = await fixture();
+  let restored: CodeReviewManager | undefined;
+  try {
+    addReviewFinding(f);
+    await f.instance.start("t");
+    const before = await f.settled(),
+      summary = structuredClone(f.task.codeReview);
+    const entries = await readdir(join(f.directory, "code-reviews"), {
+      recursive: true,
+    });
+    const path = join(
+      f.directory,
+      "code-reviews",
+      entries.find((item) => item.endsWith(before.id + ".json"))!,
+    );
+    const diskBefore = await readFile(path, "utf8");
+    // Real filesystem failure: opening the decision's prepared-file path as a
+    // file fails because that exact path is occupied by a directory.
+    await mkdir(path + ".next");
+    await assert.rejects(
+      f.instance.dismissFinding(
+        "t",
+        before.id,
+        before.findings[0].id,
+        "other",
+        "A deliberate exception.",
+      ),
+      /EISDIR|EPERM|EACCES/,
+    );
+    assert.deepEqual(await f.instance.get("t"), before);
+    assert.deepEqual(f.task.codeReview, summary);
+    assert.equal(await readFile(path, "utf8"), diskBefore);
+    await assert.rejects(f.instance.accept("t", before.id), /Resolve active/);
+    await f.instance.close();
+    restored = f.manager();
+    const reloaded = (await restored.get("t"))!;
+    assert.equal(activeCodeReviewFindings(reloaded).length, 1);
+    assert.equal(reloaded.outcome, "changes-requested");
+    assert.equal(reloaded.findingDispositions?.length ?? 0, 0);
+    await assert.rejects(restored.accept("t", before.id), /Resolve active/);
+  } finally {
+    await restored?.close();
+    await f.close();
+  }
+});
+
+test("a failed summary callback rolls back triage before the authoritative report commits", async () => {
+  const f = await fixture();
+  let failNext = false,
+    observedSummary: typeof f.task.codeReview;
+  const client = f.manager({}, () => {
+    observedSummary = structuredClone(f.task.codeReview);
+    if (failNext) {
+      failNext = false;
+      throw Error("Workspace summary save failed");
+    }
+  });
+  let restored: CodeReviewManager | undefined;
+  try {
+    addReviewFinding(f);
+    await client.start("t");
+    const before = await f.settled(client),
+      summary = structuredClone(f.task.codeReview);
+    failNext = true;
+    await assert.rejects(
+      client.dismissFinding(
+        "t",
+        before.id,
+        before.findings[0].id,
+        "false-positive",
+        "The caller already validates it.",
+      ),
+      /Workspace summary save failed/,
+    );
+    assert.deepEqual(await client.get("t"), before);
+    assert.deepEqual(f.task.codeReview, summary);
+    assert.deepEqual(
+      observedSummary,
+      summary,
+      "rollback callback sees the original summary",
+    );
+    await assert.rejects(client.accept("t", before.id), /Resolve active/);
+    await client.close();
+    restored = f.manager();
+    assert.deepEqual(
+      await restored.get("t"),
+      JSON.parse(JSON.stringify(before)),
+      "restart reads the original report",
+    );
+    // After the problem is corrected, a new explicit action commits normally.
+    const committed = await restored.dismissFinding(
+      "t",
+      before.id,
+      before.findings[0].id,
+      "false-positive",
+      "The caller already validates it.",
+    );
+    assert.equal(committed.outcome, "ready");
+    assert.equal(committed.findingDispositions?.length, 1);
+  } finally {
+    await restored?.close();
+    await client.close();
     await f.close();
   }
 });

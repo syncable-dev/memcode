@@ -17,6 +17,42 @@ code structure; it is not a probability that the change is correct. Missing or
 stale measurements do not become a passing score. Open a finding to see its rule,
 source location, detector evidence and affected code before deciding what to do.
 
+### Compare the quality
+
+**Before & after** shows maintainability, cognitive complexity, cyclomatic
+complexity and nesting for the same matched functions. Higher maintainability is
+better; lower complexity and nesting are better. Each chart gives its own matched
+function count. Expand **Measured functions** to inspect an individual function
+and open its current source.
+
+Both sides are measured by Memtrace's native AST parser from the captured source,
+without changing your checkout or opening another index. New and removed
+functions stay separate. Renames, duplicate declarations, missing measurements
+and bounded comparison coverage are labelled instead of being counted as zero.
+These are measurements of the captured change, not a correctness grade or a
+project-wide trend.
+
+An older engine or a report saved before comparisons were supported can show
+current measurements without a baseline. Update the engine and run a new review
+to capture both sides. Existing reports are not silently rewritten.
+
+### Dismiss a finding deliberately
+
+Open a finding and choose **Dismiss with reason**. Select a reason, add your
+explanation and choose **Save dismissal**. This saves a decision; it does not
+start a worker, accept the story or mark a check as passed.
+
+Dismissed findings move into **Dismissed findings**, with the original evidence,
+your explanation, identity and time. Choose **Reopen finding** to return one to
+the active list. Decisions and earlier reopen events remain in the saved review
+conversation and history. A fresh review evaluates its findings again; a dismissal
+is not a permanent suppression of that rule.
+
+Finding decisions can be changed only while the story is in Code review and the
+captured source is still current. Acceptance and Done keep the saved decisions
+readable. Failed checks and incomplete coverage still need attention after all
+findings have been dismissed.
+
 The review uses Memtrace's AST, rule-pack, cross-module and online checks. Native
 detector coverage is retained in the report. Checks must be linked to this story's
 implementation and the captured source to count as verification.
@@ -48,9 +84,9 @@ bringing changes together through Git.
 
 ## Current preview boundaries
 
-The desktop preview does not yet provide per-finding dismissal/suppression,
-GitHub PR comment publishing or PR watching, or a before/after quality chart.
-Native before-change file content is still supplied to the detectors. Reviewer
+The desktop preview does not yet provide permanent rule suppression, GitHub PR
+comment publishing or PR watching. Native before-change file content is also
+supplied to the detectors. Reviewer
 answers use a saved evidence capsule rather than unrestricted live repository
 tools. Complete review reports and conversations stay on this device; Team Sync
 shares planning and explicitly published results.

@@ -20,9 +20,11 @@ import type { WorkItem } from "../shared";
 import { harnessNames } from "../shared";
 import { reviewQuality } from "../code-review-presentation";
 import {
+  activeCodeReviewFindings,
   codeReviewPhases,
   codeReviewTitle,
   reviewIsBusy,
+  reviewFindingDisposition,
   type CodeReviewAPI,
   type CodeReviewEvidence,
   type CodeReviewFinding,
@@ -30,6 +32,8 @@ import {
   type StoryReviewRun,
 } from "../code-review";
 import MessageMarkdown from "./MessageMarkdown";
+import ReviewQualityComparison from "./ReviewQualityComparison";
+import ReviewFindingDecision from "./ReviewFindingDecision";
 import { Spinner } from "./UI";
 import "../styles-code-review.css";
 
@@ -121,17 +125,24 @@ export function CodeReview({
     [acceptReason, setAcceptReason] = useState(""),
     [selected, setSelected] = useState<string[]>([]),
     [expanded, setExpanded] = useState<string>(),
-    [allMetrics, setAllMetrics] = useState(false),
+    [dismissedOpen, setDismissedOpen] = useState(false),
     [discussed, setDiscussed] = useState<string>();
   const thread = useRef<HTMLDivElement>(null);
   const composer = useRef<HTMLTextAreaElement>(null);
+  const currentTask = useRef(task.id);
+  const actionEpoch = useRef(0);
+  const selectedRun = useRef<string | undefined>(undefined);
+  currentTask.current = task.id;
   useEffect(() => {
+    actionEpoch.current += 1;
+    setBusy(false);
     setRun(null);
     setLoading(true);
     setDraft("");
     setAcceptReason("");
     setSelected([]);
     setExpanded(undefined);
+    setDismissedOpen(false);
     setDiscussed(undefined);
   }, [task.id]);
   useEffect(() => {
@@ -167,16 +178,44 @@ export function CodeReview({
   useEffect(() => {
     if (thread.current) thread.current.scrollTop = thread.current.scrollHeight;
   }, [run?.messages.length, run?.messages.at(-1)?.text]);
+  useEffect(() => {
+    if (selectedRun.current !== run?.id) {
+      selectedRun.current = run?.id;
+      setSelected([]);
+      setExpanded(undefined);
+      setDismissedOpen(false);
+      return;
+    }
+    const active = new Set(
+      run ? activeCodeReviewFindings(run).map((finding) => finding.id) : [],
+    );
+    setSelected((ids) =>
+      ids.every((id) => active.has(id))
+        ? ids
+        : ids.filter((id) => active.has(id)),
+    );
+  }, [run?.id, run?.findingDispositions]);
   const action = async (operation: () => Promise<unknown>) => {
+    const taskId = task.id,
+      epoch = ++actionEpoch.current;
+    const current = () =>
+      currentTask.current === taskId && actionEpoch.current === epoch;
     setBusy(true);
     setError("");
     try {
       await operation();
-      if (api.getCodeReview) setRun(await api.getCodeReview(task.id));
+      if (!current()) return false;
+      const updated = api.getCodeReview
+        ? await api.getCodeReview(taskId)
+        : undefined;
+      if (!current()) return false;
+      if (updated !== undefined) setRun(updated);
+      return true;
     } catch (failure) {
-      setError((failure as Error).message);
+      if (current()) setError((failure as Error).message);
+      return false;
     } finally {
-      setBusy(false);
+      if (current()) setBusy(false);
     }
   };
   const start = () => {
@@ -184,25 +223,29 @@ export function CodeReview({
     void action(async () => {
       if (!api.startCodeReview)
         throw Error("The local review service is not connected yet.");
-      setRun(await api.startCodeReview(task.id));
+      await api.startCodeReview(task.id);
     });
   };
   const send = () => {
     if (!run || !draft.trim() || !api.sendCodeReviewMessage) return;
     const text = draft.trim();
-    void action(async () => {
-      setRun(await api.sendCodeReviewMessage!(task.id, run.id, text));
-      setDraft("");
-      setDiscussed(undefined);
-    });
+    void action(() => api.sendCodeReviewMessage!(task.id, run.id, text)).then(
+      (saved) => {
+        if (saved) {
+          setDraft("");
+          setDiscussed(undefined);
+        }
+      },
+    );
   };
   const working = reviewIsBusy(run) || run?.reviewer?.state === "running",
-    findings = run?.findings ?? [],
-    metrics = [...(run?.metrics ?? [])].sort(
-      (a, b) =>
-        (a.maintainabilityIndex ?? Infinity) -
-        (b.maintainabilityIndex ?? Infinity),
-    ),
+    findings = run ? activeCodeReviewFindings(run) : [],
+    dismissedFindings =
+      run?.findings.filter(
+        (finding) =>
+          reviewFindingDisposition(run, finding.id)?.status === "dismissed",
+      ) ?? [],
+    metrics = run?.metrics ?? [],
     quality = reviewQuality(run),
     discussionFinding = findings.find((finding) => finding.id === discussed),
     activeWorker = ["preparing", "running", "stopping"].includes(
@@ -210,6 +253,45 @@ export function CodeReview({
     ),
     passed =
       run?.checks.filter((check) => check.state === "passed").length ?? 0;
+  const dispositionDisabled =
+    !canStartReview ||
+    busy ||
+    working ||
+    run?.state !== "completed" ||
+    activeWorker;
+  const dismissFinding = async (
+    finding: CodeReviewFinding,
+    reason: Parameters<CodeReviewAPI["dismissCodeReviewFinding"]>[3],
+    explanation: string,
+  ) => {
+    if (!run || !api.dismissCodeReviewFinding) return false;
+    const saved = await action(() =>
+      api.dismissCodeReviewFinding!(
+        task.id,
+        run.id,
+        finding.id,
+        reason,
+        explanation,
+      ),
+    );
+    if (saved) {
+      setSelected((ids) => ids.filter((id) => id !== finding.id));
+      setDismissedOpen(true);
+      notify("Dismissal saved with this review.");
+    }
+    return saved;
+  };
+  const reopenFinding = async (finding: CodeReviewFinding) => {
+    if (!run || !api.reopenCodeReviewFinding) return false;
+    const saved = await action(() =>
+      api.reopenCodeReviewFinding!(task.id, run.id, finding.id),
+    );
+    if (saved) {
+      setExpanded(finding.id);
+      notify("Finding reopened for review.");
+    }
+    return saved;
+  };
   return (
     <section className="code-review-workspace" aria-label="Story code review">
       <div className="code-review-scroll">
@@ -370,8 +452,8 @@ export function CodeReview({
                 <Sparkles size={16} />
                 <strong>Measured quality</strong>
                 <span>
-                  Measured complexity, nesting and maintainability for the changed
-                  code.
+                  Measured complexity, nesting and maintainability for the
+                  changed code.
                 </span>
               </div>
               <div>
@@ -433,7 +515,9 @@ export function CodeReview({
                       ["critical", "high"].includes(finding.severity),
                     )
                       ? `${findings.filter((finding) => ["critical", "high"].includes(finding.severity)).length} high or critical priority`
-                      : "Inspect the evidence before deciding"}
+                      : dismissedFindings.length
+                        ? `${dismissedFindings.length} dismissed with a saved reason`
+                        : "Inspect the evidence before deciding"}
                   </small>
                 </div>
                 <div>
@@ -511,16 +595,20 @@ export function CodeReview({
                     <strong>
                       {working
                         ? "Checking the change…"
-                        : run.coverage.complete
-                          ? "No actionable findings reported."
-                          : "No findings in the available evidence."}
+                        : dismissedFindings.length
+                          ? `All ${dismissedFindings.length} findings have saved decisions.`
+                          : run.coverage.complete
+                            ? "No actionable findings reported."
+                            : "No findings in the available evidence."}
                     </strong>
                     <p>
                       {working
                         ? "Results appear here as each step finishes."
-                        : run.coverage.complete
-                          ? "Check the quality and verification evidence before accepting."
-                          : "Review the coverage notes before drawing a conclusion."}
+                        : dismissedFindings.length
+                          ? "Dismissed findings remain below. Checks and coverage still need your final look."
+                          : run.coverage.complete
+                            ? "Check the quality and verification evidence before accepting."
+                            : "Review the coverage notes before drawing a conclusion."}
                     </p>
                   </div>
                 </div>
@@ -625,7 +713,7 @@ export function CodeReview({
                               {finding.recommendation}
                             </p>
                           )}
-                          <div>
+                          <div className="code-review-finding-actions">
                             <button
                               className="text-button"
                               onClick={() => onOpenChanges(finding)}
@@ -645,11 +733,106 @@ export function CodeReview({
                               Discuss finding <MessageSquare size={12} />
                             </button>
                           </div>
+                          <ReviewFindingDecision
+                            run={run}
+                            finding={finding}
+                            disabled={
+                              dispositionDisabled ||
+                              !api.dismissCodeReviewFinding
+                            }
+                            onDismiss={(reason, explanation) =>
+                              dismissFinding(finding, reason, explanation)
+                            }
+                            onReopen={() => reopenFinding(finding)}
+                          />
                         </div>
                       )}
                     </article>
                   ))}
                 </div>
+              )}
+              {dismissedFindings.length > 0 && (
+                <details
+                  className="review-dismissed-findings"
+                  open={dismissedOpen}
+                  onToggle={(event) =>
+                    setDismissedOpen(event.currentTarget.open)
+                  }
+                >
+                  <summary>
+                    Dismissed findings <small>{dismissedFindings.length}</small>
+                    <ChevronDown size={13} />
+                  </summary>
+                  <p>
+                    Decisions for this captured review. The original findings
+                    stay intact.
+                  </p>
+                  {dismissedFindings.map((finding) => (
+                    <details
+                      key={finding.id}
+                      className="review-dismissed-finding"
+                    >
+                      <summary>
+                        <span
+                          className={`code-review-severity ${finding.severity}`}
+                        >
+                          {finding.severity}
+                        </span>
+                        <strong>{finding.title}</strong>
+                        <ChevronDown size={12} />
+                      </summary>
+                      <div>
+                        {finding.path && (
+                          <button
+                            className="code-review-file"
+                            onClick={() =>
+                              onOpenSource(finding.path!, finding.line)
+                            }
+                          >
+                            <FileCode2 size={11} />
+                            {finding.path}
+                            {finding.line ? `:${finding.line}` : ""}
+                          </button>
+                        )}
+                        <MessageMarkdown
+                          text={finding.explanation}
+                          onOpenLink={(href) => onOpenSource(href)}
+                        />
+                        {finding.evidenceData !== undefined ? (
+                          <details className="code-review-structured-evidence">
+                            <summary>
+                              Recorded evidence <ChevronDown size={11} />
+                            </summary>
+                            <div>
+                              <ReviewEvidence value={finding.evidenceData} />
+                            </div>
+                          </details>
+                        ) : (
+                          finding.evidence && (
+                            <blockquote>{finding.evidence}</blockquote>
+                          )
+                        )}
+                        <ReviewFindingDecision
+                          run={run}
+                          finding={finding}
+                          disabled={
+                            dispositionDisabled || !api.reopenCodeReviewFinding
+                          }
+                          onDismiss={(reason, explanation) =>
+                            dismissFinding(finding, reason, explanation)
+                          }
+                          onReopen={() => reopenFinding(finding)}
+                        />
+                        {!canStartReview && (
+                          <p className="review-comparison-note">
+                            Move this story to Code review to change a saved
+                            decision.
+                          </p>
+                        )}
+                      </div>
+                    </details>
+                  ))}
+                </details>
               )}
             </section>
             <div className="code-review-evidence-grid">
@@ -668,87 +851,12 @@ export function CodeReview({
                   )}
                 </header>
                 {metrics.length ? (
-                  <div className="code-review-quality">
-                    {(allMetrics ? metrics : metrics.slice(0, 5)).map(
-                      (metric, index) => (
-                        <button
-                          key={`${metric.path}:${metric.symbol}:${index}`}
-                          onClick={() => onOpenSource(metric.path, metric.line)}
-                        >
-                          <div>
-                            <strong>{metric.symbol}</strong>
-                            <small>{metric.path}</small>
-                            <small
-                              title={`Halstead volume: ${measure(metric.halsteadVolume)}${metric.riskLevel ? ` · Engine risk: ${metric.riskLevel}` : ""}`}
-                            >
-                              Maintainability{" "}
-                              {measure(metric.maintainabilityIndex)}
-                              {metric.maintainabilityIndex != null
-                                ? " / 100"
-                                : ""}
-                            </small>
-                            {metric.source !== "ast" && (
-                              <small>
-                                {metric.source === "estimated"
-                                  ? "Estimated measurement"
-                                  : "Measurement unavailable"}
-                              </small>
-                            )}
-                            {metric.maintainabilityIndex != null && (
-                              <span
-                                className="code-review-maintainability"
-                                role="meter"
-                                aria-label={`${metric.symbol} maintainability index`}
-                                aria-valuemin={0}
-                                aria-valuemax={100}
-                                aria-valuenow={metric.maintainabilityIndex}
-                              >
-                                <i
-                                  style={{
-                                    width: `${Math.min(100, Math.max(0, metric.maintainabilityIndex))}%`,
-                                  }}
-                                />
-                              </span>
-                            )}
-                          </div>
-                          <span>
-                            <b>{measure(metric.cognitive)}</b>
-                            <small>
-                              Cognitive
-                              {metric.before?.cognitive !== null &&
-                              metric.before?.cognitive !== undefined
-                                ? ` · was ${metric.before.cognitive}`
-                                : ""}
-                            </small>
-                          </span>
-                          <span>
-                            <b>{measure(metric.cyclomatic)}</b>
-                            <small>Cyclomatic</small>
-                          </span>
-                          <span>
-                            <b>{measure(metric.nesting)}</b>
-                            <small>Nesting</small>
-                          </span>
-                        </button>
-                      ),
-                    )}
-                    {metrics.length > 5 && (
-                      <button
-                        className="code-review-show-all"
-                        onClick={() => setAllMetrics(!allMetrics)}
-                      >
-                        {allMetrics
-                          ? "Show fewer"
-                          : `Show all ${metrics.length} functions`}
-                        <ChevronDown size={12} />
-                      </button>
-                    )}
-                    <p className="code-review-footnote">
-                      {metrics.every((metric) => metric.source === "ast")
-                        ? "AST measurements from Memtrace."
-                        : "Some measurements are estimated or unavailable; open the source for context."}
-                    </p>
-                  </div>
+                  <ReviewQualityComparison
+                    metrics={metrics}
+                    coverage={run.qualityComparison}
+                    onOpenSource={onOpenSource}
+                    onOpenChanges={() => onOpenChanges()}
+                  />
                 ) : (
                   <p className="code-review-unavailable">
                     {working

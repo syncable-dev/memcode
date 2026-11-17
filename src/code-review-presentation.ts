@@ -24,6 +24,7 @@ export function reviewQuality(
   const functions = new Map<string, number | null>();
   let ambiguous = false;
   for (const metric of run?.metrics ?? []) {
+    if (metric.comparison?.status === "removed") continue;
     if (!metric.path.trim() || !metric.symbol.trim()) {
       ambiguous = true;
       continue;

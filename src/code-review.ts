@@ -1,4 +1,5 @@
 import type { Harness, Message } from "./shared";
+import type { StoryAuthor } from "./story-comments";
 
 export const codeReviewPhases = [
   {
@@ -65,6 +66,8 @@ export interface CodeReviewEngineAudit {
 }
 export interface CodeReviewFinding {
   id: string;
+  /** Runtime digest of the saved detector evidence; never a native confidence score. */
+  evidenceHash?: string;
   title: string;
   explanation: string;
   severity: "critical" | "high" | "medium" | "low" | "info";
@@ -85,6 +88,27 @@ export interface CodeReviewFinding {
   evidenceTruncated?: boolean;
   recommendation?: string;
 }
+export const codeReviewDismissalReasons = [
+  { id: "false-positive", label: "False positive" },
+  { id: "accepted-risk", label: "Accepted risk" },
+  { id: "not-applicable", label: "Not applicable" },
+  { id: "already-addressed", label: "Already addressed" },
+  { id: "other", label: "Other reason" },
+] as const;
+export type CodeReviewDismissalReason =
+  (typeof codeReviewDismissalReasons)[number]["id"];
+export interface CodeReviewFindingDisposition {
+  id: string;
+  findingId: string;
+  status: "dismissed" | "reopened";
+  reason?: CodeReviewDismissalReason;
+  explanation?: string;
+  at: string;
+  actor: StoryAuthor;
+  snapshotId: string;
+  patchHash: string;
+  evidenceHash: string;
+}
 export interface CodeReviewMetric {
   symbol: string;
   path: string;
@@ -99,6 +123,17 @@ export interface CodeReviewMetric {
     cognitive: number | null;
     cyclomatic: number | null;
     nesting: number | null;
+    maintainabilityIndex?: number | null;
+    halsteadVolume?: number | null;
+    line?: number;
+  };
+  comparison?: {
+    status: "matched" | "added" | "removed" | "ambiguous" | "unavailable";
+    reason?: string;
+    beforeSourceHash?: string;
+    afterSourceHash?: string;
+    metricsVersion?: number;
+    qualityMetricsVersion?: number;
   };
   source: "ast" | "estimated" | "unavailable";
 }
@@ -107,6 +142,13 @@ export interface CodeReviewCheck {
   state: "passed" | "failed" | "unavailable";
   detail?: string;
   at?: string;
+}
+export interface CodeReviewComparisonCoverage {
+  filesMeasured: number;
+  filesUnavailable: number;
+  omittedFiles: number;
+  omittedFunctions: number;
+  notes: string[];
 }
 export interface StoryReviewRun {
   version: 1;
@@ -156,7 +198,10 @@ export interface StoryReviewRun {
   };
   coverage: { complete: boolean; limitations: string[] };
   findings: CodeReviewFinding[];
+  /** Human decisions are per-run audit events; detector findings remain intact. */
+  findingDispositions?: CodeReviewFindingDisposition[];
   metrics: CodeReviewMetric[];
+  qualityComparison?: CodeReviewComparisonCoverage;
   impact: {
     symbols: number | null;
     files: number | null;
@@ -177,6 +222,18 @@ export interface CodeReviewAPI {
   getCodeReview(taskId: string): Promise<StoryReviewRun | null>;
   startCodeReview(taskId: string): Promise<StoryReviewRun>;
   cancelCodeReview(taskId: string, runId: string): Promise<void>;
+  dismissCodeReviewFinding(
+    taskId: string,
+    runId: string,
+    findingId: string,
+    reason: CodeReviewDismissalReason,
+    explanation: string,
+  ): Promise<StoryReviewRun>;
+  reopenCodeReviewFinding(
+    taskId: string,
+    runId: string,
+    findingId: string,
+  ): Promise<StoryReviewRun>;
   sendCodeReviewMessage(
     taskId: string,
     runId: string,
@@ -193,6 +250,52 @@ export interface CodeReviewAPI {
     runId: string,
     reason?: string,
   ): Promise<void>;
+}
+
+/** Only the latest decision bound to this exact snapshot and evidence applies. */
+export function reviewFindingDisposition(
+  run: Pick<StoryReviewRun, "findings" | "findingDispositions" | "snapshot">,
+  findingId: string,
+): CodeReviewFindingDisposition | undefined {
+  const finding = run.findings.find((item) => item.id === findingId);
+  if (!finding?.evidenceHash) return undefined;
+  const events = run.findingDispositions ?? [];
+  for (let index = events.length - 1; index >= 0; index--) {
+    const item = events[index];
+    if (
+      item !== null &&
+      typeof item === "object" &&
+      item.findingId === findingId &&
+      item.snapshotId === run.snapshot.id &&
+      item.patchHash === run.snapshot.patchHash &&
+      item.evidenceHash === finding.evidenceHash &&
+      typeof item.id === "string" &&
+      typeof item.at === "string" &&
+      !!item.actor &&
+      typeof item.actor.id === "string" &&
+      typeof item.actor.name === "string" &&
+      (item.actor.source === "local" || item.actor.source === "memtrace") &&
+      (item.status !== "dismissed" ||
+        (codeReviewDismissalReasons.some(
+          (reason) => reason.id === item.reason,
+        ) &&
+          typeof item.explanation === "string" &&
+          item.explanation.trim().length > 0 &&
+          item.explanation.length <= 2000)) &&
+      (item.status === "dismissed" || item.status === "reopened")
+    )
+      return item;
+  }
+  return undefined;
+}
+
+export function activeCodeReviewFindings(
+  run: Pick<StoryReviewRun, "findings" | "findingDispositions" | "snapshot">,
+): CodeReviewFinding[] {
+  return run.findings.filter(
+    (finding) =>
+      reviewFindingDisposition(run, finding.id)?.status !== "dismissed",
+  );
 }
 
 export function codeReviewTitle(
