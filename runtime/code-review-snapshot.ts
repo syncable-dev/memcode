@@ -7,6 +7,7 @@ import type { StoryReviewRun } from "../src/code-review";
 import { readWorkerChanges } from "./changes";
 import { checkSourceBinding } from "./verification";
 import { git, within } from "./local";
+import { projectStoryContribution } from "./code-review-projection";
 
 const digest = (value: string | Buffer) =>
   createHash("sha256").update(value).digest("hex");
@@ -157,12 +158,13 @@ export async function captureStoryReview(
   const captured: StoryReviewRun["snapshot"]["files"] = [];
   for (const [path, file] of files) {
     if (file.beforeHash === file.afterHash) continue;
-    captured.push({
+    const entry: StoryReviewRun["snapshot"]["files"][number] = {
       path,
       beforeHash: file.beforeHash,
       afterHash: file.afterHash,
       attribution: file.attribution,
-    });
+    };
+    captured.push(entry);
     if (file.attribution === "discontinuous") {
       limitations.add(
         `Changes to ${path} include an intervening edit. They were not attributed to this story as one patch.`,
@@ -176,16 +178,24 @@ export async function captureStoryReview(
     const candidate = resolve(root, path);
     if (!within(root, candidate))
       throw Error("A changed file resolves outside this project.");
-    let currentHash: string | undefined;
+    let currentHash: string | undefined, current: Buffer | undefined;
     try {
       const actual = await realpath(candidate);
       if (!within(root, actual))
         throw Error("A changed file resolves outside this project.");
-      currentHash = digest(await boundedContent(actual));
+      current = await boundedContent(actual);
+      currentHash = digest(current);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
-    if (currentHash !== file.afterHash) {
+    const needsProjection = currentHash !== file.afterHash;
+    if (
+      needsProjection &&
+      (!file.beforeHash ||
+        !file.afterHash ||
+        !current ||
+        file.attribution !== "reservation")
+    ) {
       limitations.add(
         `${path} changed after the story's last checkpoint. Capture its current contribution before reviewing.`,
       );
@@ -202,6 +212,28 @@ export async function captureStoryReview(
     try {
       oldText = decoder.decode(before);
       newText = decoder.decode(after);
+      if (needsProjection) {
+        const currentText = decoder.decode(current!);
+        const projection = projectStoryContribution(
+          oldText,
+          newText,
+          currentText,
+        );
+        if (!projection.ok) {
+          limitations.add(
+            `${path} changed after the story's last checkpoint. ${projection.reason}`,
+          );
+          continue;
+        }
+        oldText = projection.baseline;
+        newText = currentText;
+        entry.projection = {
+          method: "unique-exact-context",
+          baselineHash: digest(oldText),
+          currentHash: currentHash!,
+          hunks: projection.hunks,
+        };
+      }
     } catch {
       limitations.add(`${path} cannot be decoded as UTF-8 source.`);
       continue;
