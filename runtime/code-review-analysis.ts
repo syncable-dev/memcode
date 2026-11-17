@@ -388,6 +388,23 @@ function certificate(value: Json, project: Project): boolean {
   );
 }
 
+function pendingPublication(value: Json, project: Project): boolean {
+  return (
+    value.ready === false &&
+    value.status === "partial" &&
+    value.repo_id === project.repoId &&
+    value.branch === project.branch &&
+    typeof value.worktree === "string" &&
+    key(value.worktree) === key(project.path!) &&
+    !!text(value.source_revision) &&
+    value.source_unchanged_during_observation === true &&
+    value.publication?.status === "partial" &&
+    !!text(value.publication.token) &&
+    publication(value) === value.publication.token &&
+    graph(value)?.publication_unchanged_during_call === false
+  );
+}
+
 function reviewFindings(
   value: Json,
   paths: Set<string>,
@@ -505,7 +522,7 @@ function reviewFindings(
   return [...new Map(found.map((item) => [item.id, item])).values()];
 }
 
-/** Only query the captured contribution; no repository-wide quality scan or re-index. */
+/** Measure only the captured contribution; recovery may genuinely republish its exact local graph. */
 async function analyzeStableGroup(
   engine: ReviewEngine,
   project: Project,
@@ -513,6 +530,7 @@ async function analyzeStableGroup(
   progress: (value: AnalysisProgress) => Promise<void>,
   assertActive: () => void,
   retryPublication: boolean,
+  recoverPublication?: (sourceRevision: string) => Promise<void>,
 ): Promise<StoryReviewAnalysis> {
   const limitations = new Set(capture.limitations),
     observations: Json[] = [];
@@ -558,6 +576,23 @@ async function analyzeStableGroup(
   }
   // Only observations inside this group's opening/closing boundary are evidence.
   observations.splice(0, observations.length, before);
+  if (
+    retryPublication &&
+    recoverPublication &&
+    pendingPublication(before, project)
+  ) {
+    assertActive();
+    await recoverPublication(before.source_revision);
+    assertActive();
+    return analyzeStableGroup(
+      engine,
+      project,
+      capture,
+      progress,
+      assertActive,
+      false,
+    );
+  }
   if (!certificate(before, project))
     limitations.add(
       "The engine could not certify this exact checkout and branch before review.",
@@ -795,6 +830,11 @@ async function analyzeStableGroup(
     (before.token !== after.token ||
       graph(after)?.publication_unchanged_during_call === false)
   ) {
+    if (recoverPublication && pendingPublication(after, project)) {
+      assertActive();
+      await recoverPublication(before.source_revision);
+      assertActive();
+    }
     // Discard all measurements from the interrupted publication group. This is
     // one bounded read-only retry, not a successful merge of inconsistent data.
     return analyzeStableGroup(
@@ -838,6 +878,7 @@ export async function analyzeStoryReview(
   capture: StoryReviewCapture,
   progress: (value: AnalysisProgress) => Promise<void>,
   assertActive: () => void,
+  recoverPublication?: (sourceRevision: string) => Promise<void>,
 ): Promise<StoryReviewAnalysis> {
   return analyzeStableGroup(
     engine,
@@ -846,5 +887,6 @@ export async function analyzeStoryReview(
     progress,
     assertActive,
     true,
+    recoverPublication,
   );
 }
