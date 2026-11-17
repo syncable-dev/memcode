@@ -4,7 +4,15 @@ import type { Project } from "../src/shared";
 import type { StoryReviewCapture } from "../runtime/code-review-snapshot";
 import { analyzeStoryReview } from "../runtime/code-review-analysis";
 
-async function run(worktree?: string, nativeGraph?: unknown) {
+const stableGraph = {
+  token: "published",
+  publication_unchanged_during_call: true,
+};
+async function run(
+  worktree?: string,
+  nativeGraph?: unknown,
+  alter?: (name: string, value: any) => any,
+) {
   const path =
     process.platform === "win32" ? "C:/fixture/epic-a" : "/fixture/epic-a";
   const project: Project = {
@@ -99,13 +107,141 @@ async function run(worktree?: string, nativeGraph?: unknown) {
     },
   };
   return analyzeStoryReview(
-    { call: async (_project, name) => responses[name] },
+    {
+      call: async (_project, name) =>
+        alter ? alter(name, structuredClone(responses[name])) : responses[name],
+    },
     project,
     capture,
     async () => {},
     () => {},
   );
 }
+
+const supportedDetector = {
+  status: "evaluated_with_limitations",
+  candidate_fields: 0,
+  source_files_read: 0,
+  source_files_unavailable: 0,
+  source_file_limit: 64,
+  source_budget_reached: false,
+  requires:
+    "indexed declared types and READS edges, current head source, at least two readers and a changed declaration or reader line",
+  supported: [
+    "qualified primitive casts",
+    "numeric conversion methods",
+    "direct field returns",
+    "recognized faithful methods",
+  ],
+  unsupported: [
+    "arbitrary dataflow or aliases",
+    "multiline consumption expressions",
+  ],
+  empty_result_means:
+    "no conflict established within these patterns and available evidence",
+};
+
+test("native detector's declared algorithm scope remains visible without misreporting an unavailable run", async () => {
+  const result = await run(undefined, stableGraph, (name, value) => {
+    if (name === "find_code_review_issues")
+      value._detectors = { inconsistent_type_consumption: supportedDetector };
+    return value;
+  });
+  assert.deepEqual(result.limitations, []);
+  assert.equal(
+    result.audit?.detectors?.inconsistent_type_consumption.status,
+    "evaluated_with_limitations",
+  );
+  assert.deepEqual(
+    (result.audit?.detectors?.inconsistent_type_consumption.details as any)
+      .unsupported,
+    supportedDetector.unsupported,
+  );
+});
+
+for (const [label, override] of Object.entries({
+  unavailable: { source_files_unavailable: 1 },
+  budget: { source_budget_reached: true },
+  invalid_counts: { source_files_read: -1 },
+  exhausted: { source_files_read: 64 },
+  missing_metadata: { source_budget_reached: undefined },
+  unknown_scope: { unsupported: ["future limitation"] },
+  extra_failure: { error: "Could not evaluate source" },
+  unknown_detector: { detectorName: "future_detector" },
+})) {
+  test(`detector ${label} remains a coverage limitation`, async () => {
+    const result = await run(undefined, stableGraph, (name, value) => {
+      if (name === "find_code_review_issues") {
+        const { detectorName, ...fields } = override as any;
+        value._detectors = {
+          [detectorName ?? "inconsistent_type_consumption"]: {
+            ...supportedDetector,
+            ...fields,
+          },
+        };
+      }
+      return value;
+    });
+    assert.ok(
+      result.limitations.some(
+        (note) =>
+          note.includes("consumption") || note.includes("future detector"),
+      ),
+    );
+  });
+}
+
+test("a reopened exact cache waits for a stable native publication before measuring", async () => {
+  let queries = 0,
+    measured = 0;
+  const result = await run(undefined, stableGraph, (name, value) => {
+    if (name === "get_query_revision" && ++queries === 1) {
+      value.ready = false;
+      value._meta.graph_revision.publication_unchanged_during_call = false;
+    }
+    if (name === "get_function_quality_metrics") measured++;
+    return value;
+  });
+  assert.deepEqual(result.limitations, []);
+  assert.equal(queries, 3);
+  assert.equal(measured, 1);
+});
+
+test("publication rollover discards the entire first group and measures once more", async () => {
+  let queries = 0,
+    measured = 0,
+    rolled = false;
+  const result = await run(undefined, stableGraph, (name, value) => {
+    if (name === "get_query_revision") {
+      if (++queries === 2) rolled = true;
+      value.token = rolled ? "query-2" : "query";
+    }
+    value._meta.graph_revision.token = rolled ? "published-2" : "published";
+    if (name === "get_function_quality_metrics") measured++;
+    return value;
+  });
+  assert.deepEqual(result.limitations, []);
+  assert.equal(queries, 4);
+  assert.equal(measured, 2);
+  assert.equal(result.graphRevision, "published-2");
+});
+
+test("source edits never qualify for the graph-publication-only retry", async () => {
+  let queries = 0,
+    measured = 0;
+  const result = await run(undefined, stableGraph, (name, value) => {
+    if (name === "get_query_revision" && ++queries === 2) {
+      value.source_revision = "different-source";
+      value.token = "query-2";
+    }
+    if (name === "get_function_quality_metrics") measured++;
+    return value;
+  });
+  assert.equal(queries, 2);
+  assert.equal(measured, 1);
+  assert.equal(result.impact.complete, false);
+  assert.ok(result.limitations.some((note) => note.includes("cannot certify")));
+});
 
 test(
   "review accepts native Windows extended checkout paths without losing zero measurements",
