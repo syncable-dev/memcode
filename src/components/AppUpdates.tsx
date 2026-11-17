@@ -91,7 +91,7 @@ export function AppUpdateAction({
   const percent = updatePercent(state.progress);
   const label =
     state.phase === "ready"
-      ? "Restart to update"
+      ? "Install and restart"
       : state.phase === "downloading"
         ? `Downloading${percent === undefined ? "…" : ` ${percent}%`}`
         : state.phase === "verifying"
@@ -122,11 +122,13 @@ export function AppUpdates({
   currentVersion,
   automaticDownloads = true,
   onAutomaticDownloadsChange,
+  beforeRestart,
   updater = appUpdater,
 }: {
   currentVersion: string;
   automaticDownloads?: boolean;
   onAutomaticDownloadsChange?: (enabled: boolean) => void;
+  beforeRestart?: () => Promise<void>;
   updater?: AppUpdater;
 }) {
   const state = useSyncExternalStore(updater.subscribe, updater.getSnapshot);
@@ -137,6 +139,23 @@ export function AppUpdates({
   const [history, setHistory] = useState<PublishedAppRelease[]>();
   const [historyBusy, setHistoryBusy] = useState(false);
   const [historyError, setHistoryError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const restart = async (confirmed = false) => {
+    if (saving) return;
+    setSaving(true);
+    setContextError("");
+    try {
+      await beforeRestart?.();
+      if (confirmed) {
+        setConfirm(false);
+        await updater.install();
+      } else await updater.requestRestart();
+    } catch (error) {
+      setContextError(errorMessage(error));
+    } finally {
+      setSaving(false);
+    }
+  };
   const loadHistory = async () => {
     if (historyBusy) return;
     setHistoryBusy(true);
@@ -163,8 +182,12 @@ export function AppUpdates({
     }
   };
   useEffect(() => {
-    void updater.initialize();
+    void updater.openSettings();
   }, [updater]);
+  useEffect(
+    () => updater.setAutomaticDownloads(automaticDownloads),
+    [updater, automaticDownloads],
+  );
   useEffect(() => {
     setConfirm(false);
   }, [state.release?.version]);
@@ -189,7 +212,7 @@ export function AppUpdates({
           : state.phase === "installing"
             ? "Installing and restarting MemCode…"
             : state.phase === "ready"
-              ? `Version ${state.release?.version} is ready to restart.`
+              ? `Version ${state.release?.version} is ready to install.`
               : state.phase === "current"
                 ? "You’re up to date."
                 : state.release
@@ -213,7 +236,13 @@ export function AppUpdates({
         </span>
         <span className="app-update-version">v{version}</span>
       </div>
-      <div className="app-update-status" aria-live="polite">
+      <div
+        className={
+          "app-update-status" +
+          (state.phase === "ready" ? " app-update-status-ready" : "")
+        }
+        aria-live="polite"
+      >
         <div className="app-update-status-icon">
           {busy ? (
             <Spinner />
@@ -228,20 +257,32 @@ export function AppUpdates({
           <p>
             {development
               ? "Keep this checkout current with Git. Signed app updates are available in installed beta releases."
-              : automaticDownloads
-                ? "Updates download in the background. Restart when you’re ready; your account, workers and workspace stay with you."
-                : "MemCode checks for updates while it’s open. Download and restart when you choose; your account and workspace stay with you."}
+              : state.phase === "ready"
+                ? "Your verified download is saved. Install it and MemCode will reopen automatically with your workspace and settings."
+                : state.phase === "downloading" || state.phase === "verifying"
+                  ? "You can keep working. An Install and restart button appears here when the verified download is ready."
+                  : "MemCode checks automatically. Updates and your settings stay saved when you close the app."}
           </p>
         </div>
         {state.info && !development && (
           <button
-            className="button secondary"
+            className={
+              "button " + (state.phase === "ready" ? "primary" : "secondary")
+            }
             type="button"
-            disabled={busy || state.phase === "ready"}
-            onClick={() => void updater.check()}
+            disabled={busy || saving || confirm}
+            onClick={() =>
+              state.phase === "ready" ? void restart() : void updater.check()
+            }
           >
             <RefreshCw size={13} />
-            {state.phase === "checking" ? "Checking" : "Check for updates"}
+            {saving
+              ? "Saving settings…"
+              : state.phase === "ready"
+                ? "Install and restart"
+                : state.phase === "checking"
+                  ? "Checking"
+                  : "Check for updates"}
           </button>
         )}
       </div>
@@ -284,6 +325,11 @@ export function AppUpdates({
           {state.error}
         </p>
       )}
+      {contextError && !confirm && (
+        <p className="app-update-error" role="alert">
+          {contextError}
+        </p>
+      )}
       {state.checkedAt && !busy && (
         <small className="app-update-checked">
           Last successful check {new Date(state.checkedAt).toLocaleString()}
@@ -312,27 +358,21 @@ export function AppUpdates({
                 "This release includes improvements to MemCode."}
             </ReactMarkdown>
           </div>
-          {!busy && !confirm && (
+          {!busy && !confirm && state.phase !== "ready" && (
             <button
               type="button"
               className="button primary"
-              onClick={() =>
-                state.phase === "ready"
-                  ? void updater.requestRestart()
-                  : void updater.download()
-              }
+              onClick={() => void updater.download()}
             >
               <Download size={14} />
-              {state.phase === "ready"
-                ? "Restart to update"
-                : "Download update"}
+              Download update
               <ArrowUpRight size={13} />
             </button>
           )}
           {!busy && confirm && (
             <div className="app-update-confirm">
               <p>
-                <strong>Restart to update?</strong>{" "}
+                <strong>Install and restart?</strong>{" "}
                 {contextBusy
                   ? "Checking running sessions…"
                   : context
@@ -373,14 +413,14 @@ export function AppUpdates({
                   type="button"
                   className="button primary"
                   disabled={
-                    contextBusy || !context || context.activeWorkers > 0
+                    saving ||
+                    contextBusy ||
+                    !context ||
+                    context.activeWorkers > 0
                   }
-                  onClick={() => {
-                    setConfirm(false);
-                    void updater.install();
-                  }}
+                  onClick={() => void restart(true)}
                 >
-                  Restart to update
+                  {saving ? "Saving settings…" : "Install and restart"}
                 </button>
               </div>
             </div>

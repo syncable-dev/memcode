@@ -34,6 +34,10 @@
   color: #4c795c;
   border-radius: 9px;
 }
+.app-update-status-ready {
+  border-color: #a8d0b7;
+  background: #eef7f0;
+}
 .app-update-status > div:nth-child(2) {
   flex: 1;
   min-width: 0;

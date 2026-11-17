@@ -68,6 +68,7 @@ export function DictationSettings({
       (value.mode === "endpoint" &&
         status.endpoint !== settings.speechEndpoint));
   const installed = status?.state === "available";
+  const locallyReady = installed && value.mode !== "endpoint";
   const downloadSize = status?.downloadBytes
     ? `about ${Math.ceil(status.downloadBytes / 1_000_000).toLocaleString()} MB`
     : "a small download";
@@ -87,7 +88,7 @@ export function DictationSettings({
       </div>
       <div className="dictation-setup-card">
         <span className={"speech-status " + (status?.state ?? "unconfigured")}>
-          {status?.state === "ready" ? (
+          {status?.state === "ready" || locallyReady ? (
             <Check size={13} />
           ) : busy ? (
             <Spinner />
@@ -95,20 +96,22 @@ export function DictationSettings({
             <AudioLines size={13} />
           )}
           <strong>
-            {status?.state === "ready"
+            {status?.state === "ready" || locallyReady
               ? "Ready to dictate"
               : status?.state === "installing"
                 ? "Setting up dictation"
                 : status?.state === "starting"
                   ? "Starting your local model"
                   : installed
-                    ? "Installed on this computer"
+                    ? "Configured speech server"
                     : "A voice for your ideas"}
           </strong>
         </span>
         <p>
-          {status?.message ??
-            "Set up a small local speech model. Your audio stays on this computer."}
+          {locallyReady
+            ? "Your model and settings are saved. Click a microphone in any prompt to dictate; the local model starts automatically."
+            : (status?.message ??
+              "Set up a small local speech model. Your audio stays on this computer.")}
         </p>
         {status?.state === "installing" && (
           <progress
@@ -118,6 +121,7 @@ export function DictationSettings({
           />
         )}
         {status?.state !== "ready" &&
+          !locallyReady &&
           status?.managedInstallAvailable !== false && (
             <>
               <button
