@@ -50,6 +50,7 @@ import { ManagedRetrievalAssistant } from "./context/managed-assistant";
 import { ProductTelemetry, observeTelemetryMutation } from "./telemetry";
 import { runTaskVerification } from "./verification";
 import { CodeReviewManager } from "./code-review";
+import { prepareReviewAnalysis } from "./review-analysis-prepare";
 import {
   initializeCodeReviewWorkflow,
   isCodeReviewTask,
@@ -1118,13 +1119,16 @@ export async function createRuntime(
     implementationCount: () => workers.implementationCount(),
     implementationStarting: (taskId) => workers.implementationStarting(taskId),
     capacityChanged: () => workers.dispatchQueued(),
-    prepare: async (item, selected, update) => {
-      if (selected.analysisCheckout !== "owned-worktree-v1") return selected;
-      // Join a worker's final eviction too, not only the review queue's drain.
-      await engine.releaseEpic(selected);
-      const repoId = await engine.analyze(selected, update);
-      item.run.analysisRepoId = repoId;
-      return { ...selected, repoId, analysis: "ready" };
+    prepare: async (item, selected, update, assertActive) => {
+      const prepared = await prepareReviewAnalysis(
+        engine,
+        selected,
+        update,
+        assertActive,
+      );
+      if (prepared.analysisCheckout === "owned-worktree-v1")
+        item.run.analysisRepoId = prepared.repoId;
+      return prepared;
     },
     settled: async (item) =>
       workers.releaseIdleAnalysis(item, project(item.projectId), {
