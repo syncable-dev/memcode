@@ -46,10 +46,14 @@ Fleet authority. Use Git to receive another developer's source changes.
 
 ## Keeping resource use bounded
 
-Worker preparation is serialized, while launched workers run concurrently up to the
-configured worker limit. An active epic has one graph owner, regardless of its worker
+Worker preparation is serialized, while launched workers and code reviews share the
+configured worker limit. Reviews of the same epic wait for editing to settle and run
+one at a time; a waiting epic does not block another eligible epic. An active epic has one graph owner, regardless of its worker
 count. Epic owners use structural and lexical retrieval without loading another
 embedding model. The project can retain its normal semantic setup separately.
+
+The [story review guide](story-code-review.md) explains the review lane, coverage,
+findings, reviewer conversation and sending fixes back to a worker.
 
 An idle epic's MemCode-owned graph process is retired after workers and reviews
 finish. Its checkout, reports and graph cache remain on disk for reuse. MemCode never
