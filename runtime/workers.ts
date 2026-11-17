@@ -231,7 +231,10 @@ export class WorkerManager {
     private readonly mayDispatch: (project?: Project) => boolean = () => true,
     private readonly telemetry?: WorkerTelemetry,
     private readonly retrievalAssistant?: () => Promise<RetrievalAssistant>,
-    private readonly reviewFinished?: (task: WorkItem, project: Project) => Promise<void>,
+    private readonly reviewFinished?: (
+      task: WorkItem,
+      project: Project,
+    ) => Promise<void>,
     private readonly reviewStarting?: (task: WorkItem) => Promise<void>,
   ) {
     this.inputs = new WorkerInputs(state, changed);
@@ -250,14 +253,29 @@ export class WorkerManager {
     await Promise.allSettled(ids.map((id) => this.stop(id, "paused")));
   }
   async releaseIdleAnalysis(task: WorkItem, project: Project): Promise<void> {
-    const analysis=epicAnalysisProject(project,task);
-    if(analysis===project || !this.engine.releaseEpic)return;
-    const unlock=await this.startup.enter(new AbortController().signal);
+    const analysis = epicAnalysisProject(project, task);
+    if (analysis === project || !this.engine.releaseEpic) return;
+    const unlock = await this.startup.enter(new AbortController().signal);
+    let retiring: Promise<void> | undefined;
     try {
-      if(this.state().tasks.some(other=>other.projectId===task.projectId && other.epicId===task.epicId &&
-        (isActive(other)||other.codeReview?.state==="running"||other.codeReview?.state==="queued")))return;
-      await this.engine.releaseEpic(analysis);
-    } finally {unlock();}
+      if (
+        this.state().tasks.some(
+          (other) =>
+            other.projectId === task.projectId &&
+            other.epicId === task.epicId &&
+            (isActive(other) ||
+              other.codeReview?.state === "running" ||
+              other.codeReview?.state === "queued"),
+        )
+      )
+        return;
+      // releaseEpic marks the binding retired synchronously. Durable flush is
+      // awaited after unlocking, so another epic can start while this one drains.
+      retiring = this.engine.releaseEpic(analysis);
+    } finally {
+      unlock();
+    }
+    await retiring;
   }
   /** Called before the send endpoint atomically persists the message and authority. */
   enqueue(task: WorkItem, messageId: string): void {
@@ -430,11 +448,15 @@ export class WorkerManager {
       );
     if (task.assignment !== "auto")
       assertWorkerConnected(this.state(), task.harness);
-    if (isActive(task) || this.children.has(task.id) || this.cancellingReview.has(task.id))
+    if (
+      isActive(task) ||
+      this.children.has(task.id) ||
+      this.cancellingReview.has(task.id)
+    )
       throw new Error("This worker is already active.");
-    const active = this.state().tasks.filter(
-      (t) => !t.example && isActive(t),
-    ).length + this.cancellingReview.size;
+    const active =
+      this.state().tasks.filter((t) => !t.example && isActive(t)).length +
+      this.cancellingReview.size;
     if (active >= this.state().settings.maxWorkers)
       throw new Error(
         "All worker slots are occupied. Wait for a worker or increase the limit in Settings.",
@@ -490,11 +512,17 @@ export class WorkerManager {
         await this.reviewStarting(task);
         continuing();
         this.assertAccountSession?.();
-        if (task.assignment !== "auto") assertWorkerConnected(this.state(), task.harness);
+        if (task.assignment !== "auto")
+          assertWorkerConnected(this.state(), task.harness);
         if (isActive(task) || this.children.has(task.id))
           throw new Error("This worker is already active.");
-        if (this.state().tasks.filter((item) => !item.example && isActive(item)).length >= this.state().settings.maxWorkers)
-          throw new Error("All worker slots are occupied. Wait for a worker or increase the limit in Settings.");
+        if (
+          this.state().tasks.filter((item) => !item.example && isActive(item))
+            .length >= this.state().settings.maxWorkers
+        )
+          throw new Error(
+            "All worker slots are occupied. Wait for a worker or increase the limit in Settings.",
+          );
       } finally {
         this.cancellingReview.delete(task.id);
       }
@@ -517,7 +545,12 @@ export class WorkerManager {
         at: now(),
       },
     };
-    if (task.codeReview) task.codeReview={...task.codeReview,state:"stale",updatedAt:now()};
+    if (task.codeReview)
+      task.codeReview = {
+        ...task.codeReview,
+        state: "stale",
+        updatedAt: now(),
+      };
     await this.changed();
     let contextSession: ContextSession | undefined;
     let contextOpening: Promise<ContextSession> | undefined;
@@ -559,7 +592,7 @@ export class WorkerManager {
     let releaseStartup: (() => void) | undefined;
     let teamClaimHeld = false;
     let analysisProject = project;
-    const releaseIdleEpic = () => this.releaseIdleAnalysis(task,project);
+    const releaseIdleEpic = () => this.releaseIdleAnalysis(task, project);
     const releaseTeamClaim = async () => {
       if (!teamClaimHeld) return;
       await this.teamClaims?.release(task.id, project.id);
@@ -595,14 +628,35 @@ export class WorkerManager {
       // together cannot both pass before the first worker starts. Other
       // Preparing tasks are still queued behind this one; Running/Stopping
       // workers already own their checkout identity.
-      const activeAliases = this.state().projects.filter((candidate) => candidate.id !== project.id && candidate.path && this.state().tasks.some((other) => other.projectId === candidate.id && (other.run.state === "running" || other.run.state === "stopping")));
+      const activeAliases = this.state().projects.filter(
+        (candidate) =>
+          candidate.id !== project.id &&
+          candidate.path &&
+          this.state().tasks.some(
+            (other) =>
+              other.projectId === candidate.id &&
+              (other.run.state === "running" || other.run.state === "stopping"),
+          ),
+      );
       if (activeAliases.length && project.path) {
         const actual = checkoutKey(await realpath(project.path));
         for (const candidate of activeAliases) {
           let otherRoot: string;
-          try { otherRoot = checkoutKey(await realpath(candidate.path!)); }
-          catch (failure) { if (["ENOENT", "ENOTDIR"].includes((failure as NodeJS.ErrnoException).code ?? "")) continue; throw failure; }
-          if (actual === otherRoot) throw Error(`This local folder is already in use by a worker in ${candidate.name}. Stop that worker before starting through this project.`);
+          try {
+            otherRoot = checkoutKey(await realpath(candidate.path!));
+          } catch (failure) {
+            if (
+              ["ENOENT", "ENOTDIR"].includes(
+                (failure as NodeJS.ErrnoException).code ?? "",
+              )
+            )
+              continue;
+            throw failure;
+          }
+          if (actual === otherRoot)
+            throw Error(
+              `This local folder is already in use by a worker in ${candidate.name}. Stop that worker before starting through this project.`,
+            );
         }
       }
       if (waitingForStartup) {
@@ -616,25 +670,30 @@ export class WorkerManager {
       }
       if (project.analysis !== "ready" || !project.repoId)
         throw new Error("Connect Memtrace before starting a Fleet worker.");
-      const ownedCheckout = typeof this.engine.ownedWorktreeSupport === "function" && await this.engine.ownedWorktreeSupport(project);
-      const activation = await this.workspaces.activate(task, project, {ownedCheckout});
-      analysisProject = epicAnalysisProject(project,task);
-      await assertEpicDependencies(this.state(),task,task.run.workspace!);
+      const ownedCheckout =
+        typeof this.engine.ownedWorktreeSupport === "function" &&
+        (await this.engine.ownedWorktreeSupport(project));
+      const activation = await this.workspaces.activate(task, project, {
+        ownedCheckout,
+      });
+      analysisProject = epicAnalysisProject(project, task);
+      await assertEpicDependencies(this.state(), task, task.run.workspace!);
       continuing();
-      if (activation.changedBranch || analysisProject!==project) {
+      if (activation.changedBranch || analysisProject !== project) {
         analysisProject.analysis = "indexing";
         await this.changed();
         try {
           analysisProject.repoId = await this.engine.analyze(
             analysisProject,
             (note) => {
-              task.run.activity = {phase:"working",label:note,at:now()};
+              task.run.activity = { phase: "working", label: note, at: now() };
               void this.changed();
             },
             activation.changedBranch,
           );
           analysisProject.analysis = "ready";
-          if (analysisProject!==project) task.run.analysisRepoId=analysisProject.repoId;
+          if (analysisProject !== project)
+            task.run.analysisRepoId = analysisProject.repoId;
         } catch (error) {
           analysisProject.analysis = "error";
           throw error;
@@ -780,7 +839,11 @@ export class WorkerManager {
         contextOpening = startContextSession(
           this.engine,
           {
-            project: { ...analysisProject, path: workspace, branch: task.run.branch! },
+            project: {
+              ...analysisProject,
+              path: workspace,
+              branch: task.run.branch!,
+            },
             governanceProject: project,
             workerId: `memcode:${task.id}`,
             branch: task.run.branch!,
@@ -1183,11 +1246,19 @@ export class WorkerManager {
             );
           });
           this.children.delete(task.id);
-          if (task.run.state==="finished" && !task.run.error) {
-            try { await this.reviewFinished?.(task,project); }
-            catch(error) { this.message(task,"system",`Code review needs attention: ${(error as Error).message}`); await this.changed(); }
+          if (task.run.state === "finished" && !task.run.error) {
+            try {
+              await this.reviewFinished?.(task, project);
+            } catch (error) {
+              this.message(
+                task,
+                "system",
+                `Code review needs attention: ${(error as Error).message}`,
+              );
+              await this.changed();
+            }
           }
-          await releaseIdleEpic().catch(()=>{});
+          await releaseIdleEpic().catch(() => {});
           await measurementAudit.flush();
           try {
             this.telemetry?.finished(telemetryAttempt, task);
@@ -1233,7 +1304,8 @@ export class WorkerManager {
     } finally {
       this.preparations.delete(task.id);
       releaseStartup?.();
-      if (!this.children.has(task.id) && !isActive(task)) await releaseIdleEpic().catch(()=>{});
+      if (!this.children.has(task.id) && !isActive(task))
+        await releaseIdleEpic().catch(() => {});
     }
   }
   async stop(

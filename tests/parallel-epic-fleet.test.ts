@@ -324,6 +324,104 @@ test("WorkerManager qualifies the private epic graph while Fleet retains the can
   }
 });
 
+test("a slow epic graph flush releases the global worker startup slot before it finishes", async () => {
+  const f = await sourceFixture(),
+    state = initialState();
+  const task = story(f.project, "finished-a", "a", f.a);
+  task.run.state = "finished";
+  task.run.analysisProjectId = "owned-a";
+  task.run.analysisRepoId = "private-a";
+  state.projects = [f.project];
+  state.tasks = [task];
+  let entered!: () => void,
+    finish!: () => void,
+    completed = false;
+  const began = new Promise<void>((resolve) => (entered = resolve)),
+    flush = new Promise<void>((resolve) => (finish = resolve));
+  const engine = {
+    releaseEpic: async (project: Project) => {
+      assert.equal(project.id, "owned-a");
+      entered();
+      await flush;
+      completed = true;
+    },
+  } as unknown as MemtraceEngine;
+  const manager = new WorkerManager(
+    () => state,
+    async () => {},
+    engine,
+    join(f.root, "profile"),
+  );
+  try {
+    const retiring = manager.releaseIdleAnalysis(task, f.project);
+    await began;
+    // This is the exact startup queue acquired by start(). Another epic must
+    // be able to enter it while A's durable native flush remains pending.
+    const queue = (manager as any).startup;
+    const unlock = await Promise.race([
+      queue.enter(new AbortController().signal),
+      new Promise<never>((_resolve, reject) =>
+        setTimeout(
+          () => reject(Error("Epic A blocked another worker's startup slot")),
+          500,
+        ).unref(),
+      ),
+    ]);
+    assert.equal(completed, false);
+    unlock();
+    finish();
+    await retiring;
+    assert.equal(completed, true);
+  } finally {
+    finish();
+    await manager.close();
+    await rm(f.root, { recursive: true, force: true });
+  }
+});
+
+test("idle graph retirement cannot run while an implementation or review in that epic is active", async () => {
+  const f = await sourceFixture(),
+    state = initialState();
+  const task = story(f.project, "finished-a", "a", f.a),
+    peer = story(f.project, "peer-a", "a", f.a);
+  task.run.state = "finished";
+  task.run.analysisProjectId = "owned-a";
+  state.projects = [f.project];
+  state.tasks = [task, peer];
+  let retired = 0;
+  const manager = new WorkerManager(
+    () => state,
+    async () => {},
+    {
+      releaseEpic: async () => {
+        retired++;
+      },
+    } as unknown as MemtraceEngine,
+    join(f.root, "profile"),
+  );
+  try {
+    await manager.releaseIdleAnalysis(task, f.project);
+    assert.equal(retired, 0);
+    peer.run.state = "finished";
+    for (const status of ["queued", "running"] as const) {
+      peer.codeReview = {
+        runId: "review",
+        state: status,
+        findingCount: 0,
+        updatedAt: new Date().toISOString(),
+      };
+      await manager.releaseIdleAnalysis(task, f.project);
+      assert.equal(retired, 0);
+    }
+    peer.codeReview = { ...peer.codeReview!, state: "completed" };
+    await manager.releaseIdleAnalysis(task, f.project);
+    assert.equal(retired, 1);
+  } finally {
+    await manager.close();
+    await rm(f.root, { recursive: true, force: true });
+  }
+});
+
 test("a junction alias becoming active during preparation is rejected before checkout activation", async () => {
   const f = await sourceFixture(),
     alias = join(f.root, "junction");
