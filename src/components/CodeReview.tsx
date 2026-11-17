@@ -897,11 +897,28 @@ export function CodeReview({
                         {Object.entries(run.engine.audit.detectors).map(
                           ([name, detector]) => (
                             <li key={name}>
-                              <strong>{name.replaceAll("_", " ")}</strong> ·{" "}
-                              {detector.status}
-                              {detector.reason && (
-                                <span> — {detector.reason}</span>
-                              )}
+                              <details>
+                                <summary>
+                                  <strong>{name.replaceAll("_", " ")}</strong> ·{" "}
+                                  {detector.status ===
+                                  "evaluated_with_limitations"
+                                    ? "Evaluated within supported patterns"
+                                    : detector.status.replaceAll("_", " ")}
+                                </summary>
+                                {detector.reason && (
+                                  <span> — {detector.reason}</span>
+                                )}
+                                {detector.details !== undefined && (
+                                  <div className="code-review-native-evidence">
+                                    <ReviewEvidence value={detector.details} />
+                                  </div>
+                                )}
+                                {detector.detailsTruncated && (
+                                  <p>
+                                    Coverage details were limited at capture.
+                                  </p>
+                                )}
+                              </details>
                             </li>
                           ),
                         )}

@@ -62,6 +62,54 @@ const sources = new Set<CodeReviewProvenance>([
 const record = (value: unknown): value is Json =>
   !!value && typeof value === "object" && !Array.isArray(value);
 
+/** This native detector always declares its algorithm's scope, including a successful run. */
+function evaluatedSupportedPatterns(name: string, coverage: Json): boolean {
+  const known = new Set([
+    "status",
+    "candidate_fields",
+    "source_files_read",
+    "source_files_unavailable",
+    "source_file_limit",
+    "source_budget_reached",
+    "requires",
+    "supported",
+    "unsupported",
+    "empty_result_means",
+  ]);
+  const strings = (value: unknown, expected: string[]) =>
+    Array.isArray(value) &&
+    value.length === expected.length &&
+    new Set(value).size === expected.length &&
+    expected.every((item) => value.includes(item));
+  return (
+    name === "inconsistent_type_consumption" &&
+    coverage.status === "evaluated_with_limitations" &&
+    Object.keys(coverage).every((key) => known.has(key)) &&
+    Number.isSafeInteger(coverage.candidate_fields) &&
+    coverage.candidate_fields >= 0 &&
+    Number.isSafeInteger(coverage.source_files_read) &&
+    coverage.source_files_read >= 0 &&
+    Number.isSafeInteger(coverage.source_file_limit) &&
+    coverage.source_file_limit > 0 &&
+    coverage.source_file_limit <= 64 &&
+    coverage.source_files_read < coverage.source_file_limit &&
+    coverage.source_files_unavailable === 0 &&
+    coverage.source_budget_reached === false &&
+    typeof coverage.requires === "string" &&
+    typeof coverage.empty_result_means === "string" &&
+    strings(coverage.supported, [
+      "qualified primitive casts",
+      "numeric conversion methods",
+      "direct field returns",
+      "recognized faithful methods",
+    ]) &&
+    strings(coverage.unsupported, [
+      "arbitrary dataflow or aliases",
+      "multiline consumption expressions",
+    ])
+  );
+}
+
 /** Retain native evidence as data, with explicit bounds instead of an unbounded blob. */
 function boundedEvidence(value: unknown): {
   value?: CodeReviewEvidence;
@@ -258,7 +306,10 @@ function reviewAudit(
           limitations.add(
             `${name.replaceAll("_", " ")} coverage details were bounded for display.`,
           );
-        if (!["evaluated", "not_applicable"].includes(status))
+        if (
+          !["evaluated", "not_applicable"].includes(status) &&
+          !evaluatedSupportedPatterns(name, coverage)
+        )
           limitations.add(
             `${name.replaceAll("_", " ")}: ${typeof reason === "string" && reason ? reason.slice(0, 1500) : `the engine reported ${status.replaceAll("_", " ")} coverage`}.`,
           );
@@ -455,12 +506,13 @@ function reviewFindings(
 }
 
 /** Only query the captured contribution; no repository-wide quality scan or re-index. */
-export async function analyzeStoryReview(
+async function analyzeStableGroup(
   engine: ReviewEngine,
   project: Project,
   capture: StoryReviewCapture,
   progress: (value: AnalysisProgress) => Promise<void>,
   assertActive: () => void,
+  retryPublication: boolean,
 ): Promise<StoryReviewAnalysis> {
   const limitations = new Set(capture.limitations),
     observations: Json[] = [];
@@ -484,7 +536,28 @@ export async function analyzeStoryReview(
     return value;
   };
   const scope = { repo_id: project.repoId, branch: project.branch };
-  const before = await call("get_query_revision", { ...scope, wait_ms: 0 });
+  let before = await call("get_query_revision", { ...scope, wait_ms: 0 });
+  // A reopened cache can briefly publish a new graph boundary without source edits.
+  // Wait only on that exact checkout's explicitly transient response, never on a
+  // foreign path, unsupported certificate or malformed publication envelope.
+  for (
+    let attempt = 0;
+    attempt < 6 &&
+    before.ready === false &&
+    before.repo_id === project.repoId &&
+    before.branch === project.branch &&
+    typeof before.worktree === "string" &&
+    key(before.worktree) === key(project.path!) &&
+    before.source_unchanged_during_observation === true &&
+    graph(before)?.publication_unchanged_during_call === false;
+    attempt++
+  ) {
+    assertActive();
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    before = await call("get_query_revision", { ...scope, wait_ms: 1000 });
+  }
+  // Only observations inside this group's opening/closing boundary are evidence.
+  observations.splice(0, observations.length, before);
   if (!certificate(before, project))
     limitations.add(
       "The engine could not certify this exact checkout and branch before review.",
@@ -707,6 +780,30 @@ export async function analyzeStoryReview(
           publication(value) === graphRevision &&
           graph(value)?.publication_unchanged_during_call === true,
       );
+  if (
+    !aligned &&
+    retryPublication &&
+    certificate(before, project) &&
+    after.repo_id === project.repoId &&
+    after.branch === project.branch &&
+    typeof after.worktree === "string" &&
+    key(after.worktree) === key(project.path!) &&
+    after.source_revision === before.source_revision &&
+    after.source_unchanged_during_observation === true &&
+    (before.token !== after.token ||
+      graph(after)?.publication_unchanged_during_call === false)
+  ) {
+    // Discard all measurements from the interrupted publication group. This is
+    // one bounded read-only retry, not a successful merge of inconsistent data.
+    return analyzeStableGroup(
+      engine,
+      project,
+      capture,
+      progress,
+      assertActive,
+      false,
+    );
+  }
   if (!aligned)
     limitations.add(
       "Source/index publication changed or could not be certified throughout review. These observations cannot certify the current code.",
@@ -730,4 +827,22 @@ export async function analyzeStoryReview(
     graphRevision,
     audit,
   };
+}
+
+/** Only query the captured contribution; never turn unavailable evidence into a pass. */
+export async function analyzeStoryReview(
+  engine: ReviewEngine,
+  project: Project,
+  capture: StoryReviewCapture,
+  progress: (value: AnalysisProgress) => Promise<void>,
+  assertActive: () => void,
+): Promise<StoryReviewAnalysis> {
+  return analyzeStableGroup(
+    engine,
+    project,
+    capture,
+    progress,
+    assertActive,
+    true,
+  );
 }
