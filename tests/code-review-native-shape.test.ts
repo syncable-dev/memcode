@@ -12,6 +12,7 @@ async function run(
   worktree?: string,
   nativeGraph?: unknown,
   alter?: (name: string, value: any) => any,
+  recoverPublication?: (sourceRevision: string) => Promise<void>,
 ) {
   const path =
     process.platform === "win32" ? "C:/fixture/epic-a" : "/fixture/epic-a";
@@ -115,6 +116,7 @@ async function run(
     capture,
     async () => {},
     () => {},
+    recoverPublication,
   );
 }
 
@@ -270,6 +272,90 @@ test("publication recovery is bounded to one wholly new measurement group", asyn
   assert.equal(queries, 4);
   assert.equal(measured, 2);
   assert.equal(result.impact.complete, false);
+});
+
+function dirty(value: any) {
+  value.ready = false;
+  value.status = "partial";
+  value.publication = { status: "partial", token: "published" };
+  value._meta.graph_revision = {
+    status: "partial",
+    token: "published",
+    publication_unchanged_during_call: false,
+  };
+  return value;
+}
+
+test("an exact stranded opening publication invokes genuine recovery once before measurements", async () => {
+  let repairs = 0,
+    measured = 0;
+  const result = await run(
+    undefined,
+    stableGraph,
+    (name, value) => {
+      if (name === "get_function_quality_metrics") measured++;
+      return name === "get_query_revision" && !repairs ? dirty(value) : value;
+    },
+    async (source) => {
+      assert.equal(source, "source");
+      repairs++;
+    },
+  );
+  assert.deepEqual(result.limitations, []);
+  assert.equal(repairs, 1);
+  assert.equal(measured, 1);
+});
+
+test("a late dirty publication repairs the current owner and discards all earlier measurements", async () => {
+  let repairs = 0,
+    queries = 0,
+    measured = 0;
+  const result = await run(
+    undefined,
+    stableGraph,
+    (name, value) => {
+      if (name === "get_function_quality_metrics") measured++;
+      return name === "get_query_revision" && ++queries === 2
+        ? dirty(value)
+        : value;
+    },
+    async (source) => {
+      assert.equal(source, "source");
+      repairs++;
+    },
+  );
+  assert.deepEqual(result.limitations, []);
+  assert.equal(repairs, 1);
+  assert.equal(measured, 2);
+});
+
+test("genuine recovery failure is visible and cannot become a certified result", async () => {
+  await assert.rejects(
+    run(
+      undefined,
+      stableGraph,
+      (name, value) => (name === "get_query_revision" ? dirty(value) : value),
+      async () => {
+        throw Error("Publication remains unverified");
+      },
+    ),
+    /remains unverified/,
+  );
+});
+
+test("a still-dirty publication never launches a second recovery", async () => {
+  let repairs = 0;
+  const result = await run(
+    undefined,
+    stableGraph,
+    (name, value) => (name === "get_query_revision" ? dirty(value) : value),
+    async () => {
+      repairs++;
+    },
+  );
+  assert.equal(repairs, 1);
+  assert.equal(result.impact.complete, false);
+  assert.ok(result.limitations.length > 0);
 });
 
 test(
