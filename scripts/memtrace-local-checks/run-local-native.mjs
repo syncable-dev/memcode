@@ -42,7 +42,9 @@ const app = resolve(option("--app")),
   binary = resolve(option("--engine")),
   buildReceiptPath = resolve(option("--build-receipt"));
 const mode = args.includes("--mode") ? option("--mode") : "all";
-assert.ok(["all", "owned", "product", "direct", "legacy"].includes(mode));
+assert.ok(
+  ["all", "owned", "product", "direct", "legacy", "review"].includes(mode),
+);
 const sourceCommit = execFileSync("git", ["-C", source, "rev-parse", "HEAD"], {
   encoding: "utf8",
 }).trim();
@@ -67,7 +69,9 @@ execFileSync(
   ],
   { stdio: "pipe" },
 );
-const root = await realpath(await mkdtemp(join(tmpdir(), "memcode-native-local-")));
+const root = await realpath(
+  await mkdtemp(join(tmpdir(), "memcode-native-local-")),
+);
 await chmod(root, 0o700);
 await mkdir(join(root, "home"), { mode: 0o700 });
 const profile = join(
@@ -239,26 +243,28 @@ try {
     join(root, "component-provenance.json"),
     JSON.stringify(componentProvenance, null, 2) + "\n",
   );
-  const sourceText = (
-    await readFile(
-      join(directory, "owned-worktree-native-acceptance.mts"),
-      "utf8",
-    )
-  ).replaceAll("../memcode/", app + "/");
-  await build({
-    stdin: {
-      contents: sourceText,
-      loader: "ts",
-      sourcefile: "owned-worktree-native-acceptance.mts",
-      resolveDir: app,
-    },
-    outfile: join(root, "test.cjs"),
-    bundle: true,
-    platform: "node",
-    format: "cjs",
-    target: "node22",
-    logLevel: "silent",
-  });
+  for (const [entry, output] of [
+    ["owned-worktree-native-acceptance.mts", "test.cjs"],
+    ["code-review-native-acceptance.mts", "review-test.cjs"],
+  ]) {
+    const sourceText = (
+      await readFile(join(directory, entry), "utf8")
+    ).replaceAll("../memcode/", app + "/");
+    await build({
+      stdin: {
+        contents: sourceText,
+        loader: "ts",
+        sourcefile: entry,
+        resolveDir: app,
+      },
+      outfile: join(root, output),
+      bundle: true,
+      platform: "node",
+      format: "cjs",
+      target: "node22",
+      logLevel: "silent",
+    });
+  }
   const baseEnv = Object.fromEntries(
     Object.entries(process.env).filter(
       ([key]) =>
@@ -281,7 +287,7 @@ try {
   baseEnv.PATH = process.env.PATH ?? "/usr/bin:/bin:/usr/sbin:/sbin";
   const receipts = [];
   for (const selected of mode === "all"
-    ? ["owned", "product", "direct", "legacy"]
+    ? ["owned", "product", "direct", "legacy", "review"]
     : [mode]) {
     const fixture = join(root, selected);
     await mkdir(fixture, { mode: 0o700 });
@@ -291,6 +297,7 @@ try {
       OWNED_NATIVE_PRODUCT: selected === "product" ? "1" : "0",
       OWNED_NATIVE_DIRECT_ONLY: selected === "direct" ? "1" : "0",
       OWNED_NATIVE_LEGACY_ONLY: selected === "legacy" ? "1" : "0",
+      OWNED_NATIVE_EXPECTED_ENGINE_SHA: componentProvenance.candidateMainSha256,
     };
     assert.equal(env.RUST_MIN_STACK, undefined);
     console.log(
@@ -304,7 +311,14 @@ try {
     const code = await new Promise((resolve, reject) => {
       const child = spawn(
         process.execPath,
-        [join(root, "test.cjs"), fixture, candidate, source, proof, app],
+        [
+          join(root, selected === "review" ? "review-test.cjs" : "test.cjs"),
+          fixture,
+          candidate,
+          source,
+          proof,
+          app,
+        ],
         { cwd: fixture, env, stdio: ["ignore", "pipe", "pipe"] },
       );
       child.stdout.on("data", (chunk) => process.stdout.write(chunk));
