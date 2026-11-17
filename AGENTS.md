@@ -48,6 +48,17 @@ engine binaries. Keep managed engines separate from a user's global CLI setup.
 
 ## Iteration
 
+- `dev` is the default integration branch. Normal validated maintainer pushes
+  target `dev`; fork contributions and isolated topic work use PRs into `dev`.
+- Promote release work to `main` through an approved PR using rebase merge.
+  Never push release changes directly to `main`, force-push either shared
+  branch, or merge unrelated work merely to change the branch structure.
+- Follow [CONTRIBUTING.md](CONTRIBUTING.md). Preserve other agents' working
+  changes and pending platform verification when integrating topic branches.
+- Run verification locally. Do not dispatch GitHub Actions, create mandatory
+  CI checks, or spend hosted runner minutes without an explicit user request.
+  Hand off a pushed branch and exact local-test instructions for Mac checks.
+
 Use this app's own dogfood backlog to improve it. Keep a clear distinction
 between functionality available now and planned correctness/policy hardening.
 Never describe cooperative Fleet coordination as hard write fencing.
