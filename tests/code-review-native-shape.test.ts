@@ -198,8 +198,7 @@ test("a reopened exact cache waits for a stable native publication before measur
     measured = 0;
   const result = await run(undefined, stableGraph, (name, value) => {
     if (name === "get_query_revision" && ++queries === 1) {
-      value.ready = false;
-      value._meta.graph_revision.publication_unchanged_during_call = false;
+      dirty(value);
     }
     if (name === "get_function_quality_metrics") measured++;
     return value;
@@ -285,6 +284,80 @@ function dirty(value: any) {
   };
   return value;
 }
+
+function transitioning(value: any) {
+  value.ready = true;
+  value.status = "complete";
+  value.publication = { status: "published", token: "published" };
+  value._meta.stale = true;
+  value._meta.graph_revision = {
+    before: { status: "partial", token: "prior" },
+    after: { status: "published", token: "published" },
+    publication_unchanged_during_call: false,
+  };
+  return value;
+}
+
+test("a complete body with a mixed native opening boundary is reread before any measurements", async () => {
+  let queries = 0,
+    measured = 0;
+  const result = await run(undefined, stableGraph, (name, value) => {
+    if (name === "get_function_quality_metrics") measured++;
+    return name === "get_query_revision" && ++queries === 1
+      ? transitioning(value)
+      : value;
+  });
+  assert.deepEqual(result.limitations, []);
+  assert.equal(queries, 3);
+  assert.equal(measured, 1);
+});
+
+test("a mixed closing boundary without a direct graph token discards the full group", async () => {
+  let queries = 0,
+    measured = 0,
+    repairs = 0;
+  const result = await run(
+    undefined,
+    stableGraph,
+    (name, value) => {
+      if (name === "get_function_quality_metrics") measured++;
+      return name === "get_query_revision" && ++queries === 2
+        ? transitioning(value)
+        : value;
+    },
+    async (source) => {
+      assert.equal(source, "source");
+      repairs++;
+    },
+  );
+  assert.deepEqual(result.limitations, []);
+  assert.equal(queries, 4);
+  assert.equal(measured, 2);
+  assert.equal(repairs, 1);
+});
+
+test("unknown opening boundary shapes are never treated as a recognized transition", async () => {
+  let queries = 0,
+    repairs = 0;
+  const result = await run(
+    undefined,
+    stableGraph,
+    (name, value) => {
+      if (name === "get_query_revision") {
+        queries++;
+        transitioning(value);
+        value._meta.graph_revision.after.status = "future_state";
+      }
+      return value;
+    },
+    async () => {
+      repairs++;
+    },
+  );
+  assert.equal(queries, 2);
+  assert.equal(repairs, 0);
+  assert.equal(result.impact.complete, false);
+});
 
 test("an exact stranded opening publication invokes genuine recovery once before measurements", async () => {
   let repairs = 0,
