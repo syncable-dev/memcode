@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type { AppState, Project, WorkItem } from "../src/shared";
 import { isActive } from "../src/domain";
 import { codeReviewPhases, type StoryReviewRun } from "../src/code-review";
@@ -12,6 +12,8 @@ import { analyzeStoryReview, type ReviewEngine } from "./code-review-analysis";
 import { checkSourceBinding } from "./verification";
 import { replaceWorkspace } from "./persistence";
 import type { ReadonlyReviewAgent } from "./review-agent";
+import { isCodeReviewTask } from "../src/code-review-workflow";
+import { ReviewAdmission, type ReviewWait } from "./review-admission";
 
 interface ReviewHooks {
   queueFixes(taskId: string, text: string): Promise<void>;
@@ -20,6 +22,14 @@ interface ReviewHooks {
   /** Actual connected engine version; absence is displayed as not reported. */
   engineVersion?(project: Project): string;
   reviewer?: ReadonlyReviewAgent;
+  prepare?(
+    task: WorkItem,
+    project: Project,
+    update: (note: string) => void,
+  ): Promise<Project>;
+  implementationCount?(): number;
+  implementationStarting?(taskId: string): boolean;
+  capacityChanged?(): void;
   settled?(task: WorkItem, project: Project): Promise<void>;
 }
 interface ReviewDependencies {
@@ -33,6 +43,10 @@ interface SavedReview {
   queued: boolean;
   patch?: string;
   patchTruncated?: boolean;
+  automaticRetries?: number;
+  retryOf?: string;
+  interrupted?: boolean;
+  retryAllowed?: boolean;
   reviewerReads?: Array<{
     at: string;
     model: string;
@@ -46,13 +60,16 @@ const terminal = (run: StoryReviewRun) =>
   !["queued", "running"].includes(run.state);
 const clone = <T>(value: T): T => structuredClone(value);
 class ReviewStopped extends Error {}
+class ReviewSourceChanged extends Error {}
 
 /** Review is a separate, read-only process. It never inherits worker shell permissions. */
 export class CodeReviewManager {
   private saved = new Map<string, SavedReview>();
   private loading = new Map<string, Promise<SavedReview | null>>();
   private operations = new Map<string, Promise<unknown>>();
-  private projectQueues = new Map<string, Promise<void>>();
+  private admission: ReviewAdmission;
+  private executionWork = new Map<string, Promise<void>>();
+  private graphRetirements = new Map<string, Promise<void>>();
   private active = new Set<string>();
   private reviewerControllers = new Map<string, AbortController>();
   private reviewerWork = new Map<string, Promise<void>>();
@@ -70,6 +87,66 @@ export class CodeReviewManager {
   ) {
     this.capture = dependencies.capture ?? captureStoryReview;
     this.sourceBinding = dependencies.sourceBinding ?? checkSourceBinding;
+    this.admission = new ReviewAdmission(
+      () => this.state().settings.maxWorkers,
+      () =>
+        this.hooks.implementationCount?.() ??
+        this.state().tasks.filter((task) => !task.example && isActive(task))
+          .length,
+      () => this.hooks.capacityChanged?.(),
+    );
+  }
+
+  /** Workers may replace a same-epic review only after beforeWorker drains it. */
+  occupiedSlots(task?: WorkItem): number {
+    return this.admission.occupied(
+      task
+        ? (id) => {
+            const peer = this.state().tasks.find((item) => item.id === id);
+            return !!peer && this.sameEpic(task, peer);
+          }
+        : undefined,
+    );
+  }
+  private sameEpic(first: WorkItem, second: WorkItem): boolean {
+    if (first.projectId !== second.projectId) return false;
+    if (first.epicId && first.epicId === second.epicId) return true;
+    if (
+      first.run.analysisProjectId &&
+      first.run.analysisProjectId === second.run.analysisProjectId
+    )
+      return true;
+    // First-pass stories have no private graph id yet. Epic identity above is
+    // authoritative; this fallback also protects the legacy shared checkout.
+    const root = this.state().projects.find(
+      (project) => project.id === first.projectId,
+    )?.path;
+    const a = first.run.workspace ?? root,
+      b = second.run.workspace ?? root;
+    const key = (path: string) =>
+      process.platform === "win32"
+        ? resolve(path).toLowerCase()
+        : resolve(path);
+    return !!a && !!b && key(a) === key(b);
+  }
+  private inReviewLane(task: WorkItem): boolean {
+    return this.state().reviewWorkflows?.[task.projectId]
+      ? isCodeReviewTask(this.state(), task)
+      : task.stage === "review";
+  }
+  private quiet(task: WorkItem): boolean {
+    return !this.state().tasks.some(
+      (other) =>
+        this.sameEpic(task, other) &&
+        (isActive(other) || this.hooks.implementationStarting?.(other.id)),
+    );
+  }
+  private waitNote(reason: ReviewWait): string {
+    return reason === "writers"
+      ? "Waiting for this epic's workers to finish editing. Review has not captured or certified the source."
+      : reason === "epic"
+        ? "Waiting for the earlier review in this epic."
+        : "Waiting for local capacity. Reviews and implementation workers share the limit in Settings.";
   }
 
   private task(id: string): WorkItem {
@@ -172,6 +249,7 @@ export class CodeReviewManager {
             "This saved review is not recognized. Start a new review; the saved file was preserved.",
           );
         const interrupted = !terminal(value.run);
+        value.automaticRetries = value.automaticRetries === 1 ? 1 : 0;
         const interruptedReviewer = value.run.reviewer?.state === "running";
         if (interrupted) {
           value.run.state = "cancelled";
@@ -222,7 +300,7 @@ export class CodeReviewManager {
       ? await this.sourceBinding(project.path).catch(() => null)
       : null;
     const changed =
-      isActive(task) ||
+      !this.quiet(task) ||
       saved.changesRevision !== task.changesRevision ||
       project.branch !== saved.run.snapshot.branch ||
       !source ||
@@ -248,10 +326,21 @@ export class CodeReviewManager {
     });
   }
   async start(taskId: string): Promise<StoryReviewRun> {
+    return this.enqueue(taskId);
+  }
+  private async enqueue(
+    taskId: string,
+    automaticRetries = 0,
+    retryFrom?: SavedReview,
+  ): Promise<StoryReviewRun> {
     return this.exclusive(taskId, async () => {
-      if (this.closed) throw Error("The review service is closing.");
+      if (this.closed) {
+        if (retryFrom) return clone(retryFrom.run);
+        throw Error("The review service is closing.");
+      }
       const task = this.task(taskId),
         project = this.project(task);
+      if (retryFrom && isActive(task)) return clone(retryFrom.run);
       if (isActive(task))
         throw Error(
           "Finish this story's worker pass before reviewing its contribution.",
@@ -259,6 +348,13 @@ export class CodeReviewManager {
       if (task.example || project.example || !project.path)
         throw Error("Connect a real local project to review its code.");
       const previous = await this.load(taskId);
+      if (
+        retryFrom &&
+        (previous !== retryFrom ||
+          retryFrom.retryAllowed === false ||
+          !this.inReviewLane(task))
+      )
+        return clone(previous?.run ?? retryFrom.run);
       if (previous && !terminal(previous.run)) return clone(previous.run);
       if (previous && this.reviewerControllers.has(previous.run.id))
         throw Error(
@@ -268,6 +364,9 @@ export class CodeReviewManager {
         id = randomUUID();
       const saved: SavedReview = {
         queued: true,
+        automaticRetries,
+        ...(retryFrom ? { retryOf: retryFrom.run.id } : {}),
+        retryAllowed: true,
         sourceBinding: null,
         changesRevision: task.changesRevision,
         run: {
@@ -278,6 +377,11 @@ export class CodeReviewManager {
           createdAt: at,
           updatedAt: at,
           state: "queued",
+          ...(retryFrom
+            ? {
+                note: "The epic changed during review. One fresh review is queued after its workers finish; the earlier snapshot is preserved.",
+              }
+            : {}),
           phases: codeReviewPhases.map(({ id }) => ({ id, state: "queued" })),
           snapshot: {
             id: "",
@@ -309,49 +413,141 @@ export class CodeReviewManager {
               id: randomUUID(),
               role: "system",
               at,
-              text: this.hooks.reviewer
-                ? "Memtrace checks this story's recorded changes locally, then a separate read-only model reviewer explains the captured patch and measurements. The implementation worker is not running in this review conversation."
-                : "Memtrace review checks this story's recorded changes locally. This is a deterministic review; no model or implementation worker is running in this conversation.",
+              text: retryFrom
+                ? "The previous review was interrupted by edits in this epic. A fresh snapshot will be reviewed after editing finishes. Automatic recovery is limited to this one additional pass; nothing is accepted automatically."
+                : this.hooks.reviewer
+                  ? "Memtrace checks this story's recorded changes locally, then a separate read-only model reviewer explains the captured patch and measurements. The implementation worker is not running in this review conversation."
+                  : "Memtrace review checks this story's recorded changes locally. This is a deterministic review; no model or implementation worker is running in this conversation.",
             },
           ],
         },
       };
       this.saved.set(taskId, saved);
       await this.persist(saved);
-      const key = project.id,
-        prior = this.projectQueues.get(key) ?? Promise.resolve();
-      const pending = prior
-        .catch(() => {})
-        .then(() => this.execute(saved))
-        .catch(async (error) => {
-          if (saved.run.state === "cancelled" || error instanceof ReviewStopped)
-            return;
-          await this.exclusive(taskId, async () => {
-            saved.run.state = "failed";
-            saved.run.outcome = "incomplete";
-            saved.run.completedAt = timestamp();
-            saved.run.note = (error as Error).message;
-            for (const phase of saved.run.phases)
-              if (phase.state === "running") phase.state = "failed";
-            saved.run.coverage.complete = false;
-            await this.persist(saved);
-          });
-        })
-        .finally(async () => {
-          const task = this.state().tasks.find((item) => item.id === taskId);
-          if (task) await this.hooks.settled?.(task, this.project(task));
-        });
-      this.projectQueues.set(key, pending);
-      void pending
-        .finally(() => {
-          if (this.projectQueues.get(key) === pending)
-            this.projectQueues.delete(key);
-        })
-        .catch((error) =>
-          console.error("Could not persist story review:", error),
-        );
+      this.schedule(saved);
       return clone(saved.run);
     });
+  }
+  private async settleGraph(
+    saved: SavedReview,
+    finishing = false,
+  ): Promise<void> {
+    const task = this.state().tasks.find(
+      (item) => item.id === saved.run.taskId,
+    );
+    if (!task || !this.hooks.settled) return;
+    const project = this.project(task),
+      key = project.id;
+    if (!finishing && this.admission.busy(key)) return;
+    const previous = this.graphRetirements.get(key) ?? Promise.resolve();
+    const retirement = previous
+      .catch(() => {})
+      .then(() => this.hooks.settled!(task, project));
+    this.graphRetirements.set(key, retirement);
+    try {
+      await retirement;
+    } finally {
+      if (this.graphRetirements.get(key) === retirement)
+        this.graphRetirements.delete(key);
+    }
+  }
+  private schedule(saved: SavedReview): void {
+    const { taskId, id } = saved.run;
+    let retry = false;
+    const failure = async (error: unknown) => {
+      if (
+        saved.run.state === "cancelled" ||
+        this.closed ||
+        this.saved.get(taskId) !== saved
+      )
+        return;
+      await this.exclusive(taskId, async () => {
+        saved.queued = false;
+        saved.run.state =
+          error instanceof ReviewStopped
+            ? "cancelled"
+            : retry
+              ? "stale"
+              : "failed";
+        saved.run.outcome = "incomplete";
+        saved.run.completedAt = timestamp();
+        saved.run.note =
+          error instanceof ReviewStopped
+            ? "Review stopped because this story left the Code review lane. Its saved evidence is preserved."
+            : retry
+              ? "The epic changed during review. This snapshot cannot approve the current source."
+              : error instanceof Error
+                ? error.message
+                : String(error);
+        for (const phase of saved.run.phases)
+          if (phase.state === "running")
+            phase.state = retry ? "unavailable" : "failed";
+        saved.run.coverage.complete = false;
+        await this.persist(saved);
+      });
+    };
+    const work = (async () => {
+      // An idle cached graph need not stay resident while a review waits. Await
+      // retirement before admission can reopen it, including overlapping starts.
+      await this.settleGraph(saved);
+      if (
+        this.closed ||
+        saved.run.state === "cancelled" ||
+        this.saved.get(taskId) !== saved
+      )
+        return;
+      await this.admission.submit({
+        id,
+        taskId,
+        key: this.project(this.task(taskId)).id,
+        ready: () => {
+          const task = this.task(taskId);
+          if (!this.inReviewLane(task)) throw new ReviewStopped();
+          return this.quiet(task);
+        },
+        waiting: (reason) => {
+          void this.exclusive(taskId, async () => {
+            if (
+              !saved.queued ||
+              this.saved.get(taskId) !== saved ||
+              saved.run.state !== "queued"
+            )
+              return;
+            saved.run.note = this.waitNote(reason);
+            await this.persist(saved);
+          }).catch(() => {});
+        },
+        run: async () => {
+          try {
+            await this.execute(saved);
+          } catch (error) {
+            if (error instanceof ReviewSourceChanged) retry = true;
+            await failure(error);
+          } finally {
+            await this.settleGraph(saved, true);
+          }
+        },
+      });
+    })().catch(failure);
+    this.executionWork.set(id, work);
+    void work
+      .then(async () => {
+        if (
+          retry &&
+          !this.closed &&
+          saved.retryAllowed !== false &&
+          (saved.automaticRetries ?? 0) < 1 &&
+          this.saved.get(taskId) === saved &&
+          this.inReviewLane(this.task(taskId))
+        )
+          await this.enqueue(taskId, (saved.automaticRetries ?? 0) + 1, saved);
+      })
+      .finally(() => {
+        if (this.executionWork.get(id) === work) this.executionWork.delete(id);
+      })
+      .catch((error) =>
+        console.error("Could not persist story review:", error),
+      );
   }
   private async execute(saved: SavedReview): Promise<void> {
     const taskId = saved.run.taskId,
@@ -364,8 +560,17 @@ export class CodeReviewManager {
       )
         throw new ReviewStopped();
       const task = this.task(taskId);
+      if (!this.inReviewLane(task)) throw new ReviewStopped();
+      if (saved.interrupted)
+        throw new ReviewSourceChanged(
+          "Another worker is starting edits in this epic.",
+        );
+      if (!this.quiet(task))
+        throw new ReviewSourceChanged(
+          "Another worker began editing this epic during review.",
+        );
       if (isActive(task) || task.changesRevision !== saved.changesRevision)
-        throw Error(
+        throw new ReviewSourceChanged(
           "The story began changing while review was running. Wait for its worker and run a fresh review.",
         );
     };
@@ -390,12 +595,20 @@ export class CodeReviewManager {
       });
     };
     try {
-      const task = this.task(taskId),
-        project = this.project(task);
+      const task = this.task(taskId);
+      let project = this.project(task);
       await phase(
         "capture",
         "Capturing only this story's attributed checkpoints.",
       );
+      await this.graphRetirements.get(project.id);
+      assertActive();
+      if (this.hooks.prepare) {
+        project = await this.hooks.prepare(task, project, (note) => {
+          void phase("capture", note).catch(() => {});
+        });
+        assertActive();
+      }
       const capture = await this.capture(clone(task));
       assertActive();
       saved.sourceBinding = capture.sourceBinding;
@@ -450,6 +663,7 @@ export class CodeReviewManager {
           await this.reviewAnswer(
             saved,
             "Review the captured story patch and Memtrace findings. Explain the most important correctness, maintainability and refactoring concerns with exact captured paths and lines. Separate measured facts from your own suggestions. If no concern is justified, say so without claiming that unverified checks passed.",
+            true,
           );
         } else {
           run.reviewer = {
@@ -462,6 +676,12 @@ export class CodeReviewManager {
       }
       const sourceAfter = await this.sourceBinding(project.path!);
       assertActive();
+      if (
+        saved.sourceBinding &&
+        sourceAfter &&
+        sourceAfter !== saved.sourceBinding
+      )
+        throw new ReviewSourceChanged("Source changed during this review.");
       if (!saved.sourceBinding || sourceAfter !== saved.sourceBinding) {
         run.state = "stale";
         run.outcome = "incomplete";
@@ -559,9 +779,19 @@ export class CodeReviewManager {
   }
 
   async cancel(taskId: string, runId: string): Promise<void> {
+    let activeId = runId;
     await this.exclusive(taskId, async () => {
-      const saved = await this.current(taskId, runId);
-      if (terminal(saved.run) && !this.reviewerControllers.has(runId)) return;
+      const saved = await this.current(taskId);
+      if (saved.run.id !== runId && saved.retryOf !== runId)
+        throw Error(
+          "This review is no longer the current review for the story.",
+        );
+      activeId = saved.run.id;
+      saved.retryAllowed = false;
+      this.admission.cancel(activeId);
+      this.admission.cancel(`answer:${activeId}`);
+      if (terminal(saved.run) && !this.reviewerControllers.has(activeId))
+        return;
       this.reviewerControllers.get(saved.run.id)?.abort();
       if (terminal(saved.run)) {
         if (saved.run.reviewer)
@@ -581,7 +811,16 @@ export class CodeReviewManager {
       saved.run.coverage.complete = false;
       await this.persist(saved);
     });
-    await this.reviewerWork.get(runId);
+    await this.reviewerWork.get(activeId);
+  }
+  async leaveLane(taskId: string): Promise<void> {
+    const pending = await this.exclusive(taskId, async () => {
+      const saved = await this.load(taskId);
+      if (!saved) return;
+      saved.retryAllowed = false;
+      return terminal(saved.run) ? undefined : saved.run.id;
+    });
+    if (pending) await this.cancel(taskId, pending);
   }
   /** Starting implementation invalidates review, even if an old optional file is missing. */
   async interruptForWorker(taskId: string, note?: string): Promise<void> {
@@ -612,6 +851,9 @@ export class CodeReviewManager {
         return;
       }
       runId = saved.run.id;
+      saved.retryAllowed = false;
+      this.admission.cancel(runId);
+      this.admission.cancel(`answer:${runId}`);
       this.reviewerControllers.get(runId)?.abort();
       saved.run.state = terminal(saved.run) ? "stale" : "cancelled";
       saved.run.coverage.complete = false;
@@ -620,7 +862,42 @@ export class CodeReviewManager {
         "Implementation is starting a new pass. Run a fresh review after its changes are recorded.";
       await this.persist(saved);
     });
-    if (runId) await this.reviewerWork.get(runId);
+    if (runId) {
+      await this.reviewerWork.get(runId);
+      await this.executionWork.get(runId);
+    }
+  }
+  /** Called while the worker holds a start reservation, before Preparing. */
+  async beforeWorker(taskId: string): Promise<void> {
+    await this.interruptForWorker(taskId);
+    const owner = this.task(taskId);
+    const drains: Promise<unknown>[] = [];
+    for (const saved of this.saved.values()) {
+      if (saved.run.taskId === taskId) continue;
+      const peer = this.state().tasks.find(
+        (item) => item.id === saved.run.taskId,
+      );
+      if (!peer || !this.sameEpic(owner, peer)) continue;
+      if (this.admission.isRunning(saved.run.id)) {
+        await this.exclusive(peer.id, async () => {
+          saved.interrupted = true;
+          this.reviewerControllers.get(saved.run.id)?.abort();
+          saved.run.note =
+            "Another story is starting edits in this epic. This review is stopping before a fresh snapshot can be captured.";
+          await this.persist(saved);
+        });
+        const work = this.executionWork.get(saved.run.id);
+        if (work) drains.push(work);
+      }
+      if (this.reviewerControllers.has(saved.run.id)) {
+        this.reviewerControllers.get(saved.run.id)?.abort();
+        this.admission.cancel(`answer:${saved.run.id}`);
+        const answer = this.reviewerWork.get(saved.run.id);
+        if (answer) drains.push(answer);
+      }
+    }
+    await Promise.allSettled(drains);
+    this.admission.notify();
   }
   async discuss(
     taskId: string,
@@ -686,8 +963,21 @@ export class CodeReviewManager {
       return clone(saved.run);
     });
   }
-  private reviewAnswer(saved: SavedReview, question: string): Promise<void> {
-    const pending = this.performReviewAnswer(saved, question);
+  private reviewAnswer(
+    saved: SavedReview,
+    question: string,
+    admitted = false,
+  ): Promise<void> {
+    if (this.reviewerControllers.has(saved.run.id))
+      return Promise.reject(Error("The reviewer is already answering."));
+    const controller = new AbortController();
+    this.reviewerControllers.set(saved.run.id, controller);
+    const pending = this.performReviewAnswer(
+      saved,
+      question,
+      controller,
+      admitted,
+    );
     this.reviewerWork.set(saved.run.id, pending);
     void pending
       .finally(() => {
@@ -700,80 +990,115 @@ export class CodeReviewManager {
   private async performReviewAnswer(
     saved: SavedReview,
     question: string,
+    controller: AbortController,
+    admitted: boolean,
   ): Promise<void> {
     const reviewer = this.hooks.reviewer;
     if (!reviewer) return;
     const task = clone(this.task(saved.run.taskId)),
-      run = saved.run,
-      controller = new AbortController();
-    await this.exclusive(task.id, async () => {
-      if (this.closed || run.state === "cancelled") throw new ReviewStopped();
-      if (this.reviewerControllers.has(run.id))
-        throw Error("The reviewer is already answering.");
-      this.reviewerControllers.set(run.id, controller);
-      run.reviewer = {
-        harness: task.harness,
-        model: "Not yet reported",
-        state: "running",
-        note: "Connecting a separate read-only reviewer. Implementation permissions do not apply.",
-      };
-      await this.persist(saved);
-    });
+      run = saved.run;
     try {
-      const result = await reviewer.ask({
-        task,
-        review: clone(run),
-        question,
-        patch: saved.patch,
-        patchTruncated: saved.patchTruncated,
-        signal: controller.signal,
-        onModel: (model) => {
-          void this.exclusive(task.id, async () => {
-            if (
-              !this.closed &&
-              !controller.signal.aborted &&
-              this.saved.get(task.id) === saved &&
-              run.reviewer
-            ) {
-              run.reviewer.model = model;
-              await this.persist(saved);
-            }
-          }).catch(() => {});
-        },
-      });
       await this.exclusive(task.id, async () => {
+        if (
+          this.closed ||
+          run.state === "cancelled" ||
+          controller.signal.aborted
+        )
+          throw new ReviewStopped();
+        run.reviewer = {
+          harness: task.harness,
+          model: "Not yet reported",
+          state: "running",
+          note: admitted
+            ? "Connecting a separate read-only reviewer. Implementation permissions do not apply."
+            : "Waiting for local capacity. This answer uses the saved review snapshot only.",
+        };
+        await this.persist(saved);
+      });
+      const answer = async () => {
         if (
           controller.signal.aborted ||
           this.closed ||
           this.saved.get(task.id) !== saved
         )
           return;
-        run.reviewer = {
-          harness: result.harness,
-          model: result.model,
-          state: "idle",
-          note: "Read-only reviewer advice; deterministic findings and measurements stay separate.",
-        };
-        if (result.evidenceRead) {
-          (saved.reviewerReads ??= []).push({
-            at: timestamp(),
-            model: result.model,
-            harness: result.harness,
-            ...result.evidenceRead,
-          });
-          if (saved.reviewerReads.length > 100)
-            saved.reviewerReads.splice(0, saved.reviewerReads.length - 100);
-        }
-        run.messages.push({
-          id: randomUUID(),
-          role: "assistant",
-          at: timestamp(),
-          text: result.text,
+        const result = await reviewer.ask({
+          task,
+          review: clone(run),
+          question,
+          patch: saved.patch,
+          patchTruncated: saved.patchTruncated,
+          signal: controller.signal,
+          onModel: (model) => {
+            void this.exclusive(task.id, async () => {
+              if (
+                !this.closed &&
+                !controller.signal.aborted &&
+                this.saved.get(task.id) === saved &&
+                run.reviewer
+              ) {
+                run.reviewer.model = model;
+                await this.persist(saved);
+              }
+            }).catch(() => {});
+          },
         });
-        if (run.messages.length > 100)
-          run.messages.splice(1, run.messages.length - 100);
-        await this.persist(saved);
-      });
+        await this.exclusive(task.id, async () => {
+          if (
+            controller.signal.aborted ||
+            this.closed ||
+            this.saved.get(task.id) !== saved
+          )
+            return;
+          run.reviewer = {
+            harness: result.harness,
+            model: result.model,
+            state: "idle",
+            note: "Read-only reviewer advice; deterministic findings and measurements stay separate.",
+          };
+          if (result.evidenceRead) {
+            (saved.reviewerReads ??= []).push({
+              at: timestamp(),
+              model: result.model,
+              harness: result.harness,
+              ...result.evidenceRead,
+            });
+            if (saved.reviewerReads.length > 100)
+              saved.reviewerReads.splice(0, saved.reviewerReads.length - 100);
+          }
+          run.messages.push({
+            id: randomUUID(),
+            role: "assistant",
+            at: timestamp(),
+            text: result.text,
+          });
+          if (run.messages.length > 100)
+            run.messages.splice(1, run.messages.length - 100);
+          await this.persist(saved);
+        });
+      };
+      if (controller.signal.aborted || this.closed) return;
+      if (admitted) await answer();
+      else
+        await this.admission.submit({
+          id: `answer:${run.id}`,
+          taskId: task.id,
+          key: this.project(task).id,
+          ready: () => !controller.signal.aborted,
+          waiting: (reason) => {
+            void this.exclusive(task.id, async () => {
+              if (
+                controller.signal.aborted ||
+                this.saved.get(task.id) !== saved ||
+                !run.reviewer
+              )
+                return;
+              run.reviewer.note = `${this.waitNote(reason)} This answer reads saved evidence only.`;
+              await this.persist(saved);
+            }).catch(() => {});
+          },
+          run: answer,
+        });
     } catch (error) {
       await this.exclusive(task.id, async () => {
         if (this.closed || this.saved.get(task.id) !== saved) return;
@@ -883,6 +1208,8 @@ export class CodeReviewManager {
   }
   async close(): Promise<void> {
     this.closed = true;
+    this.admission.close();
+    for (const saved of this.saved.values()) saved.retryAllowed = false;
     for (const controller of this.reviewerControllers.values())
       controller.abort();
     for (const saved of this.saved.values())
