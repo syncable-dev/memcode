@@ -577,6 +577,7 @@ export class CodeReviewManager {
     assertActive();
     this.active.add(run.id);
     saved.queued = false;
+    run.note = undefined;
     const phase = async (
       id: StoryReviewRun["phases"][number]["id"],
       note: string,

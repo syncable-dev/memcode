@@ -373,7 +373,12 @@ test("queueing a second story never retires an admitted peer's graph and preserv
     assert.deepEqual(f.captures, ["a"]);
     held.resolve();
     await f.settled();
-    await f.settled(f.manager, "a-peer");
+    const completedPeer = await f.settled(f.manager, "a-peer");
+    assert.equal(
+      completedPeer.note,
+      undefined,
+      "A completed review must not retain its queued waiting message",
+    );
     assert.deepEqual(f.captures, ["a", "a-peer"]);
     assert.equal(f.retired.length, 3);
   } finally {
