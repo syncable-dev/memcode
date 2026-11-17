@@ -236,6 +236,7 @@ export class WorkerManager {
       project: Project,
     ) => Promise<void>,
     private readonly reviewStarting?: (task: WorkItem) => Promise<void>,
+    private readonly reviewSlots: (task?: WorkItem) => number = () => 0,
   ) {
     this.inputs = new WorkerInputs(state, changed);
     for (const task of state().tasks)
@@ -252,20 +253,40 @@ export class WorkerManager {
   async pause(ids: string[]): Promise<void> {
     await Promise.allSettled(ids.map((id) => this.stop(id, "paused")));
   }
-  async releaseIdleAnalysis(task: WorkItem, project: Project): Promise<void> {
+  implementationCount(): number {
+    return (
+      this.state().tasks.filter((task) => !task.example && isActive(task))
+        .length + this.cancellingReview.size
+    );
+  }
+  implementationStarting(taskId: string): boolean {
+    return this.cancellingReview.has(taskId);
+  }
+  async releaseIdleAnalysis(
+    task: WorkItem,
+    project: Project,
+    options: { reviewSettled?: true } = {},
+  ): Promise<void> {
+    // App shutdown cancels workers/reviewers first, then engine.close drains
+    // every remaining owned graph in parallel. Avoid paying a flush in each
+    // earlier shutdown phase as well.
+    if (this.closing) return;
     const analysis = epicAnalysisProject(project, task);
     if (analysis === project || !this.engine.releaseEpic) return;
     const unlock = await this.startup.enter(new AbortController().signal);
     let retiring: Promise<void> | undefined;
     try {
+      if (this.closing) return;
+      // Admission reserves a review before its first phase is persisted. Only
+      // the review manager's drained settlement may retire that admitted graph.
+      if (!options.reviewSettled && this.reviewSlots() > this.reviewSlots(task))
+        return;
       if (
         this.state().tasks.some(
           (other) =>
             other.projectId === task.projectId &&
             other.epicId === task.epicId &&
-            (isActive(other) ||
-              other.codeReview?.state === "running" ||
-              other.codeReview?.state === "queued"),
+            (isActive(other) || other.codeReview?.state === "running"),
         )
       )
         return;
@@ -329,8 +350,8 @@ export class WorkerManager {
         )
           continue;
         if (
-          this.state().tasks.filter((item) => !item.example && isActive(item))
-            .length >= this.state().settings.maxWorkers
+          this.implementationCount() + this.reviewSlots(task) >=
+          this.state().settings.maxWorkers
         )
           break;
         const project = this.state().projects.find(
@@ -454,9 +475,7 @@ export class WorkerManager {
       this.cancellingReview.has(task.id)
     )
       throw new Error("This worker is already active.");
-    const active =
-      this.state().tasks.filter((t) => !t.example && isActive(t)).length +
-      this.cancellingReview.size;
+    const active = this.implementationCount() + this.reviewSlots(task);
     if (active >= this.state().settings.maxWorkers)
       throw new Error(
         "All worker slots are occupied. Wait for a worker or increase the limit in Settings.",
@@ -517,8 +536,8 @@ export class WorkerManager {
         if (isActive(task) || this.children.has(task.id))
           throw new Error("This worker is already active.");
         if (
-          this.state().tasks.filter((item) => !item.example && isActive(item))
-            .length >= this.state().settings.maxWorkers
+          this.implementationCount() - 1 + this.reviewSlots(task) >=
+          this.state().settings.maxWorkers
         )
           throw new Error(
             "All worker slots are occupied. Wait for a worker or increase the limit in Settings.",
