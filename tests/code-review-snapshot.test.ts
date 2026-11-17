@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile, readFile } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
@@ -120,6 +120,129 @@ test("later uncheckpointed source invalidates review coverage without reviewing 
   const result = await captureStoryReview(f.task);
   assert.equal(result.patch, "");
   assert.match(result.limitations.join(" "), /last checkpoint/);
+});
+
+const sharedBefore = [
+  "// Shared source",
+  "",
+  "export function first() {",
+  "  const result = 1;",
+  "  return result;",
+  "}",
+  "",
+  "// Independent second feature",
+  "",
+  "export function second() {",
+  "  return 10;",
+  "}",
+  "",
+].join("\n");
+
+test("review projects only this story after a later disjoint same-file edit and preserves its original hashes", async () => {
+  const f = await fixture();
+  const firstPass = sharedBefore.replace("result = 1", "result = 2"),
+    ownAfter = firstPass.replace("result = 2", "result = 3"),
+    current = ownAfter.replace("return 10", "return 20");
+  await f.checkpoint(sharedBefore, firstPass);
+  await f.checkpoint(firstPass, ownAfter);
+  await writeFile(join(f.root, "source.ts"), current);
+  const result = await captureStoryReview(f.task);
+  assert.deepEqual(result.limitations, []);
+  assert.equal(result.snapshot.files[0].beforeHash, hash(sharedBefore));
+  assert.equal(result.snapshot.files[0].afterHash, hash(ownAfter));
+  assert.deepEqual(result.snapshot.files[0].projection, {
+    method: "unique-exact-context",
+    baselineHash: hash(sharedBefore.replace("return 10", "return 20")),
+    currentHash: hash(current),
+    hunks: 1,
+  });
+  assert.equal(
+    result.baseFiles["source.ts"],
+    sharedBefore.replace("return 10", "return 20"),
+  );
+  assert.match(result.patch, /-  const result = 1;/);
+  assert.match(result.patch, /\+  const result = 3;/);
+  assert.doesNotMatch(result.patch, /^[+-]  return (10|20);/m);
+  assert.equal(result.snapshot.additions, 1);
+  assert.equal(result.snapshot.deletions, 1);
+  assert.equal(
+    await readFile(join(f.root, "source.ts"), "utf8"),
+    current,
+    "Capture never writes the execution source",
+  );
+});
+
+test("ambiguous or overlapping later same-file edits stay incomplete without a projected patch", async () => {
+  for (const mode of ["duplicate", "overlap"] as const) {
+    const f = await fixture(),
+      ownAfter = sharedBefore.replace("result = 1", "result = 2");
+    await f.checkpoint(sharedBefore, ownAfter);
+    await writeFile(
+      join(f.root, "source.ts"),
+      mode === "overlap"
+        ? ownAfter.replace("result = 2", "result = 3")
+        : ownAfter +
+            "\nexport function first() {\n  const result = 2;\n  return result;\n}\n",
+    );
+    const result = await captureStoryReview(f.task);
+    assert.equal(result.patch, "");
+    assert.equal(result.snapshot.files[0].projection, undefined);
+    assert.match(result.limitations.join(" "), /context|ambiguous|overlaps/);
+  }
+});
+
+test("file addition or deletion with later source changes cannot project away file ownership", async () => {
+  for (const transition of ["add", "delete"] as const) {
+    const f = await fixture();
+    await f.checkpoint(
+      transition === "add" ? undefined : "const own = 0;\n",
+      transition === "add" ? "const own = 1;\n" : undefined,
+    );
+    await writeFile(join(f.root, "source.ts"), "const peer = 2;\n");
+    const result = await captureStoryReview(f.task);
+    assert.equal(result.patch, "");
+    assert.equal(result.snapshot.files[0].projection, undefined);
+    assert.match(result.limitations.join(" "), /last checkpoint/);
+  }
+});
+
+test("an unchanged story deletion still produces an exact deletion patch", async () => {
+  const f = await fixture();
+  await f.checkpoint("const own = 0;\n", undefined);
+  await rm(join(f.root, "source.ts"), { force: true });
+  const result = await captureStoryReview(f.task);
+  assert.deepEqual(result.limitations, []);
+  assert.match(result.patch, /\+\+\+ \/dev\/null/);
+  assert.match(result.patch, /-const own = 0;/);
+  assert.equal(result.snapshot.deletions, 1);
+  assert.equal(result.snapshot.files[0].projection, undefined);
+});
+
+test("a peer deletion of this story's modified file stays incomplete", async () => {
+  const f = await fixture();
+  await f.checkpoint(
+    sharedBefore,
+    sharedBefore.replace("result = 1", "result = 2"),
+  );
+  await rm(join(f.root, "source.ts"));
+  const result = await captureStoryReview(f.task);
+  assert.equal(result.patch, "");
+  assert.equal(result.snapshot.files[0].projection, undefined);
+  assert.match(result.limitations.join(" "), /last checkpoint/);
+});
+
+test("a legacy baseline cannot gain verified ownership through disjoint projection", async () => {
+  const f = await fixture(),
+    ownAfter = sharedBefore.replace("result = 1", "result = 2");
+  await f.checkpoint(sharedBefore, ownAfter, { basis: "scoped-baseline" });
+  await writeFile(
+    join(f.root, "source.ts"),
+    ownAfter.replace("return 10", "return 20"),
+  );
+  const result = await captureStoryReview(f.task);
+  assert.equal(result.patch, "");
+  assert.equal(result.snapshot.files[0].projection, undefined);
+  assert.match(result.limitations.join(" "), /older scoped baseline/);
 });
 
 test("tampered saved blobs are rejected rather than becoming trusted review input", async () => {
