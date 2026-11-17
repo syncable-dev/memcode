@@ -37,10 +37,17 @@ export const verifiedIndexRevision = (
   // envelope. Older engines returned it at the top level. Prefer the envelope
   // even when it explicitly reports instability; never replace it with an older
   // top-level success value.
-  const graphRevision = value?._meta?.graph_revision ?? value?.graph_revision;
+  const nativeEnvelopePresent =
+    value?._meta != null &&
+    Object.prototype.hasOwnProperty.call(value._meta, "graph_revision");
+  const graphRevision = nativeEnvelopePresent
+    ? value._meta.graph_revision
+    : value?.graph_revision;
   return (
-    (graphRevision == null ||
-      (typeof graphRevision === "object" && !Array.isArray(graphRevision))) &&
+    ((!nativeEnvelopePresent && graphRevision == null) ||
+      (graphRevision !== null &&
+        typeof graphRevision === "object" &&
+        !Array.isArray(graphRevision))) &&
     (project.analysisCheckout !== "owned-worktree-v1" ||
       (value?.checkout_mode === "owned-worktree-v1" &&
         value?.graph_scope === "owned_worktree_graph" &&

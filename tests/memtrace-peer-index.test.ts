@@ -180,6 +180,8 @@ test("a native owned certificate uses the MCP publication envelope and keeps exa
 
 test("an unstable or malformed native envelope cannot be hidden by legacy success metadata", () => {
   for (const graphRevision of [
+    null,
+    undefined,
     { publication_unchanged_during_call: false },
     { status: "partial", publication_unchanged_during_call: true },
     { publication_unchanged_during_call: "true" },
@@ -200,6 +202,8 @@ test("an unstable or malformed native envelope cannot be hidden by legacy succes
     );
   }
   for (const graphRevision of [
+    null,
+    undefined,
     { publication_unchanged_during_call: false },
     { status: "partial", publication_unchanged_during_call: true },
     true,
@@ -217,6 +221,23 @@ test("an unstable or malformed native envelope cannot be hidden by legacy succes
         "fixture",
       ),
       false,
+    );
+  }
+});
+
+test("legacy graph metadata is used only when the native envelope field is absent", () => {
+  for (const metadata of [undefined, null, {}]) {
+    assert.equal(
+      verifiedIndexRevision(
+        {
+          ...nativeOwnedRevision,
+          _meta: metadata,
+          graph_revision: { publication_unchanged_during_call: true },
+        },
+        nativeOwnedProject,
+        "fixture",
+      ),
+      true,
     );
   }
 });
