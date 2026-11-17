@@ -77,10 +77,6 @@ test("the actual runtime routes a card into its dedicated review and final accep
       for (const [method, input] of [
         ["code-review:start", { taskId: story.id }],
         [
-          "code-review:discuss",
-          { taskId: story.id, runId: "unstarted", text: "Explain this" },
-        ],
-        [
           "code-review:request-fixes",
           { taskId: story.id, runId: "unstarted", findingIds: [] },
         ],
@@ -107,7 +103,11 @@ test("the actual runtime routes a card into its dedicated review and final accep
       if (review?.state === "completed") break;
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
-    assert.equal(review?.state, "completed", review?.note);
+    assert.equal(
+      review?.state,
+      "completed",
+      review?.note ?? "Review did not complete.",
+    );
     assert.equal(review?.outcome, "not-applicable");
     assert.equal(review?.findings.length, 0);
     assert.equal(review?.metrics.length, 0);
@@ -118,6 +118,44 @@ test("the actual runtime routes a card into its dedicated review and final accep
     assert.equal(story.statusId, binding.acceptanceStatusId);
     assert.equal(story.stage, "review");
     assert.equal(story.harness, "codex");
+    for (const statusId of [binding.acceptanceStatusId, `${project.id}:done`]) {
+      const status = runtime.store.state.workflowStates.find(
+        (item) => item.id === statusId,
+      )!;
+      story.stage = status.stage;
+      story.statusId = status.id;
+      const saved = (await runtime.request("code-review:get", {
+        taskId: story.id,
+      })) as StoryReviewRun;
+      assert.equal(saved.id, review!.id);
+      assert.equal(saved.outcome, "not-applicable");
+      await assert.rejects(
+        runtime.request("code-review:start", { taskId: story.id }),
+        /Code review lane/,
+      );
+      const discussed = (await runtime.request("code-review:discuss", {
+        taskId: story.id,
+        runId: review!.id,
+        text: `Explain the saved review in ${status.stage}.`,
+      })) as StoryReviewRun;
+      assert.equal(discussed.id, review!.id);
+      assert.ok(
+        discussed.messages.some(
+          (item) =>
+            item.text === `Explain the saved review in ${status.stage}.`,
+        ),
+      );
+      assert.equal(
+        story.statusId,
+        statusId,
+        "Reading or discussing a saved review does not move the story",
+      );
+      assert.equal(
+        story.run.state,
+        "finished",
+        "Saved-review discussion never starts the implementation worker",
+      );
+    }
     await assert.rejects(
       runtime.request("code-review:accept", {
         taskId: story.id,
