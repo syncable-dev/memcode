@@ -790,6 +790,8 @@ async function analyzeStableGroup(
     key(after.worktree) === key(project.path!) &&
     after.source_revision === before.source_revision &&
     after.source_unchanged_during_observation === true &&
+    record(graph(after)) &&
+    !!publication(after) &&
     (before.token !== after.token ||
       graph(after)?.publication_unchanged_during_call === false)
   ) {
