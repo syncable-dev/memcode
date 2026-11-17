@@ -98,7 +98,13 @@ export class FleetCoordinator {
     const lease = await this.engine.call(project, "fleet_acquire_lease", {
       repo_id: project.repoId,
       agent_id: "memcode:" + task.id,
-      scope: this.scope(task, project),
+      // Native leases identify string scopes, not branches. Namespace their
+      // keys so independent epic checkouts do not block one another. Published
+      // intents retain their canonical repo, original branch and source keys.
+      scope: this.scope(task, project).map(
+        (scope) =>
+          `branch::${JSON.stringify(task.run.branch ?? project.branch)}::${scope}`,
+      ),
       priority: 0,
       ttl_seconds: 120,
     });

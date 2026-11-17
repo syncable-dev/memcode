@@ -43,11 +43,14 @@ export interface MemtraceScopeBinding {
   workspaceFile?: string;
 }
 
-export async function projectMcpWorkspace(projectPath: string) {
+export async function projectMcpWorkspace(
+  projectPath: string,
+  ownedWorktree = false,
+) {
   const directory = await realpath(projectPath),
     anchor = join(directory, ".memcode", "memtrace"),
     workspaceFile = join(anchor, "workspace.toml");
-  const expected = `version = 1\nname = "MemCode project"\nmembers = [${JSON.stringify(directory.replaceAll("\\", "/"))}]\n`;
+  const expected = `version = 1\n${ownedWorktree ? 'checkout_mode = "owned-worktree-v1"\n' : ""}name = "MemCode project"\nmembers = [${JSON.stringify(directory.replaceAll("\\", "/"))}]\n`;
   await mkdir(anchor, { recursive: true });
   let existing: string | null = null;
   try {
@@ -77,23 +80,47 @@ export async function waitForPrivateRepositoryDiscovery(
   scope: Awaited<ReturnType<typeof projectMcpWorkspace>> | null,
   read: () => Promise<any>,
   update: (note: string) => void,
-  options: { now?: () => number; sleep?: (ms: number) => Promise<void>; isCancelled?: () => boolean; timeoutMs?: number; pollMs?: number } = {},
+  options: {
+    now?: () => number;
+    sleep?: (ms: number) => Promise<void>;
+    isCancelled?: () => boolean;
+    timeoutMs?: number;
+    pollMs?: number;
+  } = {},
 ): Promise<any> {
   const pending = (value: any) => {
     const rows = Array.isArray(value) ? value : value?.repos;
     if (!scope || !Array.isArray(rows) || rows.length !== 1) return false;
     const row = rows[0];
-    return row && typeof row === "object" && !Array.isArray(row) && row.path == null && row.repo_path == null &&
-      !(row.ingestion_path === "episode_only" && typeof row.repo_id === "string" && row.repo_id.trim());
+    return (
+      row &&
+      typeof row === "object" &&
+      !Array.isArray(row) &&
+      row.path == null &&
+      row.repo_path == null &&
+      !(
+        row.ingestion_path === "episode_only" &&
+        typeof row.repo_id === "string" &&
+        row.repo_id.trim()
+      )
+    );
   };
   const now = options.now ?? Date.now,
-    sleep = options.sleep ?? ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))),
+    sleep =
+      options.sleep ??
+      ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))),
     deadline = now() + (options.timeoutMs ?? 10_000);
-  const active = () => { if (options.isCancelled?.()) throw Error("The Memtrace connection is closing."); };
+  const active = () => {
+    if (options.isCancelled?.())
+      throw Error("The Memtrace connection is closing.");
+  };
   let value = initial;
   while (pending(value)) {
     active();
-    if (now() >= deadline) throw new MemtraceAdmissionError("Memtrace's local project discovery is not ready. Retry when preparation completes; no repository was adopted or indexed.");
+    if (now() >= deadline)
+      throw new MemtraceAdmissionError(
+        "Memtrace's local project discovery is not ready. Retry when preparation completes; no repository was adopted or indexed.",
+      );
     update("Preparing local code context · waiting for project discovery…");
     await sleep(Math.min(options.pollMs ?? 250, Math.max(0, deadline - now())));
     active();
@@ -102,16 +129,31 @@ export async function waitForPrivateRepositoryDiscovery(
     try {
       value = await Promise.race([
         read(),
-        new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new MemtraceAdmissionError("Memtrace's local project discovery did not respond before its deadline. No repository was adopted or indexed.")), Math.max(1, deadline - now())); }),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () =>
+              reject(
+                new MemtraceAdmissionError(
+                  "Memtrace's local project discovery did not respond before its deadline. No repository was adopted or indexed.",
+                ),
+              ),
+            Math.max(1, deadline - now()),
+          );
+        }),
       ]);
-    } finally { clearTimeout(timer); }
+    } finally {
+      clearTimeout(timer);
+    }
     active();
   }
   return value;
 }
 
 const admissionPath = (value: string) => {
-  const normalized = value.replaceAll("\\", "/").replace(/^\/\/\?\//, "").replace(/\/$/, "");
+  const normalized = value
+    .replaceAll("\\", "/")
+    .replace(/^\/\/\?\//, "")
+    .replace(/\/$/, "");
   return process.platform === "win32" ? normalized.toLowerCase() : normalized;
 };
 
@@ -129,19 +171,41 @@ export async function admitPrivateEpisodeRepository(
   // workspace. Never adopt an arbitrary pathless row or infer membership by name.
   if (!scope || !branch || repos.length !== 1) return null;
   const repo = repos[0] as Record<string, any> | null;
-  if (!repo || typeof repo !== "object" || repo.ingestion_path !== "episode_only" ||
-      repo.path != null || repo.repo_path != null || typeof repo.repo_id !== "string" ||
-      !repo.repo_id.trim() || repo.repo_id.length > 500) return null;
+  if (
+    !repo ||
+    typeof repo !== "object" ||
+    repo.ingestion_path !== "episode_only" ||
+    repo.path != null ||
+    repo.repo_path != null ||
+    typeof repo.repo_id !== "string" ||
+    !repo.repo_id.trim() ||
+    repo.repo_id.length > 500
+  )
+    return null;
   const args = { repo_id: repo.repo_id, branch };
   const stats = await read("get_repository_stats", args);
-  if (stats?.repo_in_store !== true || stats?.diagnostic?.kind === "wrong_store" ||
-      (stats.repo_id != null && stats.repo_id !== repo.repo_id)) return null;
+  if (
+    stats?.repo_in_store !== true ||
+    stats?.diagnostic?.kind === "wrong_store" ||
+    (stats.repo_id != null && stats.repo_id !== repo.repo_id)
+  )
+    return null;
   for (const path of [stats.path, stats.repo_path]) {
-    if (path != null && (typeof path !== "string" || admissionPath(path) !== admissionPath(scope.directory))) return null;
+    if (
+      path != null &&
+      (typeof path !== "string" ||
+        admissionPath(path) !== admissionPath(scope.directory))
+    )
+      return null;
   }
   const revision = await read("get_query_revision", args);
-  if (typeof revision?.worktree !== "string" || admissionPath(revision.worktree) !== admissionPath(scope.directory) ||
-      revision.branch !== branch || (revision.repo_id != null && revision.repo_id !== repo.repo_id)) return null;
+  if (
+    typeof revision?.worktree !== "string" ||
+    admissionPath(revision.worktree) !== admissionPath(scope.directory) ||
+    revision.branch !== branch ||
+    (revision.repo_id != null && revision.repo_id !== repo.repo_id)
+  )
+    return null;
   // A partial revision proves only the selected source binding, never index
   // readiness. analyze() must still verify the complete source/index certificate.
   return repo;

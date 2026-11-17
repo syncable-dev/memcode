@@ -94,7 +94,7 @@ export const guideArticles: GuideArticle[] = [
       "Open Roadmap and choose New epic.",
       "Use an outcome as the title: “Launch the first version”, “Improve sign-in” or “Make reports exportable”. Add a short description of why it matters.",
       "Choose Now, Next or Later. Add small stories inside the epic.",
-      "Workers on one epic share its Git branch. Finish or stop that fleet before activating a different epic in the same checkout.",
+      "Workers on one epic share its Git branch. With the current parallel-capable engine, other epics use separate checkouts with shared Git storage. Keep prerequisite stories explicit so missing code handoffs are caught before a worker starts.",
     ],
     destination: "roadmap",
     related: ["stories", "fleet"],
@@ -281,15 +281,15 @@ export const guideArticles: GuideArticle[] = [
     group: "Working with agents",
     title: "Review changes and accept work",
     summary:
-      "A finished worker produces a review candidate. You decide whether the result is ready.",
+      "Code review brings the story’s findings, measured quality, impact and checks together before your final acceptance.",
     image: "changes",
     caption:
       "Each card shows its worker’s recorded checkpoints and additions/deletions.",
     steps: [
       "Open Changes and choose a file. Syntax colors, line numbers and addition/deletion backgrounds make the edit readable.",
       "Scroll horizontally for long lines. Compare the worker’s checkpoint scope with what you requested.",
-      "Read the reported checks and inspect artifacts or the running app. Leave precise annotations where something should change.",
-      "Send selected feedback, review the result and mark Done when you accept it. MemCode does not automatically push or deploy the change.",
+      "In Code review, follow the analysis phases. Expand findings, inspect measured complexity and affected code, and check the coverage notes. Ask the separate read-only reviewer about the evidence.",
+      "Request fixes to send selected findings to the story’s worker. After a complete review, move to Ready for acceptance, inspect outputs and mark Done when you accept them. MemCode does not automatically push or deploy the change.",
     ],
     related: ["annotations", "artifacts", "browser"],
   },

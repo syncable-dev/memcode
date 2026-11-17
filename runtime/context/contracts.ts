@@ -52,6 +52,8 @@ export interface GraphClient {
 }
 export interface ContextBinding {
   project: Project;
+  /** Repository-wide accepted decisions stay shared while source facts are epic-local. */
+  governanceProject?: Project;
   workerId: string;
   branch: string;
   /** Read visibility, not a filesystem write fence. Empty means the repository. */

@@ -23,7 +23,11 @@ import {
   pendingMemtraceOwner,
   disconnectedMemtraceClient,
 } from "./memtrace-owner";
-import { verifiedIndexRevision, waitForIndexPublication, waitForPeerIndex } from "./memtrace-peer-index";
+import {
+  verifiedIndexRevision,
+  waitForIndexPublication,
+  waitForPeerIndex,
+} from "./memtrace-peer-index";
 import { appVersion } from "../src/version";
 
 type Json = Record<string, any>;
@@ -87,6 +91,8 @@ export class MemtraceEngine {
   private bindingPaths = new Map<string, string>();
   private connectionProgress = new Map<string, Set<(note: string) => void>>();
   private scopes = new Map<string, MemtraceScopeBinding>();
+  private bindingGenerations = new Map<string, number>();
+  private retiring = new Set<string>();
   private clients = new Map<
     string,
     { client: Client; transport: StdioClientTransport; projectPath: string }
@@ -102,9 +108,66 @@ export class MemtraceEngine {
     const scope = this.scopes.get(projectId);
     return scope ? { ...scope } : null;
   }
+  /** Version advertised by the connected engine, never inferred from an install pin. */
+  versionFor(projectId: string): string | undefined {
+    const value = this.clients
+      .get(projectId)
+      ?.client.getServerVersion()?.version;
+    return typeof value === "string" && value.length > 0 && value.length <= 100
+      ? value
+      : undefined;
+  }
   certificateDiagnosticsFor(projectId: string): string[] {
     const scope = this.scopes.get(projectId);
     return scope ? this.owners.certificateDiagnostics(scope.dataDirectory) : [];
+  }
+  async ownedWorktreeSupport(project: Project): Promise<boolean> {
+    try {
+      const capabilities = await this.call(
+        project,
+        "get_checkout_capabilities",
+        {},
+      );
+      return (
+        capabilities?.protocol_version === 1 &&
+        capabilities?.owned_worktree_v1 === true &&
+        capabilities?.checkout_modes?.includes("owned-worktree-v1") === true
+      );
+    } catch (error) {
+      if (
+        /unknown tool|tool.*not found|unrecognized.*tool|method not found/i.test(
+          (error as Error).message,
+        )
+      )
+        return false;
+      throw error;
+    }
+  }
+  /** Release our idle epic owner; the graph cache and checkout stay on disk. */
+  async releaseEpic(project: Project): Promise<void> {
+    if (project.analysisCheckout !== "owned-worktree-v1") return;
+    this.retiring.add(project.id);
+    this.bindingGenerations.set(
+      project.id,
+      (this.bindingGenerations.get(project.id) ?? 0) + 1,
+    );
+    try {
+      await this.opening.get(project.id)?.catch(() => {});
+      const store = this.scopes.get(project.id)?.dataDirectory;
+      await this.releaseBinding(project.id);
+      if (
+        store &&
+        ![...this.scopes.values()].some(
+          (scope) => scope.dataDirectory === store,
+        )
+      )
+        await this.owners.release(store);
+      this.bindingPaths.delete(project.id);
+      this.watching.delete(project.id);
+      this.watchingPaths.delete(project.id);
+    } finally {
+      this.retiring.delete(project.id);
+    }
   }
   watcherFor(projectId: string): MemtraceWatch | null {
     const watch = this.watches.get(projectId);
@@ -184,9 +247,11 @@ export class MemtraceEngine {
   ): Promise<MemtraceWatch> {
     const path = project.path!,
       previous = this.watches.get(project.id);
+    const generation = this.bindingGenerations.get(project.id) ?? 0;
     const current = () =>
-      !this.bindingPaths.has(project.id) ||
-      this.bindingPaths.get(project.id) === pathKey(path);
+      generation === (this.bindingGenerations.get(project.id) ?? 0) &&
+      (!this.bindingPaths.has(project.id) ||
+        this.bindingPaths.get(project.id) === pathKey(path));
     const call = async (name: string, args: Json) => {
       if (!current())
         throw Error(
@@ -281,9 +346,17 @@ export class MemtraceEngine {
     update?: (note: string) => void,
   ): Promise<Client> {
     if (this.closing) throw Error("The Memtrace connection is closing.");
+    if (this.retiring.has(project.id))
+      throw Error(
+        "This idle epic graph is retiring. Retry after it has closed.",
+      );
     if (!project.path) throw Error("Choose a local project folder first.");
     const key = pathKey(project.path);
     if (this.options.environment) await this.options.environment();
+    if (this.retiring.has(project.id))
+      throw Error(
+        "This idle epic graph is retiring. Retry after it has closed.",
+      );
     if (!project.path || pathKey(project.path) !== key)
       throw Error(
         "The project's local folder changed during connection. Retry on its current folder.",
@@ -405,7 +478,9 @@ export class MemtraceEngine {
   ): Promise<Client> {
     if (!project.path) throw new Error("Choose a local project folder first.");
     const authentication = await this.options.environment?.();
-    privateProject ||= this.options.privateProject?.() === true;
+    privateProject ||=
+      this.options.privateProject?.() === true ||
+      project.analysisCheckout === "owned-worktree-v1";
     const command = await findCommand("memtrace", this.configuredPath());
     if (!command)
       throw new Error(
@@ -414,7 +489,10 @@ export class MemtraceEngine {
     await ensureLocalRuntimeIgnored(project.path);
     const scope = await resolveMcpWorkspace(project.path);
     const local = privateProject
-      ? await projectMcpWorkspace(project.path)
+      ? await projectMcpWorkspace(
+          project.path,
+          project.analysisCheckout === "owned-worktree-v1",
+        )
       : null;
     const env = normalizeMcpEnvironment(
       Object.fromEntries(
@@ -431,6 +509,11 @@ export class MemtraceEngine {
       env.MEMTRACE_MEMDB_DATA_DIR = local.dataDirectory;
       env.MEMTRACE_DATA_DIR = local.jobDirectory;
       env.MEMTRACE_NO_WATCH_RESTORE = "1";
+      // Each epic needs current structure, not another embedding-model copy.
+      // Its retrieval uses the checkout's lexical/AST graph; facts never fall
+      // back to another branch's semantic index.
+      if (project.analysisCheckout === "owned-worktree-v1")
+        env.MEMTRACE_SKIP_EMBED = "1";
     }
     let active: { client: Client; transport: StdioClientTransport } | undefined;
     const disconnect = async () => {
@@ -482,7 +565,11 @@ export class MemtraceEngine {
       );
     const reportProgress = (note: string) => {
       for (const listener of this.connectionProgress.get(project.id) ?? []) {
-        try { listener(note); } catch { /* Progress cannot change connection ownership. */ }
+        try {
+          listener(note);
+        } catch {
+          /* Progress cannot change connection ownership. */
+        }
       }
     };
     try {
@@ -511,7 +598,13 @@ export class MemtraceEngine {
           reportProgress,
         );
       }
-      discovered = await waitForPrivateRepositoryDiscovery(discovered, local, discover, reportProgress, { isCancelled: () => this.closing });
+      discovered = await waitForPrivateRepositoryDiscovery(
+        discovered,
+        local,
+        discover,
+        reportProgress,
+        { isCancelled: () => this.closing },
+      );
       const repos: Json[] = Array.isArray(discovered)
         ? discovered
         : (discovered?.repos ?? []);
@@ -521,14 +614,20 @@ export class MemtraceEngine {
       );
       let privateEpisodeAdmitted = false;
       if (!admitted && local) {
-        admitted = (await admitPrivateEpisodeRepository(
-          repos,
-          local,
-          project.branch,
-          async (name, args) => unwrap(await active!.client.callTool(
-            { name, arguments: args }, undefined, { timeout: 30_000 },
-          )),
-        )) ?? undefined;
+        admitted =
+          (await admitPrivateEpisodeRepository(
+            repos,
+            local,
+            project.branch,
+            async (name, args) =>
+              unwrap(
+                await active!.client.callTool(
+                  { name, arguments: args },
+                  undefined,
+                  { timeout: 30_000 },
+                ),
+              ),
+          )) ?? undefined;
         privateEpisodeAdmitted = !!admitted;
       }
       // A healthy, explicit one-member private owner may have no index yet.
@@ -589,14 +688,25 @@ export class MemtraceEngine {
     return connection.client;
   }
   async call(project: Project, name: string, args: Json): Promise<any> {
+    const generation = this.bindingGenerations.get(project.id) ?? 0;
     const client = await this.connect(project);
     const query = (connection: Client) =>
       connection
         .callTool({ name, arguments: args }, undefined, { timeout: 120_000 })
-        .then(unwrap);
+        .then((result) => {
+          if (generation !== (this.bindingGenerations.get(project.id) ?? 0))
+            throw Error(
+              "This epic graph was retired; its earlier query was not adopted.",
+            );
+          return unwrap(result);
+        });
     try {
       return await query(client);
     } catch (error) {
+      if (generation !== (this.bindingGenerations.get(project.id) ?? 0))
+        throw Error(
+          "This epic graph was retired; its earlier query was not retried.",
+        );
       if (!pendingMemtraceOwner(error) && !disconnectedMemtraceClient(error))
         throw error;
       if (this.clients.get(project.id)?.client === client)
@@ -678,7 +788,7 @@ export class MemtraceEngine {
         path: project.path,
         repo_id: match?.repo_id ?? project.repoId,
         incremental: !!match,
-        skip_embed: false,
+        skip_embed: project.analysisCheckout === "owned-worktree-v1",
         branch: project.branch,
       });
     const job = await queueIndex();
@@ -737,7 +847,9 @@ export class MemtraceEngine {
           throw new Error(
             "The index completed without a verified repository identity. Reconnect before planning workers.",
           );
-        return waitForIndexPublication(this, project, repoId, update, { isCancelled });
+        return waitForIndexPublication(this, project, repoId, update, {
+          isCancelled,
+        });
       }
     }
     throw new Error(

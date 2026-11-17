@@ -1,5 +1,43 @@
 # Reviewing the work in MemCode
 
+## Code review, then acceptance
+
+Completed worker passes enter **Code review**. The card opens a dedicated evidence
+workspace with a separate review conversation. Changes, local review rules, AST
+complexity, graph reach and actual linked checks are shown as distinct phases.
+Expand a finding to open its source line or inspect it in Changes. Missing coverage,
+an unverified graph, an intervening worker edit or an older test report prevents a
+ready result. The review never substitutes the epic's combined diff for the story.
+
+The detector pass uses Memtrace's product code-review workflow: AST detectors,
+bundled YAML rules, graph-backed cross-module checks and its shared ranking policy.
+Live repository checks add convention and invariant-drift findings. A finding shows
+its detector origin and recorded evidence. An affected caller can be highlighted
+outside the story's edited files when graph evidence links it to the change; that
+does not attribute the caller's source to this worker.
+
+The quality summary is the mean native maintainability index of the measured
+changed functions, with the weakest functions available below it. It is not a
+correctness or acceptance grade. Partial, stale, missing or contradictory evidence
+suppresses the aggregate instead of presenting a successful subset as the whole
+change. Individual native measurements remain inspectable. No improvement delta
+is shown without a measured baseline.
+
+A connected harness can provide a separate read-only reviewer. Its explanation is
+attributed to the actual reported model and kept separate from deterministic
+measurements. Unsupported read-only capabilities are shown as unavailable; normal
+implementation permissions are not reused. Asking a review question does not start
+an implementation worker. Choose **Request fixes** to queue selected findings for
+that story's existing worker. A new pass makes the old review stale.
+
+A complete review can move to **Ready for acceptance**. The developer checks the
+result and explicitly marks Done. Older In review cards move to acceptance without
+claiming a code review happened. Review reports stay local to their execution device;
+share an output explicitly when teammates need the saved evidence.
+An incomplete review can proceed to acceptance only with an explicit saved coverage
+note. That decision preserves its incomplete result; it does not mark missing
+checks as passed. Findings and stale or failed reviews still require attention.
+
 ## Save annotations, then send a follow-up
 
 Saving a comment creates a local annotation. It does not add a conversation

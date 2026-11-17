@@ -18,6 +18,9 @@ import type { TeamIdentityChallenge, TeamIdentityProofProvider } from "../team-i
 import type { TeamSpaceCredential, TeamSpaceSession } from "./spaces";
 import { formatTeamInvitation, parseTeamInvitation } from "./invitation";
 import { applyPlanningHistory, planningHistorySchema, planningHistoryUnchangedSchema, planningMetadata, planningValueHash, projectPlanningHistory, projectPlanningMetadata, remotePlanningMetadata, remotePlanningSeed, type ExpectedPlanningMetadata, type TeamPlanningHistory, type TeamPlanningMetadata, type TeamPlanningSeed } from "./history";
+import { applyWorkflowRoles, remoteWorkflowRoles, workflowRolesSchema, type PendingWorkflowRoles, type TeamWorkflowRoles } from "./workflow-roles";
+import { initializeCodeReviewWorkflow } from "../../src/code-review-workflow";
+import type { ReviewWorkflowBinding } from "../../src/code-review";
 
 interface PendingCommand { opId: string; command: TeamCommand; deletionId?: string }
 interface DeletionBackup {
@@ -46,6 +49,10 @@ interface SavedConnection {
   planningBaseline?: TeamPlanningMetadata;
   rejectedHistory?: Array<{ opId: string; metadata: TeamPlanningMetadata; message: string; at: string }>;
   retainedPlanningEvents?: AppState["planning"]["events"];
+  workflowRoles?: TeamWorkflowRoles;
+  workflowRoleBaseline?: ReviewWorkflowBinding | null;
+  workflowRoleOutbox?: PendingWorkflowRoles[];
+  rejectedWorkflowRoles?: Array<PendingWorkflowRoles & { message: string; at: string }>;
 }
 interface Connection extends SavedConnection {
   status: TeamWorkspaceState["connection"]; error?: string; lastSyncedAt?: string;
@@ -53,6 +60,8 @@ interface Connection extends SavedConnection {
   preparingDeletionId?: string;
   historySupported?: boolean;
   historyError?: string;
+  workflowRolesSupported?: boolean;
+  workflowRolesError?: string;
 }
 interface SavedTeam { endpoint: string; credential: TeamSpaceCredential; snapshot: WorkspaceTeam; locked?: boolean }
 interface PrivateProfile { version: 1; deviceId: string; host?: { port: number; bind?: string; advertisedEndpoint?: string }; connections: SavedConnection[]; teams?: SavedTeam[]; projectShares?: Record<string, string>; teamCreates?: Array<{name:string;opId:string}> }
@@ -175,7 +184,7 @@ export class TeamSyncClient implements TeamWorkerClaims {
     for (const connection of this.connections.values()) this.startLoop(connection);
   }
   private persist(): Promise<void> {
-    const connections = [...this.connections.values()].map(({ projectId, endpoint, credential, snapshot, baseline, outbox, cursor, readThrough, claimAttempts, rejected, deletions, localIds, linkedProject, teamId, repository, history, pendingHistoryImport, historyOutbox, planningBaseline, rejectedHistory, retainedPlanningEvents }) => ({ projectId, endpoint, credential, snapshot, baseline, outbox, cursor, readThrough, claimAttempts, rejected, deletions, localIds, linkedProject, teamId, repository, history, pendingHistoryImport, historyOutbox, planningBaseline, rejectedHistory, retainedPlanningEvents }));
+    const connections = [...this.connections.values()].map(({ projectId, endpoint, credential, snapshot, baseline, outbox, cursor, readThrough, claimAttempts, rejected, deletions, localIds, linkedProject, teamId, repository, history, pendingHistoryImport, historyOutbox, planningBaseline, rejectedHistory, retainedPlanningEvents, workflowRoles, workflowRoleBaseline, workflowRoleOutbox, rejectedWorkflowRoles }) => ({ projectId, endpoint, credential, snapshot, baseline, outbox, cursor, readThrough, claimAttempts, rejected, deletions, localIds, linkedProject, teamId, repository, history, pendingHistoryImport, historyOutbox, planningBaseline, rejectedHistory, retainedPlanningEvents, workflowRoles, workflowRoleBaseline, workflowRoleOutbox, rejectedWorkflowRoles }));
     const serialized = JSON.stringify({ ...this.profile, connections });
     const pending = this.writes.catch(() => {}).then(async () => {
       const temp = `${this.file}.next`;
@@ -190,9 +199,9 @@ export class TeamSyncClient implements TeamWorkerClaims {
       projectId: connection.projectId, connection: connection.status, workspace: structuredClone(localTeamSnapshot(connection, connection.snapshot)),
       ...(connection.teamId ? {teamId:connection.teamId,teamName:this.profile.teams?.find((item)=>item.credential.teamId===connection.teamId)?.snapshot.name} : {}),
       memberId: connection.credential.memberId, deviceId: connection.credential.deviceId,
-      pendingCount: connection.outbox.length + (connection.historyOutbox?.length ?? 0) + (connection.pendingHistoryImport ? 1 : 0),
+      pendingCount: connection.outbox.length + (connection.historyOutbox?.length ?? 0) + (connection.pendingHistoryImport ? 1 : 0) + (connection.workflowRoleOutbox?.length ?? 0),
       unreadCount: connection.snapshot.activity.filter((item) => item.sequence > connection.readThrough && item.memberId !== connection.credential.memberId).length,
-      lastSyncedAt: connection.lastSyncedAt, error: connection.error, mode: connection.teamId ? "memtrace" as const : "invite-preview" as const,
+      lastSyncedAt: connection.lastSyncedAt, error: connection.error ?? connection.workflowRolesError, mode: connection.teamId ? "memtrace" as const : "invite-preview" as const,
       planningHistory: {
         state: connection.historyError ? "error" as const : connection.historySupported === false ? "unsupported" as const : connection.pendingHistoryImport || connection.historyOutbox?.length || connection.outbox.length || !connection.history?.import || connection.history.through < connection.snapshot.head ? "pending" as const : "synced" as const,
         revision: connection.history?.through, hash: connection.history?.import?.hash,
@@ -227,6 +236,16 @@ export class TeamSyncClient implements TeamWorkerClaims {
         }
       }
       connection.planningBaseline = nextPlanning;
+      const localRoles = this.state().reviewWorkflows?.[connection.projectId];
+      if (connection.workflowRolesSupported === true && connection.history?.import && !connection.pendingHistoryImport && connection.workflowRoleBaseline !== undefined && localRoles) {
+        const roles = remoteWorkflowRoles(connection, localRoles);
+        if (planningValueHash(roles) !== planningValueHash(connection.workflowRoleBaseline)) {
+          const operations = (connection.workflowRoleOutbox ??= []);
+          operations.push({ opId: randomUUID(), binding: roles, expectedRevision: (connection.workflowRoles?.revision ?? 0) + operations.length, expectedPlanningHash: planningValueHash(nextPlanning.planning) });
+          connection.workflowRoleBaseline = roles;
+          dirty = true;
+        }
+      }
       const next = remoteTeamProjection(connection, projectSharedState(this.state(), connection.projectId));
       const commands = sharedCommands(connection.baseline, next);
       if (!commands.length) continue;
@@ -308,6 +327,10 @@ export class TeamSyncClient implements TeamWorkerClaims {
       }
     }
     if (connection.history?.import && connection.history.through === connection.snapshot.head && !connection.pendingHistoryImport && !connection.outbox.length && !connection.historyOutbox?.length) applyPlanningHistory(this.state(), connection.projectId, connection.history, connection);
+    if (this.workflowAuthority(connection) && connection.workflowRoles?.binding && !connection.workflowRoleOutbox?.length) {
+      try { applyWorkflowRoles(this.state(), connection.projectId, connection, connection.workflowRoles); connection.workflowRoleBaseline = connection.workflowRoles.binding; }
+      catch (failure) { connection.workflowRolesError = `Review workflow roles could not be applied. ${message(failure)}`; }
+    }
     if (connection.retainedPlanningEvents?.length) {
       const ids = new Set(this.state().planning.events.map((item) => item.id));
       this.state().planning.events.push(...structuredClone(connection.retainedPlanningEvents.filter((item) => !ids.has(item.id))));
@@ -334,12 +357,66 @@ export class TeamSyncClient implements TeamWorkerClaims {
       throw error;
     }
   }
+  private workflowAuthority(connection: Connection): boolean {
+    return !!connection.history?.import && connection.history.through === connection.snapshot.head && (!connection.workflowRoles || connection.workflowRoles.through <= connection.history.through) && !connection.pendingHistoryImport && !connection.outbox.length && !connection.historyOutbox?.length;
+  }
+  private async pullWorkflowRoles(connection: Connection): Promise<void> {
+    if (connection.workflowRolesSupported === false) return;
+    try {
+      const roles = workflowRolesSchema.parse(await this.request(connection.endpoint, `/v1/workflow-roles?workspaceId=${encodeURIComponent(connection.credential.workspaceId)}`, connection.credential.capability));
+      if (roles.workspaceId !== connection.credential.workspaceId || roles.revision < (connection.workflowRoles?.revision ?? 0)) throw Error("The Team service returned inconsistent workflow role provenance.");
+      connection.workflowRoles = roles;
+      connection.workflowRolesSupported = true;
+      if (connection.workflowRoleBaseline === undefined) connection.workflowRoleBaseline = roles.binding;
+      connection.workflowRolesError = connection.rejectedWorkflowRoles?.at(-1)?.message;
+    } catch (failure) {
+      if ([404, 405, 501].includes((failure as Error & { status?: number }).status ?? 0)) { connection.workflowRolesSupported = false; return; }
+      connection.workflowRolesError = `Review workflow roles could not synchronize. Saved bindings were preserved. ${message(failure)}`;
+      throw failure;
+    }
+  }
+  private async flushWorkflowRoles(connection: Connection): Promise<void> {
+    await this.pullWorkflowRoles(connection);
+    // An invitation/member event may advance history before this device has
+    // consumed its ordinary board journal. Establish that boundary first.
+    while (connection.history && connection.cursor < Math.max(connection.history.through, connection.workflowRoles?.through ?? 0) && !this.closed) await this.pull(connection);
+    if (connection.workflowRolesSupported !== true || !this.workflowAuthority(connection) || this.closed) return;
+    const owner = connection.snapshot.members.find((member) => member.id === connection.credential.memberId)?.role === "owner";
+    // Only the original owner may prepare its known built-in workflow. A joined
+    // board waits for explicit, accepted role IDs even when it uses this account.
+    if (owner && !connection.localIds && !connection.workflowRoles?.binding && !this.state().reviewWorkflows?.[connection.projectId] && this.state().workflowStates.some((item) => item.projectId === connection.projectId && item.id === `${connection.projectId}:review`)) initializeCodeReviewWorkflow(this.state(), connection.projectId, { assignLegacyTasks: false });
+    await this.capture();
+    if (connection.historyOutbox?.length) await this.flushHistory(connection);
+    if (!this.workflowAuthority(connection)) return;
+    while (connection.workflowRoleOutbox?.length && !this.closed) {
+      const operation = connection.workflowRoleOutbox[0];
+      try {
+        const response = await this.request<{ roles: unknown }>(connection.endpoint, "/v1/workflow-roles", connection.credential.capability, { version: 1, workspaceId: connection.credential.workspaceId, ...operation });
+        const roles = workflowRolesSchema.parse(response.roles);
+        if (roles.workspaceId !== connection.credential.workspaceId) throw Error("The accepted workflow roles belong to another project.");
+        connection.workflowRoles = roles;
+        connection.workflowRoleOutbox = connection.workflowRoleOutbox.filter((item) => item.opId !== operation.opId);
+        await this.persist();
+        while (connection.cursor < roles.through && !this.closed) await this.pull(connection);
+      } catch (failure) {
+        const status = (failure as Error & { status?: number }).status;
+        if (status !== 409 && status !== 403) throw failure;
+        const rejected = { ...operation, message: `A review workflow edit was rejected and retained on this computer. ${message(failure)}`, at: new Date().toISOString() };
+        (connection.rejectedWorkflowRoles ??= []).push(rejected);
+        connection.workflowRoleOutbox = connection.workflowRoleOutbox.filter((item) => item.opId !== operation.opId);
+        connection.workflowRolesError = rejected.message;
+        await this.pullWorkflowRoles(connection); await this.persist();
+      }
+    }
+    this.apply(connection);
+  }
   private async pull(connection: Connection, waitMs = 0): Promise<void> {
     const query = new URLSearchParams({ workspaceId: connection.credential.workspaceId, after: String(connection.cursor), waitMs: String(waitMs) });
     const reply = teamSyncReplySchema.parse(await this.request(connection.endpoint, `/v1/sync?${query}`, connection.credential.capability, undefined, waitMs));
     if (this.closed || this.connections.get(connection.projectId) !== connection) return;
     const previous = connection.cursor;
     const previousHistory = connection.history?.through;
+    const previousRoles = connection.workflowRoles?.revision;
     if (reply.snapshot && reply.snapshot.head >= connection.snapshot.head) connection.snapshot = reply.snapshot as TeamSnapshot;
     for (const event of reply.events) if (event.sequence > connection.snapshot.head) {
       if (event.sequence !== connection.snapshot.head + 1) throw Error("Team history has a gap; reconnect to backfill the missing changes.");
@@ -347,8 +424,9 @@ export class TeamSyncClient implements TeamWorkerClaims {
     }
     connection.cursor = Math.max(connection.cursor, reply.cursor);
     await this.pullHistory(connection);
+    await this.pullWorkflowRoles(connection);
     connection.status = "online"; connection.error = connection.rejected?.length ? `A change was rejected: ${connection.rejected.at(-1)!.message}. Other changes continue syncing.` : undefined; connection.lastSyncedAt = new Date().toISOString();
-    if (reply.snapshot || connection.cursor !== previous || connection.history?.through !== previousHistory) {
+    if (reply.snapshot || connection.cursor !== previous || connection.history?.through !== previousHistory || connection.workflowRoles?.revision !== previousRoles) {
       this.apply(connection);
       await this.persist();
       this.publishState();
@@ -400,6 +478,7 @@ export class TeamSyncClient implements TeamWorkerClaims {
           }
         }
         await this.flushHistory(connection);
+        await this.flushWorkflowRoles(connection);
         connection.status = "online"; connection.error = connection.rejected?.length ? `A change was rejected: ${connection.rejected.at(-1)!.message}. Other changes continue syncing.` : undefined;
         this.publishState();
         await this.changed();
@@ -468,6 +547,7 @@ export class TeamSyncClient implements TeamWorkerClaims {
     // Explicit Refresh can discover a service upgraded while the app stayed
     // open. Background long polls keep their inexpensive negative cache.
     if (connection.historySupported === false) connection.historySupported = undefined;
+    if (connection.workflowRolesSupported === false) connection.workflowRolesSupported = undefined;
     await this.capture(); await this.flush(connection); await this.pull(connection);
   }
   /** Explicit upgrade path for a project shared by a pre-history client. */
@@ -571,12 +651,14 @@ export class TeamSyncClient implements TeamWorkerClaims {
     if ([...this.connections.values()].some((connection) => connection.credential.workspaceId === reply.credential.workspaceId && connection.endpoint === endpoint)) throw Error("This team is already connected to another local project in this profile. Open that project instead.");
     const connection: Connection = { projectId, endpoint, credential: reply.credential, snapshot: reply.snapshot, baseline, outbox: [], cursor: reply.snapshot.head, readThrough: 0, status: "online", leases: new Map(), ...(linkedProject ? { localIds: emptyTeamLocalIds(), linkedProject } : {}), ...binding };
     await this.pullHistory(connection);
+    await this.pullWorkflowRoles(connection);
     // Validate the entire incoming projection before persisting credentials or
     // modifying the real workspace, so a failed binding leaves no half-join.
     const staged = structuredClone(this.state());
     if (linkedProject) staged.projects.push(structuredClone(linkedProject));
     applySharedSnapshot(staged, projectId, localTeamSnapshot(connection, reply.snapshot), localTeamProjection(connection, baseline));
     if (connection.history?.import && connection.history.through === connection.snapshot.head) applyPlanningHistory(staged, projectId, connection.history, connection);
+    if (this.workflowAuthority(connection) && connection.workflowRoles?.binding) applyWorkflowRoles(staged, projectId, connection, connection.workflowRoles);
     this.connections.set(projectId, connection);
     try { await this.persist(); } catch (error) { this.connections.delete(projectId); throw error; }
     if (linkedProject) this.state().projects.push(linkedProject);
