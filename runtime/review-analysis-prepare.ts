@@ -76,7 +76,7 @@ function ready(value: Json, project: Project, repoId: string): boolean {
 }
 
 /** A native before/after envelope is a reason to read again, never a certificate. */
-function publicationTransition(value: Json): boolean {
+export function reviewPublicationTransition(value: Json): boolean {
   const boundary = graph(value);
   const observation = (part: unknown): part is Json =>
     record(part) &&
@@ -175,7 +175,7 @@ export async function repairReviewPublication(
     while (
       freshReads < 3 &&
       exactSource(value, selected, repoId) &&
-      publicationTransition(value)
+      reviewPublicationTransition(value)
     ) {
       freshReads++;
       update("Waiting for one stable graph publication observation…");
