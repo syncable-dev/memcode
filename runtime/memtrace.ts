@@ -93,6 +93,7 @@ export class MemtraceEngine {
   private scopes = new Map<string, MemtraceScopeBinding>();
   private bindingGenerations = new Map<string, number>();
   private retiring = new Set<string>();
+  private retirements = new Map<string, Promise<void>>();
   private clients = new Map<
     string,
     { client: Client; transport: StdioClientTransport; projectPath: string }
@@ -146,31 +147,39 @@ export class MemtraceEngine {
   /** Release our idle epic owner; the graph cache and checkout stay on disk. */
   async releaseEpic(project: Project): Promise<void> {
     if (project.analysisCheckout !== "owned-worktree-v1") return;
+    const previous = this.retirements.get(project.id);
+    if (previous) return previous;
     this.retiring.add(project.id);
     this.bindingGenerations.set(
       project.id,
       (this.bindingGenerations.get(project.id) ?? 0) + 1,
     );
-    try {
-      await this.opening.get(project.id)?.catch(() => {});
-      const store = this.scopes.get(project.id)?.dataDirectory;
-      try {
-        await this.releaseBinding(project.id);
-      } finally {
-        if (
-          store &&
-          ![...this.scopes.values()].some(
-            (scope) => scope.dataDirectory === store,
-          )
-        )
-          await this.owners.release(store);
+    const retirement = this.retireEpic(project).finally(() => {
+      if (this.retirements.get(project.id) === retirement) {
+        this.retirements.delete(project.id);
+        this.retiring.delete(project.id);
       }
-      this.bindingPaths.delete(project.id);
-      this.watching.delete(project.id);
-      this.watchingPaths.delete(project.id);
+    });
+    this.retirements.set(project.id, retirement);
+    return retirement;
+  }
+  private async retireEpic(project: Project): Promise<void> {
+    await this.opening.get(project.id)?.catch(() => {});
+    const store = this.scopes.get(project.id)?.dataDirectory;
+    try {
+      await this.releaseBinding(project.id);
     } finally {
-      this.retiring.delete(project.id);
+      if (
+        store &&
+        ![...this.scopes.values()].some(
+          (scope) => scope.dataDirectory === store,
+        )
+      )
+        await this.owners.release(store);
     }
+    this.bindingPaths.delete(project.id);
+    this.watching.delete(project.id);
+    this.watchingPaths.delete(project.id);
   }
   watcherFor(projectId: string): MemtraceWatch | null {
     const watch = this.watches.get(projectId);
@@ -918,6 +927,7 @@ export class MemtraceEngine {
     // Close transports first; then abort bootstrap and drain owned native trees.
     await this.owners.close();
     await Promise.allSettled([...this.opening.values()]);
+    await Promise.allSettled([...this.retirements.values()]);
     this.clients.clear();
     this.scopes.clear();
     this.bindingPaths.clear();
