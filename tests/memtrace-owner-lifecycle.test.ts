@@ -32,6 +32,51 @@ test("app shutdown disconnects MCP clients before stopping owners so no attached
   assert.equal(events.at(-1), "owner stopped");
 });
 
+test("overlapping epic retirements share the drain and cannot clear its guard before the owned owner exits", async () => {
+  const engine = new MemtraceEngine(() => "fixture"),
+    internal = engine as any;
+  const project = {
+    id: "owned-a",
+    analysisCheckout: "owned-worktree-v1",
+    path: "fixture",
+    branch: "epic/a",
+  } as Project;
+  let finish!: () => void,
+    began!: () => void,
+    stops = 0,
+    closed = false;
+  const flush = new Promise<void>((resolve) => (finish = resolve)),
+    started = new Promise<void>((resolve) => (began = resolve));
+  internal.scopes.set(project.id, {
+    dataDirectory: "owned-store",
+    mode: "project",
+  });
+  internal.clients.set(project.id, {
+    projectPath: project.path,
+    client: { close: async () => {} },
+  });
+  internal.owners.release = async () => {
+    stops++;
+    began();
+    await flush;
+  };
+  const first = engine.releaseEpic(project);
+  await started;
+  const second = engine.releaseEpic(project);
+  void second.then(() => {
+    closed = true;
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(closed, false);
+  assert.equal(stops, 1);
+  assert.equal(internal.bindingGenerations.get(project.id), 1);
+  await assert.rejects(engine.connect(project), /retiring/);
+  finish();
+  await Promise.all([first, second]);
+  assert.equal(internal.retiring.has(project.id), false);
+  await engine.close();
+});
+
 test("cold owned-epic discovery uses attach-only MCP before managed owner bootstrap, and an unwatch failure cannot strand its client", async () => {
   const directory = await mkdtemp(join(tmpdir(), "memcode-managed-epic-")),
     source = join(directory, "source"),
