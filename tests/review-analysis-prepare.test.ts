@@ -307,3 +307,145 @@ test("late recovery cannot adopt a changed source between the group's boundary a
     assert.deepEqual(f.calls, ["watch", "get_query_revision"]);
   }
 });
+
+function transition(
+  f: ReturnType<typeof fixture>,
+  partialBody = false,
+  partialPublication = false,
+) {
+  const value = f.certificate(partialPublication ? "partial" : "published");
+  if (partialBody) {
+    value.ready = false;
+    value.status = "partial";
+  }
+  value._meta = {
+    stale: true,
+    graph_revision: {
+      before: { status: "partial", token: "pending" },
+      after: { status: "published", token: "published" },
+      publication_unchanged_during_call: false,
+    },
+  };
+  return value;
+}
+
+test("a native publication completed during inspection requires a fresh strict read, not another index", async () => {
+  for (const shape of [
+    [false, false],
+    [true, false],
+    [true, true],
+  ]) {
+    const f = fixture();
+    f.reads.splice(
+      0,
+      1,
+      transition(f, ...(shape as [boolean, boolean])),
+      f.certificate(),
+    );
+    await repairReviewPublication(
+      f.engine,
+      f.project,
+      () => {},
+      () => {},
+      "same-source",
+    );
+    assert.deepEqual(f.calls, [
+      "watch",
+      "get_query_revision",
+      "get_query_revision",
+    ]);
+  }
+});
+
+test("an incremental repair followed by a mid-observation completion still gets only one actual repair", async () => {
+  const f = fixture();
+  f.reads.splice(
+    0,
+    1,
+    f.certificate("partial"),
+    transition(f, true, false),
+    f.certificate(),
+  );
+  await repairReviewPublication(
+    f.engine,
+    f.project,
+    () => {},
+    () => {},
+    "same-source",
+  );
+  assert.equal(f.calls.filter((call) => call === "analyze:repair").length, 1);
+  assert.equal(
+    f.calls.filter((call) => call === "get_query_revision").length,
+    3,
+  );
+  assert.equal(f.calls.includes("release"), false);
+});
+
+test("ongoing recognized publication transitions have a shared three-fresh-read bound and never become evidence", async () => {
+  const f = fixture();
+  f.reads.splice(0, 1, ...Array.from({ length: 5 }, () => transition(f)));
+  await assert.rejects(
+    repairReviewPublication(f.engine, f.project, () => {}),
+    /No automatic repair/,
+  );
+  assert.equal(
+    f.calls.filter((call) => call === "get_query_revision").length,
+    4,
+  );
+  assert.equal(f.calls.includes("analyze:repair"), false);
+});
+
+test("each fresh transition observation rechecks source identity before recovery", async () => {
+  const f = fixture(),
+    changed = f.certificate();
+  changed.source_revision = "changed-between-fresh-reads";
+  f.reads.splice(0, 1, transition(f), changed);
+  await assert.rejects(
+    repairReviewPublication(
+      f.engine,
+      f.project,
+      () => {},
+      () => {},
+      "same-source",
+    ),
+    /source changed/,
+  );
+  assert.equal(
+    f.calls.filter((call) => call === "get_query_revision").length,
+    2,
+  );
+  assert.equal(f.calls.includes("analyze:repair"), false);
+});
+
+test("unknown, malformed, missing and foreign transition metadata never gets a fresh-read allowance", async () => {
+  for (const alter of [
+    (value: any) => {
+      value._meta.graph_revision.before.status = "unavailable";
+    },
+    (value: any) => {
+      value._meta.graph_revision.after.token = null;
+    },
+    (value: any) => {
+      value._meta.graph_revision.error = "failed";
+    },
+    (value: any) => {
+      value._meta.stale = false;
+    },
+    (value: any) => {
+      delete value.source_file_count;
+    },
+    (value: any) => {
+      value.worktree += "-other";
+    },
+  ]) {
+    const f = fixture(),
+      value = transition(f);
+    alter(value);
+    f.reads[0] = value;
+    await assert.rejects(
+      repairReviewPublication(f.engine, f.project, () => {}),
+      /No automatic repair/,
+    );
+    assert.deepEqual(f.calls, ["watch", "get_query_revision"]);
+  }
+});
