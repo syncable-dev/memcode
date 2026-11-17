@@ -780,47 +780,50 @@ export class CodeReviewManager {
         }
       }
       const sourceAfter = await this.sourceBinding(project.path!);
-      assertActive();
-      if (
-        saved.sourceBinding &&
-        sourceAfter &&
-        sourceAfter !== saved.sourceBinding
-      )
-        throw new ReviewSourceChanged("Source changed during this review.");
-      if (!saved.sourceBinding || sourceAfter !== saved.sourceBinding) {
-        run.state = "stale";
-        run.outcome = "incomplete";
-        run.coverage.limitations.push(
-          "Source changed during this review. Its findings are saved, but this review cannot approve the current code.",
-        );
-      } else {
-        run.state = "completed";
-        run.coverage.limitations = [...new Set(run.coverage.limitations)];
-        run.coverage.complete =
-          !run.coverage.limitations.length &&
-          run.impact.complete &&
-          run.checks.length > 0 &&
-          run.checks.every((check) => check.state === "passed");
-        run.outcome ??=
-          run.findings.length ||
-          run.checks.some((check) => check.state === "failed")
-            ? "changes-requested"
-            : run.coverage.complete
-              ? "ready"
-              : "incomplete";
-      }
-      run.completedAt = timestamp();
-      for (const item of run.phases)
-        if (item.state === "running") item.state = "complete";
-      run.messages.push({
-        id: randomUUID(),
-        role: "system",
-        at: timestamp(),
-        text: this.explanation(run),
-      });
       await this.exclusive(taskId, async () => {
         assertActive();
-        await this.persist(saved);
+        if (
+          saved.sourceBinding &&
+          sourceAfter &&
+          sourceAfter !== saved.sourceBinding
+        )
+          throw new ReviewSourceChanged("Source changed during this review.");
+        // Readers and finding decisions share this queue. Publish completion only
+        // after its report, current-run pointer and story summary have been saved.
+        const final = clone(run);
+        if (!saved.sourceBinding || sourceAfter !== saved.sourceBinding) {
+          final.state = "stale";
+          final.outcome = "incomplete";
+          final.coverage.limitations.push(
+            "Source changed during this review. Its findings are saved, but this review cannot approve the current code.",
+          );
+        } else {
+          final.state = "completed";
+          final.coverage.limitations = [...new Set(final.coverage.limitations)];
+          final.coverage.complete =
+            !final.coverage.limitations.length &&
+            final.impact.complete &&
+            final.checks.length > 0 &&
+            final.checks.every((check) => check.state === "passed");
+          final.outcome ??=
+            final.findings.length ||
+            final.checks.some((check) => check.state === "failed")
+              ? "changes-requested"
+              : final.coverage.complete
+                ? "ready"
+                : "incomplete";
+        }
+        final.completedAt = timestamp();
+        for (const item of final.phases)
+          if (item.state === "running") item.state = "complete";
+        final.messages.push({
+          id: randomUUID(),
+          role: "system",
+          at: timestamp(),
+          text: this.explanation(final),
+        });
+        await this.persist({ ...saved, run: final });
+        saved.run = final;
       });
     } finally {
       this.active.delete(run.id);

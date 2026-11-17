@@ -28,7 +28,7 @@ const meta = {
     publication_unchanged_during_call: true,
   },
 };
-async function fixture() {
+async function fixture(onSourceCheck?: () => void) {
   const directory = await mkdtemp(join(tmpdir(), "memcode-story-review-")),
     root = join(directory, "source");
   const state: AppState = initialState();
@@ -204,7 +204,10 @@ async function fixture() {
       captureCount++;
       return structuredClone(capture);
     },
-    sourceBinding: async () => binding,
+    sourceBinding: async () => {
+      onSourceCheck?.();
+      return binding;
+    },
   };
   const manager = (
     extra: Partial<ConstructorParameters<typeof CodeReviewManager>[4]> = {},
@@ -1331,6 +1334,27 @@ test("a reviewer answer and finding decisions cannot race one another", async ()
   } finally {
     release?.();
     await client.close();
+    await f.close();
+  }
+});
+
+test("a read queued at the final source check sees a committed review state", async () => {
+  let observed: Promise<{ run?: string; summary?: string }> | undefined;
+  const f = await fixture(() => {
+    // Queue an ordinary UI read just before the review can commit completion.
+    observed ??= f.instance.get("t").then((run) => ({
+      run: run?.state,
+      summary: f.task.codeReview?.state,
+    }));
+  });
+  try {
+    await f.instance.start("t");
+    const completed = await f.settled();
+    assert.equal(completed.state, "completed");
+    const first = await observed;
+    assert.ok(first);
+    assert.equal(first.run, first.summary);
+  } finally {
     await f.close();
   }
 });
