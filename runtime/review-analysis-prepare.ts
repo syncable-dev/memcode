@@ -75,21 +75,22 @@ function ready(value: Json, project: Project, repoId: string): boolean {
   );
 }
 
-/** Reopen a private epic cache and repair only a proven, unfinished publication. */
-export async function prepareReviewAnalysis(
+/** Repair the current owner only; never retire/reopen a graph inside a read group. */
+export async function repairReviewPublication(
   engine: Engine,
   project: Project,
   update: (note: string) => void,
   assertActive: () => void = () => {},
+  expectedSourceRevision?: string,
 ): Promise<Project> {
   if (project.analysisCheckout !== "owned-worktree-v1") return project;
   assertActive();
-  // Join the actual owner eviction, including a worker's final drain.
-  await engine.releaseEpic(project);
-  assertActive();
-  let repoId = await engine.analyze(project, update);
-  assertActive();
-  let selected: Project = { ...project, repoId, analysis: "ready" };
+  let repoId = project.repoId;
+  if (!text(repoId))
+    throw Error(
+      "Analyze this epic's exact source before repairing its review publication.",
+    );
+  let selected: Project = { ...project };
   const inspect = async (): Promise<Json> => {
     assertActive();
     const watch = await engine.watch(selected, repoId);
@@ -117,6 +118,13 @@ export async function prepareReviewAnalysis(
     return value;
   };
   const before = await inspect();
+  if (
+    expectedSourceRevision !== undefined &&
+    before.source_revision !== expectedSourceRevision
+  )
+    throw Error(
+      "The epic's source changed before publication recovery. Its result was not adopted.",
+    );
   if (ready(before, selected, repoId)) return selected;
   if (!(
     exactSource(before, selected, repoId) &&
@@ -150,4 +158,25 @@ export async function prepareReviewAnalysis(
       "The epic's graph publication is still unverified after one incremental refresh, or its source changed. Retry review after checking its code context.",
     );
   return selected;
+}
+
+/** Reopen a private epic cache, then verify/repair its joined watch publication. */
+export async function prepareReviewAnalysis(
+  engine: Engine,
+  project: Project,
+  update: (note: string) => void,
+  assertActive: () => void = () => {},
+): Promise<Project> {
+  if (project.analysisCheckout !== "owned-worktree-v1") return project;
+  assertActive();
+  await engine.releaseEpic(project);
+  assertActive();
+  const repoId = await engine.analyze(project, update);
+  assertActive();
+  return repairReviewPublication(
+    engine,
+    { ...project, repoId, analysis: "ready" },
+    update,
+    assertActive,
+  );
 }
