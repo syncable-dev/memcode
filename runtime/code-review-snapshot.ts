@@ -7,7 +7,10 @@ import type { StoryReviewRun } from "../src/code-review";
 import { readWorkerChanges } from "./changes";
 import { checkSourceBinding } from "./verification";
 import { git, within } from "./local";
-import { projectStoryContribution } from "./code-review-projection";
+import {
+  projectStoryContribution,
+  projectStorySegments,
+} from "./code-review-projection";
 
 const digest = (value: string | Buffer) =>
   createHash("sha256").update(value).digest("hex");
@@ -63,7 +66,7 @@ export interface StoryReviewCapture {
   sourceBinding: string | null;
 }
 
-/** Compose the story's own continuous edit chain. Never substitute the epic diff. */
+/** Compose only the story's own reservation edits. Never substitute the epic diff. */
 export async function captureStoryReview(
   task: WorkItem,
 ): Promise<StoryReviewCapture> {
@@ -94,6 +97,8 @@ export async function captureStoryReview(
       afterHash?: string;
       binary: boolean;
       attribution: "reservation" | "legacy" | "discontinuous";
+      allReservations: boolean;
+      segments: Array<{ beforeHash?: string; afterHash?: string }>;
     }
   >();
   const limitations = new Set<string>();
@@ -123,6 +128,17 @@ export async function captureStoryReview(
         beforeHash: previous ? previous.beforeHash : file.beforeHash,
         afterHash: file.afterHash,
         binary: (previous?.binary ?? false) || file.binary,
+        allReservations:
+          (previous?.allReservations ?? true) &&
+          checkpoint.basis === "fleet-reservation",
+        // Retain one overflow sentinel without quadratic/unbounded journal copies.
+        segments:
+          (previous?.segments.length ?? 0) >= 17
+            ? previous!.segments
+            : [
+                ...(previous?.segments ?? []),
+                { beforeHash: file.beforeHash, afterHash: file.afterHash },
+              ],
         attribution:
           !continuous || previous?.attribution === "discontinuous"
             ? "discontinuous"
@@ -138,8 +154,11 @@ export async function captureStoryReview(
       "Narrow this story to at most 200 changed files before reviewing.",
     );
   let bytes = 0;
+  const readBlobs = new Map<string, Buffer>();
   const blob = async (value: string | undefined): Promise<Buffer> => {
     if (!value) return Buffer.alloc(0);
+    const cached = readBlobs.get(value);
+    if (cached) return cached;
     const path = await realpath(join(blobs, value));
     if (!within(blobs, path))
       throw Error("A saved change blob resolves outside its journal.");
@@ -149,6 +168,7 @@ export async function captureStoryReview(
       throw Error("The story exceeds the bounded review snapshot size.");
     if (digest(data) !== value)
       throw Error("A saved change blob failed its content check.");
+    readBlobs.set(value, data);
     return data;
   };
   let patch = "",
@@ -157,7 +177,13 @@ export async function captureStoryReview(
   const baseFiles: Record<string, string> = {};
   const captured: StoryReviewRun["snapshot"]["files"] = [];
   for (const [path, file] of files) {
-    if (file.beforeHash === file.afterHash) continue;
+    // Equal whole-file endpoints prove a net no-op only for a continuous own
+    // chain. With peers between reservations, an own fix may undo their edit.
+    if (
+      file.beforeHash === file.afterHash &&
+      file.attribution !== "discontinuous"
+    )
+      continue;
     const entry: StoryReviewRun["snapshot"]["files"][number] = {
       path,
       beforeHash: file.beforeHash,
@@ -165,9 +191,17 @@ export async function captureStoryReview(
       attribution: file.attribution,
     };
     captured.push(entry);
-    if (file.attribution === "discontinuous") {
+    const segmentProjection = file.attribution === "discontinuous";
+    if (
+      segmentProjection &&
+      (!file.allReservations ||
+        file.segments.length > 16 ||
+        file.segments.some(
+          (segment) => !segment.beforeHash || !segment.afterHash,
+        ))
+    ) {
       limitations.add(
-        `Changes to ${path} include an intervening edit. They were not attributed to this story as one patch.`,
+        `Changes to ${path} include an intervening edit. ${file.segments.length > 16 ? "The journal exceeds the bounded 16-segment projection." : !file.allReservations ? "Not every own segment has a Fleet reservation." : "Added/deleted-file transitions cannot be projected across peer edits."} They were not attributed to this story as one patch.`,
       );
       continue;
     }
@@ -188,13 +222,10 @@ export async function captureStoryReview(
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
-    const needsProjection = currentHash !== file.afterHash;
+    const needsProjection = segmentProjection || currentHash !== file.afterHash;
     if (
       needsProjection &&
-      (!file.beforeHash ||
-        !file.afterHash ||
-        !current ||
-        file.attribution !== "reservation")
+      (!file.beforeHash || !file.afterHash || !current || !file.allReservations)
     ) {
       limitations.add(
         `${path} changed after the story's last checkpoint. Capture its current contribution before reviewing.`,
@@ -207,6 +238,13 @@ export async function captureStoryReview(
     }
     const before = await blob(file.beforeHash),
       after = await blob(file.afterHash);
+    const segmentBlobs: Array<{ before: Buffer; after: Buffer }> = [];
+    if (segmentProjection)
+      for (const segment of file.segments)
+        segmentBlobs.push({
+          before: await blob(segment.beforeHash),
+          after: await blob(segment.afterHash),
+        });
     const decoder = new TextDecoder("utf-8", { fatal: true });
     let oldText: string, newText: string;
     try {
@@ -214,24 +252,38 @@ export async function captureStoryReview(
       newText = decoder.decode(after);
       if (needsProjection) {
         const currentText = decoder.decode(current!);
-        const projection = projectStoryContribution(
-          oldText,
-          newText,
-          currentText,
-        );
+        const projection = segmentProjection
+          ? projectStorySegments(
+              segmentBlobs.map((segment) => ({
+                before: decoder.decode(segment.before),
+                after: decoder.decode(segment.after),
+              })),
+              currentText,
+            )
+          : projectStoryContribution(oldText, newText, currentText);
         if (!projection.ok) {
           limitations.add(
-            `${path} changed after the story's last checkpoint. ${projection.reason}`,
+            `${path} ${segmentProjection ? "includes an intervening edit" : "changed after the story's last checkpoint"}. ${projection.reason}`,
+          );
+          continue;
+        }
+        if (projection.baseline === currentText) {
+          limitations.add(
+            `${path} has no net own source change after the journal segments and peer edits are separated.`,
           );
           continue;
         }
         oldText = projection.baseline;
         newText = currentText;
+        entry.attribution = "reservation";
         entry.projection = {
           method: "unique-exact-context",
           baselineHash: digest(oldText),
           currentHash: currentHash!,
           hunks: projection.hunks,
+          ...(segmentProjection
+            ? { journalSegments: file.segments.length }
+            : {}),
         };
       }
     } catch {
