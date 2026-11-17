@@ -40,13 +40,19 @@ const number = (value: unknown): number | null =>
 const text = (value: unknown): string =>
   typeof value === "string" ? value : "";
 const graph = (value: Json | null | undefined) =>
-  value?._meta?.graph_revision ?? value?.graph_revision;
+  value?._meta != null &&
+  Object.prototype.hasOwnProperty.call(value._meta, "graph_revision")
+    ? value._meta.graph_revision
+    : value?.graph_revision;
 const publication = (value: Json | null | undefined): string | null =>
   text(graph(value)?.token) || null;
-const key = (value: string) =>
-  process.platform === "win32"
-    ? value.replaceAll("\\", "/").toLowerCase()
-    : value.replaceAll("\\", "/");
+const key = (value: string) => {
+  const normalized = value
+    .replaceAll("\\", "/")
+    .replace(/^\/\/\?\//, "")
+    .replace(/\/$/, "");
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+};
 const sources = new Set<CodeReviewProvenance>([
   "ast",
   "yaml",
