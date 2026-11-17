@@ -10,6 +10,7 @@ import type {
   StoryReviewRun,
 } from "../src/code-review";
 import type { StoryReviewCapture } from "./code-review-snapshot";
+import { reviewPublicationTransition } from "./review-analysis-prepare";
 
 type Json = Record<string, any>;
 export interface ReviewEngine {
@@ -388,16 +389,21 @@ function certificate(value: Json, project: Project): boolean {
   );
 }
 
-function pendingPublication(value: Json, project: Project): boolean {
+function currentScope(value: Json, project: Project): boolean {
   return (
-    value.ready === false &&
-    value.status === "partial" &&
     value.repo_id === project.repoId &&
     value.branch === project.branch &&
     typeof value.worktree === "string" &&
     key(value.worktree) === key(project.path!) &&
     !!text(value.source_revision) &&
-    value.source_unchanged_during_observation === true &&
+    value.source_unchanged_during_observation === true
+  );
+}
+function pendingPublication(value: Json, project: Project): boolean {
+  return (
+    currentScope(value, project) &&
+    value.ready === false &&
+    value.status === "partial" &&
     value.publication?.status === "partial" &&
     !!text(value.publication.token) &&
     publication(value) === value.publication.token &&
@@ -561,13 +567,9 @@ async function analyzeStableGroup(
   for (
     let attempt = 0;
     attempt < 6 &&
-    before.ready === false &&
-    before.repo_id === project.repoId &&
-    before.branch === project.branch &&
-    typeof before.worktree === "string" &&
-    key(before.worktree) === key(project.path!) &&
-    before.source_unchanged_during_observation === true &&
-    graph(before)?.publication_unchanged_during_call === false;
+    currentScope(before, project) &&
+    (pendingPublication(before, project) ||
+      reviewPublicationTransition(before));
     attempt++
   ) {
     assertActive();
@@ -579,7 +581,8 @@ async function analyzeStableGroup(
   if (
     retryPublication &&
     recoverPublication &&
-    pendingPublication(before, project)
+    currentScope(before, project) &&
+    (pendingPublication(before, project) || reviewPublicationTransition(before))
   ) {
     assertActive();
     await recoverPublication(before.source_revision);
@@ -825,12 +828,16 @@ async function analyzeStableGroup(
     key(after.worktree) === key(project.path!) &&
     after.source_revision === before.source_revision &&
     after.source_unchanged_during_observation === true &&
-    record(graph(after)) &&
-    !!publication(after) &&
-    (before.token !== after.token ||
-      graph(after)?.publication_unchanged_during_call === false)
+    ((record(graph(after)) &&
+      !!publication(after) &&
+      (before.token !== after.token ||
+        graph(after)?.publication_unchanged_during_call === false)) ||
+      reviewPublicationTransition(after))
   ) {
-    if (recoverPublication && pendingPublication(after, project)) {
+    if (
+      recoverPublication &&
+      (pendingPublication(after, project) || reviewPublicationTransition(after))
+    ) {
       assertActive();
       await recoverPublication(before.source_revision);
       assertActive();
