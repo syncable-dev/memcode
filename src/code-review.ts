@@ -143,6 +143,7 @@ export interface StoryReviewRun {
         baselineHash: string;
         currentHash: string;
         hunks: number;
+        journalSegments?: number;
       };
     }>;
     additions: number;
