@@ -382,9 +382,11 @@ export class TeamSyncClient implements TeamWorkerClaims {
     while (connection.history && connection.cursor < Math.max(connection.history.through, connection.workflowRoles?.through ?? 0) && !this.closed) await this.pull(connection);
     if (connection.workflowRolesSupported !== true || !this.workflowAuthority(connection) || this.closed) return;
     const owner = connection.snapshot.members.find((member) => member.id === connection.credential.memberId)?.role === "owner";
-    // Only the original owner may prepare its known built-in workflow. A joined
-    // board waits for explicit, accepted role IDs even when it uses this account.
-    if (owner && !connection.localIds && !connection.workflowRoles?.binding && !this.state().reviewWorkflows?.[connection.projectId] && this.state().workflowStates.some((item) => item.projectId === connection.projectId && item.id === `${connection.projectId}:review`)) initializeCodeReviewWorkflow(this.state(), connection.projectId, { assignLegacyTasks: false });
+    // Legacy owners may have used the implicit default without saving any
+    // workflow states. Imported boards still wait for accepted explicit roles.
+    const workflow = this.state().workflowStates.filter((item) => item.projectId === connection.projectId);
+    const builtInWorkflow = !workflow.length || workflow.some((item) => item.id === `${connection.projectId}:review`);
+    if (owner && !connection.localIds && !connection.workflowRoles?.binding && !this.state().reviewWorkflows?.[connection.projectId] && builtInWorkflow) initializeCodeReviewWorkflow(this.state(), connection.projectId, { assignLegacyTasks: false });
     await this.capture();
     if (connection.historyOutbox?.length) await this.flushHistory(connection);
     if (!this.workflowAuthority(connection)) return;
