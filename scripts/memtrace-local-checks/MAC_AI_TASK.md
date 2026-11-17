@@ -66,14 +66,15 @@ node "$checks/run-local-native.mjs" \
 
 The helper downloads or reuses the **digest-verified current1af Mac sidecar archive**, verifies every file, and replaces only its main engine with the compiled6ec binary in a temporary directory. It never changes the installed app.
 
-Four independent modes must pass:
+Five independent modes must pass:
 
 1. `owned`: canonical plus two linked epic worktrees with the same repo name/ID, shared Git objects, independent full graphs; exact branch/path certificates; different AST complexity, impact/callers/processes; review workflow/detector coverage; foreign path/branch refusals; same canonical Fleet broker; extra MCP clients do not add graph owners; concurrent saves stay isolated; restart preserves source certificates and watchers.
 2. `product`: actual current `MemtraceEngine` bootstrap, full analyze, owner count2→1→0, retireA whileB stays queryable, reopenA from cache, strict publication metadata and actual PID/daemon-state cleanup.
 3. `direct`: cold direct MCP bootstrap, saved-source watch, natural SDK transport close, native exit status and no residual servers.
 4. `legacy`: ordinary canonical/legacy worktree overlay watcher refreshes source publication without contaminating canonical symbols.
+5. `review`: the actual `CodeReviewManager` and native engine review two stories in each of two epics. Real reservation journals preserve disjoint edits to the same file. Real `node --test` output is bound to each exact source snapshot; all four initial reviews must be Ready with measured quality/impact and complete linked verification. A follow-up then modifies the earlier story, preserves the peer's changes, records a second journal segment and must return Ready after review. Late partial publications use the real bounded index-repair path. All native owners must retire naturally. These are controlled source patches for review validation; no provider-generated coding or native PTY behavior is claimed.
 
-`--mode owned|product|direct|legacy` reruns a single failing mode with a fresh disposable fixture. Do not call manually killing leaked processes a successful natural-shutdown test; the receipt marks forced cleanup as failure. No credentials appear in stdout/reports.
+`--mode owned|product|direct|legacy|review` reruns a single failing mode with a fresh disposable fixture. Do not call manually killing leaked processes a successful natural-shutdown test; the receipt marks forced cleanup as failure. No credentials appear in stdout/reports.
 
 ## Report and package evidence
 
