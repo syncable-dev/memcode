@@ -230,6 +230,24 @@ try {
   await page
     .getByRole("heading", { name: "A few things to resolve.", exact: true })
     .waitFor();
+  const captureGuide = process.argv.includes("--capture-guide");
+  if (captureGuide) {
+    await page.evaluate(() => document.fonts.ready);
+    const workspace = await page
+      .locator(".code-review-workspace")
+      .boundingBox();
+    assert.ok(workspace);
+    await page.screenshot({
+      path: resolve(out, "review-tour.png"),
+      clip: {
+        ...workspace,
+        height: Math.min(workspace.height, Math.round(workspace.width / 1.75)),
+      },
+    });
+    await page
+      .locator(".code-review-summary")
+      .screenshot({ path: resolve(out, "review-overview.png") });
+  }
   await page
     .getByText("Before & after", { exact: true })
     .scrollIntoViewIfNeeded();
@@ -248,6 +266,10 @@ try {
     el.scrollTop = panel.offsetTop - el.offsetTop - 15;
   });
   await page.screenshot({ path: resolve(out, "quality-comparison.png") });
+  if (captureGuide)
+    await page
+      .locator(".review-quality-comparison")
+      .screenshot({ path: resolve(out, "review-quality.png") });
   result.assertions.push(
     "Paired native means, directions and separate new functions are visible",
   );
@@ -291,6 +313,10 @@ try {
   await page
     .getByRole("button", { name: /Preserve the invitation during sign-in/ })
     .click();
+  if (captureGuide)
+    await page
+      .locator(".code-review-findings article.expanded")
+      .screenshot({ path: resolve(out, "review-finding.png") });
   await page
     .getByRole("button", { name: "Dismiss with reason", exact: true })
     .click();

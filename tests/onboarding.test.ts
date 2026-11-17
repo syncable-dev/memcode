@@ -100,6 +100,32 @@ test("guide progress validates project ownership and can pause, complete and exp
   assert.equal(reset.dismissed, false);
 });
 
+test("a guided story without an epic can reach review, even when removed between sessions", async () => {
+  const h = harness();
+  const project = {
+    ...h.state.projects[0],
+    id: "first-review",
+    example: false,
+  };
+  const story = {
+    ...h.state.tasks[0],
+    id: "first-story",
+    projectId: project.id,
+    epicId: null,
+  };
+  h.state.projects.push(project);
+  h.state.tasks.push(story);
+  await h.call({ projectId: project.id, step: "ready", storyId: story.id });
+  await h.call({ step: "code-review", dismissed: true });
+  assert.equal(projectGuide(h.state, project.id)?.storyId, story.id);
+  h.state.tasks = h.state.tasks.filter((task) => task.id !== story.id);
+  await h.call({ projectId: project.id, dismissed: false });
+  assert.equal(projectGuide(h.state, project.id)?.step, "code-review");
+  assert.equal(projectGuide(h.state, project.id)?.storyId, undefined);
+  await h.call({ complete: true });
+  assert.ok(projectGuide(h.state, project.id)?.completedAt);
+});
+
 test("each new project remembers its own guide; skip and future-project preference are separate", async () => {
   const h = harness();
   const projects = ["one", "two", "three"].map((id) => ({

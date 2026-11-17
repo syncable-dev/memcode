@@ -173,16 +173,21 @@ try {
     "data-preview",
     "2",
   );
-  await page.screenshot({
-    path: join(output, "welcome-review.png"),
-    animations: "disabled",
-  });
   checks.push(
     "Product slideshow advances, pauses and allows direct selection without starting work",
   );
   await page
     .getByRole("button", { name: "Show stay close to the work preview" })
     .press("ArrowRight");
+  await expect(page.locator(".install-welcome")).toHaveAttribute(
+    "data-preview",
+    "3",
+  );
+  const reviewSlide = page.getByRole("button", { name: "Show review a change preview" });
+  await expect(reviewSlide).toBeFocused();
+  await expect(dialog.getByRole("heading", { name: "Decide what’s ready to ship." })).toBeVisible();
+  await page.screenshot({ path: join(output, "welcome-review.png"), animations: "disabled" });
+  await reviewSlide.press("ArrowRight");
   await expect(page.locator(".install-welcome")).toHaveAttribute(
     "data-preview",
     "0",

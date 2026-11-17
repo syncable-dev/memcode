@@ -4,6 +4,7 @@ import {
   BookOpen,
   Check,
   ChevronRight,
+  CirclePlay,
   Search,
   Sparkles,
   X,
@@ -14,10 +15,12 @@ import { GuidePreview } from "./GuidePreview";
 import "../styles-docs.css";
 export function Docs({
   onStartGuide,
+  onWatchTour,
   onGo,
   initialArticle = "start",
 }: {
-  onStartGuide: (restart?: boolean) => void;
+  onStartGuide: (action: "resume" | "restart") => void;
+  onWatchTour: () => void;
   onGo: (destination: GuideDestination) => void;
   initialArticle?: string;
 }) {
@@ -93,14 +96,16 @@ export function Docs({
         <p className="docs-lead">{article.summary}</p>
         {article.id === "start" && (
           <>
-            <GuideFlow />
+            <GuideFlow onTopic={setSelected} />
             <div className="docs-start-actions">
-              <button className="button primary" onClick={() => onStartGuide()}>
+              <button className="button primary" onClick={() => onStartGuide("resume")}>
                 <Sparkles size={14} />
                 Guide me through
                 <ArrowRight size={14} />
               </button>
-              <span>A few focused steps. At your pace.</span>
+              <button className="button secondary" onClick={onWatchTour}>
+                <CirclePlay size={15} /> Watch product tour
+              </button>
             </div>
           </>
         )}
@@ -144,7 +149,7 @@ export function Docs({
           {article.id !== "start" && (
             <button
               className="docs-text-button"
-              onClick={() => onStartGuide(true)}
+              onClick={() => onStartGuide("restart")}
             >
               Restart guided setup
               <Sparkles size={12} />

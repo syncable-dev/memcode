@@ -34,6 +34,7 @@ await build({
 import React from 'react';import {createRoot} from 'react-dom/client';
 import {App} from './src/App';import {initialState} from './src/seed';
 import {beginProjectGuide,activateProjectGuide} from './src/onboarding';
+import {initializeCodeReviewWorkflow} from './src/code-review-workflow';
 import {registerOnboarding} from './runtime/onboarding';
 import '@fontsource-variable/inter';import './src/styles.css';
 const at='2026-11-16T10:00:00.000Z';let saved=localStorage.getItem('project-guide-fixture');
@@ -44,6 +45,7 @@ const local=(id,name,path)=>({id,name,path,description:'A thoughtful, accessible
 state.projects.push(local('fresh','Lumen','/synthetic/lumen'),local('existing','Existing project','/synthetic/existing'),local('joined','Shared observatory',null));
 state.tasks.push({...template,id:'user-story',identifier:'MC-101',projectId:'existing',title:'Existing user-authored work',example:false,run:{state:'idle'}},{...template,id:'shared-story',identifier:'MC-201',projectId:'joined',title:'Imported teammate story',example:false,run:{state:'idle'}});
 state.activeProjectId='fresh';state.epics=[];state.cycles=[];state.workerConnections={};
+initializeCodeReviewWorkflow(state,'fresh');
 state.team=[{projectId:'joined',teamId:'fixture-team',memberId:'fixture-member',deviceId:'fixture-device',connection:'online',pendingCount:0,unreadCount:0,workspace:{workspaceId:'fixture-workspace',name:'Shared observatory',head:1,members:[],stories:[],epics:[],cycles:[],comments:[],claims:[],results:[],activity:[]}}];
 beginProjectGuide(state,state.projects.find(p=>p.id==='fresh'));
 }
@@ -66,6 +68,7 @@ setWorkerPermissionDefault:async()=>{},speechStatus:async()=>({state:'unavailabl
 teamsList:async()=>({teams:[],configured:false,canCreate:false,identityAvailable:false}),
 windowAction:async()=>{},createEpic:async input=>{calls.push('create-epic');const epic={...input,id:crypto.randomUUID(),identifier:'EP-01',order:0,color:'mint'};state.epics.push(epic);await emit();return epic;},
 saveSettings:async()=>runtime,
+createTask:async input=>{const story={...structuredClone(state.tasks[0]),...input,id:'guided-story',identifier:'MC-102',stage:'planned',statusId:'fresh:planned',messages:[],runbook:[],run:{state:'idle'},example:false};state.tasks.push(story);await emit();return story;},
 };
 window.memcode=new Proxy(methods,{get:(target,key)=>key in target?target[key]:String(key).startsWith('on')?()=>()=>{}:async()=>null});
 window.fixture={snapshot:()=>structuredClone(state),select:methods.selectProject};
@@ -170,12 +173,47 @@ try {
   assert.deepEqual(await counts("fresh"), { stories: 0, epics: 0, cycles: 0 });
   checks.push("Setup can complete without creating an epic, story or cycle");
   await page.getByRole("button", { name: "Docs", exact: true }).click();
+  const flow = page.getByRole("navigation", {
+    name: "From project to code review",
+  });
+  await expect(flow.getByRole("listitem")).toHaveCount(5);
+  const dismissNotice = page.getByRole("button", { name: "Dismiss notification" });
+  if (await dismissNotice.isVisible()) await dismissNotice.click();
+  await page.screenshot({ path: join(output, "quick-start-flow.png") });
+  await page.setViewportSize({ width: 760, height: 860 });
+  assert.equal(
+    await flow.evaluate((el) => el.scrollWidth > el.clientWidth),
+    false,
+  );
+  await flow.getByRole("button", { name: /Code review/ }).click();
+  await expect(page.locator(".docs-article > h2")).toHaveText("Code review");
   await page
-    .getByRole("button", { name: "Guide me through", exact: true })
+    .getByRole("button", { name: "Your first project", exact: true })
     .click();
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  const watchTour = page.getByRole("button", { name: "Watch product tour" });
+  const tour = page.getByRole("dialog", { name: "MemCode product tour" });
+  const beforeTour = await snapshot();
+  await watchTour.click();
+  await expect(tour).toBeVisible();
+  await tour
+    .getByRole("button", { name: "Show review a change preview" })
+    .click();
+  await expect(
+    tour.getByRole("heading", { name: "Decide what’s ready to ship." }),
+  ).toBeVisible();
+  await tour.getByRole("button", { name: "Back to Docs" }).click();
+  await expect(tour).toHaveCount(0);
+  await expect(watchTour).toBeFocused();
+  assert.deepEqual(await snapshot(), beforeTour);
+  await watchTour.click();
+  await tour.getByRole("button", { name: "Open guided setup" }).click();
   await expect(
     page.getByRole("dialog", { name: "Set up Lumen." }),
   ).toBeVisible();
+  checks.push(
+    "Docs replays the welcome and review slides without editing progress; guided setup returns to the selected project",
+  );
   await page
     .getByRole("checkbox", {
       name: "Don’t open this guide automatically for new projects.",
@@ -265,6 +303,67 @@ try {
   assert.deepEqual(errors, []);
   checks.push(
     "Reduced-motion/narrow layout renders without page errors or horizontal overflow",
+  );
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.evaluate(async () => {
+    await window.fixture.select("fresh");
+    await window.memcode.updateOnboarding({
+      projectId: "fresh",
+      restart: true,
+      step: "story",
+    });
+  });
+  await guide
+    .getByRole("button", { name: "Write a story", exact: true })
+    .click();
+  const storyDialog = page.getByRole("dialog", {
+    name: "Give the next idea a place.",
+  });
+  await storyDialog
+    .getByLabel("Work item title")
+    .fill("Explain the first saved change");
+  await storyDialog.getByRole("button", { name: "Create work item" }).click();
+  const storyTour = page.getByRole("region", {
+    name: "Story guide",
+    exact: true,
+  });
+  await expect(storyTour).toBeVisible();
+  const tabs = page.getByRole("navigation", { name: "Story tabs" });
+  await tabs.getByRole("button", { name: "Code review" }).click();
+  await expect(storyTour).toContainText("finding");
+  await storyTour
+    .getByRole("button", { name: "Skip tour", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Close work item", exact: true })
+    .click();
+  await expect(guide).toContainText("Review what changed.");
+  await guide
+    .getByRole("button", { name: "Show Code review on my story" })
+    .click();
+  await expect(
+    tabs.getByRole("button", { name: "Code review" }),
+  ).toHaveAttribute("aria-current", "page");
+  await expect(storyTour).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "Close work item", exact: true })
+    .click();
+  await guide
+    .getByRole("button", { name: "Open the illustrated guide" })
+    .click();
+  const article = page.locator(".docs-article");
+  await expect(
+    article.getByRole("heading", { name: /code review/i }).first(),
+  ).toBeVisible();
+  await expect(guide).toHaveCount(0);
+  const finalState = await snapshot();
+  const story = finalState.tasks.find((task) => task.id === "guided-story");
+  assert.equal(story.statusId, "fresh:planned");
+  assert.equal(story.run.state, "idle");
+  assert.equal(finalState.projectOnboarding.fresh.step, "code-review");
+  assert.deepEqual(errors, []);
+  checks.push(
+    "Creating the first story opens its tab tour; the final guide links to that story’s review and the illustrated Docs without moving or starting work",
   );
   await writeFile(
     join(output, "result.json"),

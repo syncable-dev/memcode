@@ -166,6 +166,34 @@ try {
     path: join(out, "tauri-native-main.png"),
     animations: "disabled",
   });
+  await page.getByRole("button", { name: "Docs", exact: true }).click();
+  await page.getByRole("button", { name: "Watch product tour" }).click();
+  const productTour = page.getByRole("dialog", {
+    name: "MemCode product tour",
+  });
+  await productTour
+    .getByRole("button", { name: "Show review a change preview" })
+    .click();
+  await expect
+    .poll(() =>
+      productTour.locator("img.is-active").evaluate((img) => img.naturalWidth),
+    )
+    .toBeGreaterThan(0);
+  await productTour.getByRole("button", { name: "Back to Docs" }).click();
+  await page
+    .getByRole("navigation", { name: "Guide topics" })
+    .getByRole("button", { name: "Code review", exact: true })
+    .click();
+  const figure = page.getByRole("figure", { name: "Example story review" });
+  await figure.getByRole("button", { name: "Before & after" }).click();
+  await expect
+    .poll(() => figure.getByRole("img").evaluate((img) => img.naturalWidth))
+    .toBeGreaterThan(0);
+  await page.screenshot({
+    path: join(out, "tauri-review-docs.png"),
+    animations: "disabled",
+  });
+  await page.getByRole("button", { name: "Workspace", exact: true }).click();
   await page.getByRole("button", { name: /^Settings/ }).click();
   await expect(page.getByText("Development build", { exact: true })).toBeVisible();
   await page.screenshot({ path: join(out, "tauri-native-settings.png"), animations: "disabled" });

@@ -6,8 +6,14 @@ The capture script does not launch coding models, grant worker access, sign in, 
 
 Captured: 2026-11-14T21:10:48.871Z
 
+The four review images use a separate presentation fixture. From the MemCode checkout, run `node scripts/code-review-experience-smoke.mjs --capture-guide` to regenerate them in `tmp/code-review-experience-evidence`. They show the current review components with a fictional sign-in change.
+
 | Image | Source | What it shows |
 | --- | --- | --- |
+| review-tour.png | CodeReview component with the example invitation story from `scripts/code-review-experience-smoke.mjs --capture-guide` | Main review workspace with findings, recorded checks and the read-only conversation. |
+| review-overview.png | Same rendered example, summary panel | Maintainability of three measured functions, two findings and one passed check. All values in this example are fixture data. |
+| review-finding.png | Same rendered example, expanded finding | Finding location, recorded evidence, discussion and dismissal controls. |
+| review-quality.png | Same rendered example, quality panel | Before-and-after metrics for two matched functions, with separate function details and coverage. |
 | team.png | Actual TeamOnboarding component; synthetic renderer fixture, captured 2026-11-16 by scripts/team-onboarding-smoke.mjs | Sharing an existing project's current state with a named team. The visible fixture label, fictional team/project and example.invalid account are illustrative. No real identity, repository, relay, provider approval or worker is involved. |
 | workspace.png | Built-in Design preview (seeded examples) | Board and lane layout; cards are built-in example data where Design preview is available. |
 | conversations.png | Built-in Design preview (seeded examples) | Actual conversations overview in the labelled example project. |

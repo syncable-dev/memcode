@@ -51,20 +51,32 @@ export function registerOnboarding(
         !state().projects.some((p) => p.id === next.projectId && !p.example)
       )
         throw Error("Choose a local project for guided setup.");
+      // The story may have moved or been deleted while the guide was paused.
+      if (next.storyId && !patch.storyId && !patch.epicId) {
+        const story = state().tasks.find(
+          (task) =>
+            task.id === next.storyId && task.projectId === next.projectId,
+        );
+        if (story && !story.archivedAt) next.epicId = story.epicId ?? undefined;
+        else delete next.storyId;
+      }
       if (
         next.epicId &&
         !state().epics.some(
           (e) => e.id === next.epicId && e.projectId === next.projectId,
         )
-      )
-        throw Error("Choose an epic in this project.");
+      ) {
+        if (patch.epicId || patch.storyId)
+          throw Error("Choose an epic in this project.");
+        delete next.epicId;
+      }
       if (
         next.storyId &&
         !state().tasks.some(
           (t) =>
             t.id === next.storyId &&
             t.projectId === next.projectId &&
-            t.epicId === next.epicId,
+            (t.epicId ?? undefined) === next.epicId,
         )
       )
         throw Error("Choose a story in this epic.");

@@ -1,15 +1,68 @@
 .guide-flow {
-  display: block;
+  container-type: inline-size;
+  border-radius: 12px;
+  padding: 13px;
+  background: radial-gradient(ellipse at top right, #1c4939, transparent 65%), #0c241b;
+  color: #f5faf6;
+}
+.guide-flow ol {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.guide-flow button {
+  display: grid;
+  align-content: start;
+  justify-items: start;
+  gap: 6px;
   width: 100%;
-  height: auto;
+  height: 100%;
+  padding: 15px 10px;
+  border-radius: 8px;
+  color: inherit;
+  text-align: left;
+  animation: guide-appear .32s both;
 }
-.guide-flow-node {
-  animation: guide-appear 0.5s both;
+.guide-flow button:hover, .guide-flow button:focus-visible {
+  background: #c7eddb11;
 }
-.guide-flow-line {
-  stroke-dasharray: 455;
-  stroke-dashoffset: 455;
-  animation: guide-connect 1.2s 0.15s ease forwards;
+.guide-flow-icon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  margin-bottom: 8px;
+  border: 1px solid #84c4a252;
+  border-radius: 9px;
+  color: #93dfbe;
+}
+.guide-flow strong {
+  font-size: 14px;
+  line-height: 1.3;
+  font-weight: 540;
+}
+.guide-flow small {
+  color: #bccec3;
+  font-size: 11px;
+  line-height: 1.45;
+}
+@container (max-width: 570px) {
+  .guide-flow ol { grid-template-columns: 1fr; }
+  .guide-flow button {
+    grid-template-columns: auto minmax(6em, auto) 1fr;
+    align-items: center;
+    gap: 12px;
+    min-height: 44px;
+    padding: 5px 8px;
+  }
+  .guide-flow-icon { margin: 0; }
+}
+@container (max-width: 255px) {
+  .guide-flow button { grid-template-columns: auto 1fr; gap: 0 10px; }
+  .guide-flow-icon { grid-row: span 2; }
+  .guide-flow small { grid-column: 2; }
 }
 .onboarding-welcome {
   padding: 0 30px 28px;
@@ -148,7 +201,7 @@
 }
 .project-guide-path {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 11px;
   margin: 27px 0 22px;
 }
@@ -335,6 +388,24 @@
   justify-content: space-between;
   font-size: 11px;
 }
+.guide-review-advice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  margin-bottom: 18px;
+  border-left: 2px solid #83b6a0;
+  background: #f3f8f2;
+}
+.guide-review-advice svg {
+  flex: none;
+  margin-top: 2px;
+  color: #43765e;
+}
+.guide-review-advice p {
+  margin: 0;
+  color: #475f50;
+}
 .guide-use-existing {
   display: flex;
   gap: 7px;
@@ -372,9 +443,6 @@
   background: #f9fcf6;
   margin: 10px 0 20px;
 }
-.guide-flow-node {
-  transform-origin: center;
-}
 .onboarding-guide .icon-button {
   width: 24px;
   height: 24px;
@@ -389,23 +457,14 @@
     transform: translateY(0);
   }
 }
-@keyframes guide-connect {
-  to {
-    stroke-dashoffset: 0;
-  }
-}
 @media (prefers-reduced-motion: reduce) {
   .guide-analysis-status > svg {
     animation: none;
   }
-  .guide-flow-node,
-  .guide-flow-line,
+  .guide-flow button,
   .guide-step-copy,
   .onboarding-guide {
     animation: none;
-  }
-  .guide-flow-line {
-    stroke-dashoffset: 0;
   }
   .onboarding-spotlight {
     transition: none;

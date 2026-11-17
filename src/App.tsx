@@ -50,6 +50,7 @@ import { Cycles } from "./components/Cycles";
 import { InsightsPage } from "./components/InsightsPage";
 import { Improve } from "./components/Improve";
 import { Onboarding } from "./components/Onboarding";
+import { InstallWelcome } from "./components/InstallWelcome";
 import { Docs } from "./components/Docs";
 import {
   firstRunGuide,
@@ -74,6 +75,7 @@ import "./styles-runtime-health.css";
 import "./styles-artifact-collection.css";
 import "./styles-artifact-thumbnail.css";
 import {
+  Modal,
   NewProjectDialog,
   NewTaskDialog,
   SearchDialog,
@@ -162,13 +164,14 @@ export function App() {
   const [runtime, setRuntime] = useState<RuntimeInfo | null>(null);
   const [view, setView] = useState<View>("board");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [guideReviewId, setGuideReviewId] = useState<string | null>(null);
   const [selectedArtifact, setSelectedArtifact] = useState<Artifact | null>(
     null,
   );
   const [storyEpic, setStoryEpic] = useState<string | undefined>();
   const [storyParent, setStoryParent] = useState<string | undefined>();
   const [dialog, setDialog] = useState<
-    "task" | "project" | "settings" | "search" | null
+    "task" | "project" | "settings" | "search" | "welcome" | null
   >(null);
   const [projectMenu, setProjectMenu] = useState(false);
   const [joinTeamRequest, setJoinTeamRequest] = useState(0);
@@ -338,6 +341,7 @@ export function App() {
   const working = tasks.filter((task) => task.stage === "working");
   const artifacts = state.artifacts.filter((a) => a.projectId === project.id);
   const open = (task: WorkItem) => {
+    setGuideReviewId(null);
     setSelectedArtifact(null);
     setSelectedId(task.id);
     setDialog(null);
@@ -348,6 +352,7 @@ export function App() {
     setDialog("task");
   };
   const updateGuide = (patch: OnboardingPatch) => {
+    if (patch.step === "code-review") setView("board");
     void act(() =>
       window.memcode.updateOnboarding({
         ...(!project.example ? { projectId: project.id } : {}),
@@ -355,21 +360,23 @@ export function App() {
       }),
     );
   };
-  const startGuide = (restart = false) => {
+  const startGuide = (action: "resume" | "restart" | "after-tour") => {
     setSelectedId(null);
     setDialog(null);
     setProjectMenu(false);
     const progress = guideProgress;
-    updateGuide(
-      restart || !progress || progress.completedAt
-        ? {
-            restart: true,
-            step: project.example ? "welcome" : "context",
-            dismissed: false,
-          }
-        : { dismissed: false },
-    );
-    const step = restart ? "welcome" : progress?.step;
+    const fresh = action === "restart" || !progress || !!progress.completedAt;
+    const firstStep = project.example ? "welcome" : "context";
+    const savedStep = fresh ? firstStep : progress.step;
+    const step =
+      action === "after-tour" && savedStep === "welcome"
+        ? "project"
+        : savedStep;
+    updateGuide({
+      ...(fresh ? { restart: true } : {}),
+      step,
+      dismissed: false,
+    });
     setView(
       step === "worker"
         ? "workers"
@@ -379,6 +386,13 @@ export function App() {
     );
   };
   const guideAction = (action: GuideAction) => {
+    if (action === "review-docs") {
+      updateGuide({ dismissed: true });
+      setSelectedId(null);
+      setDocsArticle("review");
+      setView("docs");
+      return;
+    }
     if (action === "project") {
       setDialog("project");
       return;
@@ -413,9 +427,15 @@ export function App() {
         setView("roadmap");
         create(progress?.epicId);
       }
-      if (action === "open-story" && progress?.storyId) {
-        const story = state.tasks.find((t) => t.id === progress.storyId);
-        if (story) open(story);
+      if (
+        (action === "open-story" || action === "view-review") &&
+        progress?.storyId
+      ) {
+        const story = tasks.find((task) => task.id === progress.storyId);
+        if (story) {
+          open(story);
+          if (action === "view-review") setGuideReviewId(story.id);
+        }
       }
     });
   };
@@ -780,6 +800,7 @@ export function App() {
               <Docs
                 initialArticle={docsArticle}
                 onStartGuide={startGuide}
+                onWatchTour={() => setDialog("welcome")}
                 onGo={guideGo}
               />
             </Suspense>
@@ -1035,6 +1056,15 @@ export function App() {
         <WorkDetail
           state={state}
           task={selected}
+          guidedTour={
+            guideProgress?.step === "ready" &&
+            !guideProgress.dismissed &&
+            !guideProgress.completedAt &&
+            guideProgress.storyId === selected.id &&
+            project.id === selected.projectId
+          }
+          onGuideTourEnd={() => updateGuide({ step: "code-review" })}
+          initialTab={guideReviewId === selected.id ? "review" : undefined}
           project={state.projects.find((p) => p.id === selected.projectId)!}
           artifacts={state.artifacts.filter((a) => a.taskId === selected.id)}
           initialArtifact={
@@ -1064,7 +1094,10 @@ export function App() {
           tasks={state.tasks.filter(
             (task) => task.projectId === selected.projectId,
           )}
-          onClose={() => setSelectedId(null)}
+          onClose={() => {
+            setSelectedId(null);
+            setGuideReviewId(null);
+          }}
           onOpenTask={open}
           onCreateChild={() =>
             create(selected.epicId ?? undefined, selected.id)
@@ -1132,6 +1165,20 @@ export function App() {
           create={create}
         />
       )}
+      {dialog === "welcome" && (
+        <Modal
+          title="MemCode product tour"
+          kicker="WELCOME TO MEMCODE"
+          wide
+          close={() => setDialog(null)}
+        >
+          <InstallWelcome
+            replay
+            onSkip={() => setDialog(null)}
+            onContinue={() => startGuide("after-tour")}
+          />
+        </Modal>
+      )}
       {guideProgress &&
         !guideProgress.dismissed &&
         !guideProgress.completedAt && (
@@ -1153,7 +1200,7 @@ export function App() {
                 : account?.status === "connected" ||
                   guideProject.analysis === "ready"
             }
-            hidden={!!dialog}
+            hidden={!!dialog || !!selected}
             onUpdate={updateGuide}
             onAction={guideAction}
             onDocs={() => {

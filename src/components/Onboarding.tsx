@@ -9,6 +9,7 @@ import {
   LoaderCircle,
   MessageSquare,
   Plug,
+  ScanLine,
   Sparkles,
   X,
 } from "lucide-react";
@@ -61,10 +62,15 @@ const copy = {
   },
   ready: {
     number: 4,
-    title: "Your story has a place.",
-    body: "Review its brief and proposed route, then start its worker when you choose. Conversation, changes and output stay with the story.",
-    button: "Open my story",
-    target: ".work-inspector",
+    title: "Explore your story.",
+    body: "Take a tour inside the card. See where to talk to the worker, inspect its edits and open what it built.",
+    button: "Tour the story tabs",
+  },
+  "code-review": {
+    number: 5,
+    title: "Review what changed.",
+    body: "When the work is ready, move the story to the Code review lane. Open its Code review tab and start the review there.",
+    button: "Open the illustrated guide",
   },
 };
 
@@ -95,10 +101,21 @@ export function Onboarding({
   notify: (message: string) => void;
 }) {
   const step = progress.step;
+  const laneId = state.reviewWorkflows?.[project.id]?.codeReviewStatusId;
   const [bounds, setBounds] = useState<DOMRect>();
   useEffect(() => {
     if (step === "welcome" || step === "context" || hidden) return;
-    const selector = copy[step].target;
+    const selector =
+      step === "ready"
+        ? progress.storyId &&
+          `[data-work-item="${CSS.escape(progress.storyId)}"]`
+        : step === "code-review"
+          ? laneId && `[data-work-group="${CSS.escape(laneId)}"]`
+          : copy[step].target;
+    if (!selector) {
+      setBounds(undefined);
+      return;
+    }
     const update = () =>
       setBounds(document.querySelector(selector)?.getBoundingClientRect());
     update();
@@ -111,7 +128,7 @@ export function Onboarding({
       window.removeEventListener("resize", update);
       window.removeEventListener("scroll", update, true);
     };
-  }, [step, hidden]);
+  }, [step, hidden, laneId, progress.storyId]);
   if (progress.dismissed || progress.completedAt) return null;
   if (hidden && (step === "welcome" || step === "context")) return null;
   const preference = (
@@ -188,6 +205,7 @@ export function Onboarding({
               { icon: Code2, label: "Code context" },
               { icon: Plug, label: "Your worker" },
               { icon: MessageSquare, label: "Your first work" },
+              { icon: ScanLine, label: "Code review" },
             ].map(({ icon: Icon, label }, index) => (
               <div key={label} className={index === 0 ? "current" : ""}>
                 <span>
@@ -234,6 +252,13 @@ export function Onboarding({
   const story = state.tasks.find(
     (entry) => entry.id === progress.storyId && entry.projectId === project.id,
   );
+  const existingStory = state.tasks.find(
+    (entry) =>
+      entry.projectId === project.id &&
+      !entry.example &&
+      !entry.archivedAt &&
+      (!progress.epicId || entry.epicId === progress.epicId),
+  );
   const analyzing = ["connecting", "indexing"].includes(project.analysis);
   const contextReady = project.analysis === "ready" && memtraceConnected;
   return (
@@ -267,8 +292,8 @@ export function Onboarding({
             <X size={14} />
           </button>
         </header>
-        <div className="guide-progress" aria-label={`Step ${item.number} of 4`}>
-          {[1, 2, 3, 4].map((number) => (
+        <div className="guide-progress" aria-label={`Step ${item.number} of 5`}>
+          {[1, 2, 3, 4, 5].map((number) => (
             <i
               key={number}
               className={number <= item.number ? "complete" : ""}
@@ -277,9 +302,7 @@ export function Onboarding({
         </div>
         <div className="guide-step-copy" key={step}>
           <small>
-            {step === "ready"
-              ? "READY WHEN YOU ARE"
-              : `STEP ${item.number} OF 4${item.number === 4 ? " · OPTIONAL" : ""}`}
+            STEP {item.number} OF 5{item.number === 4 ? " · OPTIONAL" : ""}
           </small>
           <h2>{item.title}</h2>
           <p>{item.body}</p>
@@ -356,12 +379,42 @@ export function Onboarding({
                 </>
               )}
             </>
+          ) : step === "code-review" ? (
+            <>
+              <div className="guide-review-advice">
+                <ScanLine size={16} aria-hidden />
+                <p>
+                  Open a finding to see the evidence. Compare the measured
+                  changes, then ask for a fix or record why you accept the risk.
+                </p>
+              </div>
+              <button
+                className="button primary"
+                onClick={() => onAction("review-docs")}
+              >
+                {item.button} <ArrowRight size={13} />
+              </button>
+              {story && (
+                <button
+                  className="guide-use-existing"
+                  onClick={() => onAction("view-review")}
+                >
+                  Show Code review on my story <ArrowRight size={12} />
+                </button>
+              )}
+            </>
           ) : (
             <button
               className="button primary"
-              onClick={() => onAction(step === "ready" ? "open-story" : step)}
+              onClick={() => {
+                if (step === "ready" && !story)
+                  onUpdate({ step: "code-review" });
+                else onAction(step === "ready" ? "open-story" : step);
+              }}
             >
-              {item.button}
+              {step === "ready" && !story
+                ? "Continue to Code review"
+                : item.button}
               <ArrowRight size={13} />
             </button>
           )}
@@ -399,19 +452,51 @@ export function Onboarding({
           {step === "epic" && !selectedEpic && (
             <button
               className="guide-use-existing"
-              onClick={() => onAction("story")}
+              onClick={() => {
+                onUpdate({ step: "story" });
+                onAction("story");
+              }}
             >
               <MessageSquare size={12} />
               Start with a story instead
             </button>
           )}
-          {(step === "epic" || step === "story" || step === "ready") && (
+          {step === "story" && existingStory && (
+            <button
+              className="guide-use-existing"
+              onClick={() =>
+                onUpdate({
+                  step: "ready",
+                  storyId: existingStory.id,
+                  epicId: existingStory.epicId ?? undefined,
+                })
+              }
+            >
+              <MessageSquare size={12} /> Tour {existingStory.identifier}
+            </button>
+          )}
+          {(step === "epic" ||
+            step === "story" ||
+            (step === "ready" && story)) && (
+            <button
+              className="guide-use-existing"
+              onClick={() => onUpdate({ step: "code-review" })}
+            >
+              Continue to Code review <ArrowRight size={12} />
+            </button>
+          )}
+          {(step === "epic" ||
+            step === "story" ||
+            step === "ready" ||
+            step === "code-review") && (
             <button
               className="guide-use-existing"
               onClick={() => onUpdate({ complete: true })}
             >
               <Check size={12} />
-              {story ? "Finish setup" : "Finish setup · add work later"}
+              {story || step === "code-review"
+                ? "Finish setup"
+                : "Finish setup · add work later"}
             </button>
           )}
         </div>

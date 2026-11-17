@@ -24,6 +24,7 @@ import {
   X,
 } from "lucide-react";
 import { HarnessMark, StageIcon } from "./UI";
+import { CodeReviewGuidePreview } from "./CodeReviewGuidePreview";
 import "../styles-guide-preview.css";
 
 function Row({
@@ -177,7 +178,7 @@ function BoardPreview({ roadmap = false }: { roadmap?: boolean }) {
       <div className="guide-preview-board">
         {(roadmap
           ? ["Now", "Next", "Later"]
-          : ["Planned", "In progress", "In review"]
+          : ["Planned", "In progress", "Code review"]
         ).map((lane, index) => (
           <div key={lane}>
             <Row>
@@ -826,7 +827,7 @@ function TeamPreview() {
   );
 }
 
-/** Small local guide scenes, not screenshots or live workspace state. */
+/** Guide illustrations and captured examples are independent of live workspace state. */
 export const GuidePreview = memo(function GuidePreview({
   topic,
   title,
@@ -836,6 +837,7 @@ export const GuidePreview = memo(function GuidePreview({
   title: string;
   caption: string;
 }) {
+  if (topic === "review") return <CodeReviewGuidePreview />;
   let scene: ReactNode;
   if (topic === "projects") scene = <ProjectPreview />;
   else if (topic === "workers" || topic === "privacy")
@@ -854,7 +856,7 @@ export const GuidePreview = memo(function GuidePreview({
     ].includes(topic)
   )
     scene = <ConversationPreview topic={topic} />;
-  else if (["review", "annotations", "files"].includes(topic))
+  else if (["changes", "annotations", "files"].includes(topic))
     scene = <ReviewPreview topic={topic} />;
   else if (topic === "browser") scene = <BrowserPreview />;
   else if (topic === "terminal") scene = <TerminalPreview />;

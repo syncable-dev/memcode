@@ -217,7 +217,7 @@ function BoardContent({
         </div>
         {lanes.map((group) => (
           <section className="list-section" key={group.id} role="rowgroup">
-            <div className="list-section-heading">
+            <div className="list-section-heading" data-work-group={group.id}>
               <span
                 className="group-color"
                 style={{ background: group.color ?? "#9aaf9e" }}
@@ -240,6 +240,7 @@ function BoardContent({
                 }
                 role="row"
                 key={task.id}
+                data-work-item={task.id}
               >
                 <span role="cell">{checkbox(task)}</span>
                 <span role="cell">
@@ -317,7 +318,7 @@ function BoardContent({
             setOver(null);
           }}
         >
-          <div className="column-heading">
+          <div className="column-heading" data-work-group={group.id}>
             <div>
               {group.stage ? (
                 <StageIcon stage={group.stage} />
@@ -366,6 +367,7 @@ function BoardContent({
                 }
                 key={task.id}
                 role="button"
+                data-work-item={task.id}
                 tabIndex={0}
                 aria-label={`${task.identifier}: ${task.title}`}
                 draggable={!isActive(task)}

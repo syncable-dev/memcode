@@ -26,6 +26,7 @@ import "../styles-review.css";
 import "../styles-annotations.css";
 import "../styles-card-comments.css";
 import { WorkerChanges } from "./WorkerChanges";
+import { StoryTabBar, type StoryTab, type StoryTabItem } from "./StoryTabBar";
 import { isCodeReviewTask } from "../code-review-workflow";
 import { taskStatus, workflowFor } from "../planning/workflow";
 import type { CodeReviewFinding } from "../code-review";
@@ -94,17 +95,6 @@ const WorkerTerminal = lazy(() =>
 const CodeReview = lazy(() =>
   import("./CodeReview").then((module) => ({ default: module.CodeReview })),
 );
-type Tab =
-  | "review"
-  | "conversation"
-  | "queue"
-  | "comments"
-  | "runbook"
-  | "changes"
-  | "artifacts"
-  | "browser"
-  | "terminal"
-  | "file";
 interface Props {
   state: AppState;
   task: WorkItem;
@@ -123,6 +113,9 @@ interface Props {
   notify: (s: string) => void;
   act: Act;
   obscured?: boolean;
+  guidedTour?: boolean;
+  onGuideTourEnd?: () => void;
+  initialTab?: "review";
 }
 
 export function WorkDetail({
@@ -143,6 +136,9 @@ export function WorkDetail({
   notify,
   act,
   obscured = false,
+  guidedTour,
+  onGuideTourEnd,
+  initialTab,
 }: Props) {
   const health = useRuntimeHealth();
   const team = state.team?.find((item) => item.projectId === task.projectId);
@@ -150,8 +146,9 @@ export function WorkDetail({
   const pendingInputs = (state.workerInputs ?? []).filter(
     (input) => input.taskId === task.id && input.status === "pending",
   );
-  const [tab, setTab] = useState<Tab>(() =>
-    isCodeReviewTask(state, task) ? "review" : "conversation",
+  const [tab, setTab] = useState<StoryTab>(
+    () =>
+      initialTab ?? (isCodeReviewTask(state, task) ? "review" : "conversation"),
   );
   const reviewing = isCodeReviewTask(state, task);
   const workflow = workflowFor(state, task.projectId);
@@ -229,7 +226,9 @@ export function WorkDetail({
     notify,
   );
   useEffect(() => {
-    setTab(isCodeReviewTask(state, task) ? "review" : "conversation");
+    setTab(
+      initialTab ?? (isCodeReviewTask(state, task) ? "review" : "conversation"),
+    );
     setChangeTarget(undefined);
     setCommentsOpen(false);
     setFocusedCommentId(undefined);
@@ -247,6 +246,9 @@ export function WorkDetail({
   useEffect(() => {
     if (reviewing) setTab("review");
   }, [reviewing]);
+  useEffect(() => {
+    if (initialTab) setTab(initialTab);
+  }, [initialTab]);
   useEffect(() => {
     if (initialArtifact) {
       setArtifact(initialArtifact);
@@ -424,12 +426,7 @@ export function WorkDetail({
     }
     onConnections();
   };
-  const tabs: Array<{
-    id: Tab;
-    label: string;
-    icon: typeof MessageSquare;
-    count?: number;
-  }> = [
+  const tabs: StoryTabItem[] = [
     { id: "conversation", label: "Conversation", icon: MessageSquare },
     { id: "queue", label: "Queue", icon: ListChecks, count: pending.length },
     {
@@ -575,26 +572,18 @@ export function WorkDetail({
             </span>
           </div>
         </div>
-        <div className="detail-tabs">
-          {tabs.map((item) => (
-            <button
-              key={item.id}
-              className={tab === item.id ? "active" : ""}
-              onClick={() => {
-                if (item.id !== "artifacts") setArtifact(null);
-                setTab(item.id);
-              }}
-            >
-              <item.icon size={13} />
-              {item.label}
-              {item.id === "conversation" && pendingInputs.length > 0 ? (
-                <small className="conversation-needs-reply">Needs reply</small>
-              ) : item.count ? (
-                <small>{item.count}</small>
-              ) : null}
-            </button>
-          ))}
-        </div>
+        <StoryTabBar
+          key={task.id}
+          tab={tab}
+          tabs={tabs}
+          needsReply={pendingInputs.length > 0}
+          guidedTour={guidedTour}
+          onGuideTourEnd={onGuideTourEnd}
+          onSelect={(next) => {
+            if (next !== "artifacts") setArtifact(null);
+            setTab(next);
+          }}
+        />
         <div
           className={
             "detail-body" + (tab === "review" ? " is-code-review" : "")

@@ -9,6 +9,7 @@ export const guideSteps = [
   "epic",
   "story",
   "ready",
+  "code-review",
 ] as const;
 export type GuideStep = (typeof guideSteps)[number];
 export interface OnboardingProgress {
@@ -32,6 +33,8 @@ export type GuideAction =
   | "epic"
   | "story"
   | "open-story"
+  | "view-review"
+  | "review-docs"
   | "account"
   | "analyze"
   | "team";

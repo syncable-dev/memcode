@@ -10,9 +10,9 @@ const previews = [
     name: "Plan your work",
     label: "YOUR WORK, IN FOCUS",
     heading: "Build what\ncomes next.",
-    body: "Give an idea a clear story. Bring in your workers. Keep the work moving, from the first brief to the final review.",
+    body: "Write a story with one outcome and a way to check it. Move it across your board as the work progresses.",
     image: "workspace",
-    caption: "A place for the plan. And the people making it happen.",
+    caption: "Each card follows a story from the brief to delivery.",
   },
   {
     name: "Understand the code",
@@ -20,7 +20,7 @@ const previews = [
     heading: "A clearer view.\nA better next move.",
     body: "Memtrace brings local code context, measured complexity and change impact into the work, so model routing starts with evidence.",
     image: "insights",
-    caption: "Understand the code before you change it.",
+    caption: "Explore the functions and dependencies behind a change.",
   },
   {
     name: "Stay close to the work",
@@ -28,17 +28,27 @@ const previews = [
     heading: "See the work.\nShape the next step.",
     body: "Keep the brief, conversation, changes and saved output with the story. Review what happened, then guide what happens next.",
     image: "story",
-    caption: "Less searching for context. More room to build.",
+    caption: "One story holds the worker’s replies, changes and artifacts.",
+  },
+  {
+    name: "Review a change",
+    label: "CODE REVIEW",
+    heading: "Decide what’s\nready to ship.",
+    body: "Move a finished story to Code review and start a review. Compare the code before and after, inspect a finding and ask your worker for a fix.",
+    image: "review-tour",
+    caption: "Open a finding to see the evidence behind it.",
   },
 ] as const;
 
 /** Product introduction only. The existing guide owns device-local persistence. */
 export function InstallWelcome({
   preference,
+  replay = false,
   onSkip,
   onContinue,
 }: {
-  preference: ReactNode;
+  preference?: ReactNode;
+  replay?: boolean;
   onSkip: () => void;
   onContinue: () => void;
 }) {
@@ -84,33 +94,31 @@ export function InstallWelcome({
         </div>
         <div className="install-welcome-message" key={active}>
           <span className="install-welcome-eyebrow">
-            <i /> WELCOME TO WHAT’S NEXT
+            <i /> {current.name}
           </span>
           <h3>{current.heading}</h3>
           <p>{current.body}</p>
         </div>
         <ul className="install-welcome-promises">
           <li>
-            <Check size={13} /> Your projects stay local
+            <Check size={13} /> Workers run on your computer
           </li>
           <li>
             <Check size={13} /> Workers connect with your approval
           </li>
-          <li>
-            <Check size={13} /> Start with one idea, at your own pace
-          </li>
         </ul>
         <div className="install-welcome-actions">
           <button className="button primary" onClick={onContinue}>
-            Let’s get started <ArrowRight size={15} />
+            {replay ? "Open guided setup" : "Let’s get started"}
+            <ArrowRight size={15} />
           </button>
           <button className="install-welcome-skip" onClick={onSkip}>
-            Skip for now
+            {replay ? "Back to Docs" : "Skip for now"}
           </button>
           {preference}
         </div>
         <div className="install-welcome-footnote">
-          <span>Find setup help in Docs → Guide me through.</span>
+          <span>Replay this tour anytime in Docs.</span>
           <span>
             Find your work <kbd>{shortcutLabel("K")}</kbd>
           </span>
@@ -127,7 +135,9 @@ export function InstallWelcome({
           <span>
             <i /> {current.label}
           </span>
-          <span>PRODUCT PREVIEW</span>
+          <span>
+            {active + 1} / {previews.length}
+          </span>
         </div>
         <div className="install-welcome-screen" aria-hidden="true">
           <div className="install-welcome-screen-bar">
@@ -166,7 +176,10 @@ export function InstallWelcome({
                 if (event.key !== "ArrowRight" && event.key !== "ArrowLeft")
                   return;
                 event.preventDefault();
-                select(active + (event.key === "ArrowRight" ? 1 : -1));
+                const direction = event.key === "ArrowRight" ? 1 : -1;
+                const next = (active + direction + previews.length) % previews.length;
+                select(next);
+                event.currentTarget.querySelectorAll("button")[next]?.focus();
               }}
             >
               {previews.map((preview, index) => (

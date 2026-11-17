@@ -309,6 +309,11 @@
 .install-welcome-screen-images img.is-active {
   opacity: 1;
 }
+.install-welcome-screen-images img[src$="review-tour.png"] {
+  object-fit: contain;
+  object-position: center;
+  background: #f6f8f4;
+}
 .install-welcome-stage-bottom {
   padding: 32px 2px 0;
 }
