@@ -245,6 +245,128 @@ test("a legacy baseline cannot gain verified ownership through disjoint projecti
   assert.match(result.limitations.join(" "), /older scoped baseline/);
 });
 
+test("a later own fix after a disjoint peer edit composes only this story's changes", async () => {
+  const f = await fixture(),
+    ownFirst = sharedBefore.replace("result = 1", "result = 2"),
+    peer = ownFirst.replace("return 10", "return 20"),
+    ownFix = peer.replace("result = 2", "result = 3");
+  await f.checkpoint(sharedBefore, ownFirst);
+  await f.checkpoint(peer, ownFix);
+  const result = await captureStoryReview(f.task);
+  assert.deepEqual(result.limitations, []);
+  assert.equal(result.snapshot.files[0].attribution, "reservation");
+  assert.equal(result.snapshot.files[0].beforeHash, hash(sharedBefore));
+  assert.equal(result.snapshot.files[0].afterHash, hash(ownFix));
+  assert.deepEqual(result.snapshot.files[0].projection, {
+    method: "unique-exact-context",
+    baselineHash: hash(sharedBefore.replace("return 10", "return 20")),
+    currentHash: hash(ownFix),
+    hunks: 2,
+    journalSegments: 2,
+  });
+  assert.match(result.patch, /-  const result = 1;/);
+  assert.match(result.patch, /\+  const result = 3;/);
+  assert.doesNotMatch(result.patch, /^[+-]  return (10|20);/m);
+  assert.equal(
+    result.baseFiles["source.ts"],
+    sharedBefore.replace("return 10", "return 20"),
+  );
+  assert.equal(await readFile(join(f.root, "source.ts"), "utf8"), ownFix);
+});
+
+test("own changes in separate areas compose across peer edits while overlapping peers stay partial", async () => {
+  const before =
+    sharedBefore +
+    "\n// More independent work\nexport function last() {\n  return 100;\n}\n// EOF\n";
+  const f = await fixture(),
+    ownFirst = before.replace("result = 1", "result = 2"),
+    peer = ownFirst.replace("return 10", "return 20"),
+    ownFix = peer.replace("return 100", "return 200");
+  await f.checkpoint(before, ownFirst);
+  await f.checkpoint(peer, ownFix);
+  const result = await captureStoryReview(f.task);
+  assert.deepEqual(result.limitations, []);
+  assert.match(result.patch, /\+  const result = 2;/);
+  assert.match(result.patch, /\+  return 200;/);
+  assert.doesNotMatch(result.patch, /^[+-]  return (10|20);/m);
+  assert.equal(
+    result.baseFiles["source.ts"],
+    before.replace("return 10", "return 20"),
+  );
+});
+
+test("fix-loop projection cannot absorb legacy checkpoints or file transitions", async () => {
+  for (const variant of ["legacy", "added"] as const) {
+    const f = await fixture(),
+      first = sharedBefore.replace("result = 1", "result = 2"),
+      peer = first.replace("return 10", "return 20"),
+      fixed = peer.replace("result = 2", "result = 3");
+    await f.checkpoint(
+      variant === "added" ? undefined : sharedBefore,
+      first,
+      variant === "legacy" ? { basis: "scoped-baseline" } : {},
+    );
+    await f.checkpoint(peer, fixed);
+    const result = await captureStoryReview(f.task);
+    assert.equal(result.patch, "");
+    assert.equal(result.snapshot.files[0].projection, undefined);
+    assert.match(result.limitations.join(" "), /intervening edit/);
+  }
+});
+
+test("every disjoint fix-loop segment's saved blobs remain content-checked", async () => {
+  const f = await fixture(),
+    first = sharedBefore.replace("result = 1", "result = 2"),
+    peer = first.replace("return 10", "return 20"),
+    fixed = peer.replace("result = 2", "result = 3");
+  await f.checkpoint(sharedBefore, first);
+  await f.checkpoint(peer, fixed);
+  // This is an intermediate blob, not the retained first-before/latest-after.
+  await writeFile(
+    join(f.directory, "blobs", hash(peer)),
+    "tampered intermediate segment",
+  );
+  await assert.rejects(captureStoryReview(f.task), /content check/);
+});
+
+test("equal whole-file endpoints do not erase own fixes that undo an intervening peer change", async () => {
+  const f = await fixture(),
+    first = sharedBefore.replace("result = 1", "result = 2"),
+    peer = first.replace("return 10", "return 20");
+  await f.checkpoint(sharedBefore, first);
+  // The second own reservation undoes both the first own edit and the peer's
+  // separate edit. Whole-file before/after hashes match, but own net changes
+  // still include returning the peer's value 20 to 10.
+  await f.checkpoint(peer, sharedBefore);
+  const result = await captureStoryReview(f.task);
+  assert.deepEqual(result.limitations, []);
+  assert.equal(
+    result.snapshot.files[0].beforeHash,
+    result.snapshot.files[0].afterHash,
+  );
+  assert.equal(result.snapshot.files[0].projection?.journalSegments, 2);
+  assert.equal(
+    result.baseFiles["source.ts"],
+    sharedBefore.replace("return 10", "return 20"),
+  );
+  assert.match(result.patch, /-  return 20;/);
+  assert.match(result.patch, /\+  return 10;/);
+  assert.doesNotMatch(result.patch, /^[+-]  const result/m);
+});
+
+test("an own fix that cancels the original own change leaves peers intact and no attributed patch", async () => {
+  const f = await fixture(),
+    first = sharedBefore.replace("result = 1", "result = 2"),
+    peer = first.replace("return 10", "return 20"),
+    fixed = peer.replace("result = 2", "result = 1");
+  await f.checkpoint(sharedBefore, first);
+  await f.checkpoint(peer, fixed);
+  const result = await captureStoryReview(f.task);
+  assert.equal(result.patch, "");
+  assert.match(result.limitations.join(" "), /no net own source change/);
+  assert.equal(await readFile(join(f.root, "source.ts"), "utf8"), fixed);
+});
+
 test("tampered saved blobs are rejected rather than becoming trusted review input", async () => {
   const f = await fixture();
   const before = "const n=0;\n";
