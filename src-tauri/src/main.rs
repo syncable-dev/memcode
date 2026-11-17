@@ -16,7 +16,22 @@ mod workspace;
 
 use bridge::RuntimeBridge;
 use serde_json::Value;
-use tauri::{Manager, Webview, WindowEvent};
+use tauri::{AppHandle, Manager, RunEvent, Webview, WindowEvent};
+
+fn request_shutdown(app: AppHandle, exit_code: i32) {
+    let runtime = app.state::<RuntimeBridge>().inner().clone();
+    // Keep the native loop available for browser/terminal cleanup, while the
+    // main window closes immediately instead of looking frozen during a flush.
+    if let Some(window) = app.get_window("main") {
+        let _ = window.hide();
+    }
+    if runtime.begin_shutdown() {
+        tauri::async_runtime::spawn(async move {
+            runtime.shutdown().await;
+            app.exit(exit_code);
+        });
+    }
+}
 
 #[tauri::command]
 async fn rpc(
@@ -133,8 +148,10 @@ fn main() {
                         startup::record("local-runtime", &error);
                         runtime.fail(error).await;
                     }
-                    if let Some(window) = handle.get_window("main") {
-                        let _ = window.show();
+                    if !runtime.is_closing() {
+                        if let Some(window) = handle.get_window("main") {
+                            let _ = window.show();
+                        }
                     }
                 });
                 Ok(())
@@ -150,23 +167,32 @@ fn main() {
         })
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
-                api.prevent_close();
-                let app = window.app_handle().clone();
-                let runtime = app.state::<RuntimeBridge>().inner().clone();
-                if !runtime.is_closing() {
-                    tauri::async_runtime::spawn(async move {
-                        runtime.shutdown().await;
-                        app.exit(0);
-                    });
+                if window.label() != "main" {
+                    return;
                 }
+                api.prevent_close();
+                request_shutdown(window.app_handle().clone(), 0);
             }
         })
-        .run(tauri::generate_context!());
-    if let Err(error) = result {
-        #[cfg(windows)]
-        startup::fatal(&error.to_string());
-        #[cfg(not(windows))]
-        eprintln!("MemCode could not start its native desktop shell: {error}");
-        std::process::exit(1);
+        .build(tauri::generate_context!());
+    match result {
+        Ok(app) => app.run(|app, event| {
+            if let RunEvent::ExitRequested { api, code, .. } = event {
+                let runtime = app.state::<RuntimeBridge>();
+                if !runtime.shutdown_complete() {
+                    // macOS Cmd+Q / application Quit does not require a window
+                    // close event. It must wait for the same durable drain.
+                    api.prevent_exit();
+                    request_shutdown(app.clone(), code.unwrap_or(0));
+                }
+            }
+        }),
+        Err(error) => {
+            #[cfg(windows)]
+            startup::fatal(&error.to_string());
+            #[cfg(not(windows))]
+            eprintln!("MemCode could not start its native desktop shell: {error}");
+            std::process::exit(1);
+        }
     }
 }

@@ -57,6 +57,8 @@ struct Inner {
     ready: Notify,
     failure: Mutex<Option<String>>,
     closing: AtomicBool,
+    shutdown_guard: Mutex<()>,
+    shutdown_complete: AtomicBool,
     events: StdMutex<LatestEvents>,
     workspace: StdMutex<WorkspaceMailbox<tauri::ipc::Channel<Value>>>,
 }
@@ -100,6 +102,8 @@ impl RuntimeBridge {
             ready: Notify::new(),
             failure: Mutex::new(None),
             closing: AtomicBool::new(false),
+            shutdown_guard: Mutex::new(()),
+            shutdown_complete: AtomicBool::new(false),
             events: StdMutex::new(LatestEvents::default()),
             workspace: StdMutex::new(WorkspaceMailbox::default()),
         }))
@@ -107,6 +111,14 @@ impl RuntimeBridge {
 
     pub fn is_closing(&self) -> bool {
         self.0.closing.load(Ordering::SeqCst)
+    }
+
+    pub fn begin_shutdown(&self) -> bool {
+        !self.0.closing.swap(true, Ordering::SeqCst)
+    }
+
+    pub fn shutdown_complete(&self) -> bool {
+        self.0.shutdown_complete.load(Ordering::SeqCst)
     }
 
     pub async fn launch(&self, app: AppHandle) -> Result<(), String> {
@@ -129,7 +141,10 @@ impl RuntimeBridge {
             });
         if !service.is_file() {
             return Err(if cfg!(debug_assertions) {
-                format!("The local runtime is missing at {}. Run npm run build first.", service.display())
+                format!(
+                    "The local runtime is missing at {}. Run npm run build first.",
+                    service.display()
+                )
             } else {
                 "A required MemCode program file is missing. Run the MemCode installer again to repair the application. Your projects and settings are kept separately.".into()
             });
@@ -215,13 +230,15 @@ impl RuntimeBridge {
             }
             let error = "The local runtime stopped. Reopen MemCode to reconnect; saved work has been preserved.".to_string();
             bridge.fail(error.clone()).await;
-            let _ = app.emit_to(
-                tauri::EventTarget::Webview {
-                    label: "main".into(),
-                },
-                "runtime:stopped",
-                json!({"message": error}),
-            );
+            if !bridge.is_closing() {
+                let _ = app.emit_to(
+                    tauri::EventTarget::Webview {
+                        label: "main".into(),
+                    },
+                    "runtime:stopped",
+                    json!({"message": error}),
+                );
+            }
         });
         tauri::async_runtime::spawn(async move {
             let mut lines = BufReader::new(stderr).lines();
@@ -469,14 +486,24 @@ impl RuntimeBridge {
     }
 
     pub async fn shutdown(&self) {
-        if self.0.closing.swap(true, Ordering::SeqCst) {
+        self.shutdown_with_timeout(runtime_shutdown_timeout(|name| std::env::var(name).ok()))
+            .await;
+    }
+
+    async fn shutdown_with_timeout(&self, timeout: Duration) {
+        self.begin_shutdown();
+        // Quit, window close and updater callbacks must all await the same
+        // complete drain. Merely seeing `closing` is not permission to exit.
+        let _shutdown = self.0.shutdown_guard.lock().await;
+        if self.shutdown_complete() {
             return;
         }
-        let _ = tokio::time::timeout(
-            Duration::from_secs(20),
-            self.request("runtime:shutdown", Value::Null),
-        )
-        .await;
+        if tokio::time::timeout(timeout, self.request("runtime:shutdown", Value::Null))
+            .await
+            .is_err()
+        {
+            eprintln!("MemCode reached its bounded runtime shutdown deadline; forced cleanup may require local graph recovery on the next launch.");
+        }
         self.0.writer.lock().await.take();
         if let Some(mut child) = self.0.child.lock().await.take() {
             if tokio::time::timeout(Duration::from_secs(3), child.wait())
@@ -489,21 +516,261 @@ impl RuntimeBridge {
                         std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into()),
                     )
                     .join("System32/taskkill.exe");
-                    let _ = Command::new(taskkill)
-                        .args(["/PID", &pid.to_string(), "/T", "/F"])
-                        .creation_flags(0x08000000)
-                        .output()
-                        .await;
+                    let _ = tokio::time::timeout(
+                        Duration::from_secs(10),
+                        Command::new(taskkill)
+                            .args(["/PID", &pid.to_string(), "/T", "/F"])
+                            .creation_flags(0x08000000)
+                            .output(),
+                    )
+                    .await;
+                }
+                #[cfg(unix)]
+                if let Some(pid) = child.id() {
+                    stop_unix_runtime_tree(pid).await;
                 }
                 let _ = child.kill().await;
             }
         }
+        self.0.shutdown_complete.store(true, Ordering::SeqCst);
     }
+}
+
+/// Native graph owners close in parallel. Match their configured durable-flush
+/// and sidecar budgets (including the native 15s margin), then allow another
+/// minute for worker cancellation, read-only reviewers and final profile writes.
+/// No part of this wait runs on the window/event-loop thread.
+fn runtime_shutdown_timeout(environment: impl Fn(&str) -> Option<String>) -> Duration {
+    let seconds = |name, fallback, ceiling| {
+        environment(name)
+            .and_then(|value| value.parse::<u64>().ok())
+            .filter(|value| *value > 0)
+            .map(|value| value.min(ceiling))
+            .unwrap_or(fallback)
+    };
+    Duration::from_secs(
+        seconds("MEMTRACE_MCP_SHUTDOWN_FLUSH_SECS", 120, 3600).max(
+            seconds("MEMTRACE_SHUTDOWN_FLUSH_TIMEOUT_SECS", 10, 300)
+                + seconds("MEMTRACE_MEMDB_SIDECAR_STOP_SECS", 30, 3600),
+        ) + 15
+            + 60,
+    )
+}
+
+#[cfg(any(unix, test))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RuntimeProcess {
+    pid: u32,
+    parent: u32,
+    started: String,
+}
+
+#[cfg(any(unix, test))]
+fn runtime_processes(output: &str) -> Vec<RuntimeProcess> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            let pid = fields.next()?.parse::<u32>().ok()?;
+            let parent = fields.next()?.parse::<u32>().ok()?;
+            let started = fields.collect::<Vec<_>>().join(" ");
+            (pid > 1 && !started.is_empty()).then_some(RuntimeProcess {
+                pid,
+                parent,
+                started,
+            })
+        })
+        .collect()
+}
+
+#[cfg(any(unix, test))]
+fn runtime_descendants(processes: &[RuntimeProcess], root: u32) -> Vec<RuntimeProcess> {
+    let mut owners = vec![root];
+    let mut descendants = Vec::new();
+    let mut cursor = 0;
+    while cursor < owners.len() {
+        let parent = owners[cursor];
+        for process in processes.iter().filter(|process| process.parent == parent) {
+            if !owners.contains(&process.pid) {
+                owners.push(process.pid);
+                descendants.push(process.clone());
+            }
+        }
+        cursor += 1;
+    }
+    descendants.reverse();
+    descendants
+}
+
+/// Last-resort cleanup is limited to descendants of this exact Node child.
+/// Native owned graphs may have separate process groups; a group-only kill
+/// would miss them on macOS. Recheck PID/parent/start time before each signal
+/// rather than stopping an unrelated service by name or by workspace path.
+#[cfg(unix)]
+async fn stop_unix_runtime_tree(root: u32) {
+    let cleanup = async {
+        let Ok(output) = Command::new("/bin/ps")
+            .args(["-axo", "pid=,ppid=,lstart="])
+            .output()
+            .await
+        else {
+            return;
+        };
+        if !output.status.success() {
+            return;
+        }
+        let processes = runtime_processes(&String::from_utf8_lossy(&output.stdout));
+        for process in runtime_descendants(&processes, root) {
+            let Ok(current) = Command::new("/bin/ps")
+                .args(["-p", &process.pid.to_string(), "-o", "pid=,ppid=,lstart="])
+                .output()
+                .await
+            else {
+                continue;
+            };
+            if runtime_processes(&String::from_utf8_lossy(&current.stdout)) == [process.clone()] {
+                let _ = Command::new("/bin/kill")
+                    .args(["-KILL", &process.pid.to_string()])
+                    .output()
+                    .await;
+            }
+        }
+    };
+    let _ = tokio::time::timeout(Duration::from_secs(10), cleanup).await;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn host_shutdown_budget_contains_native_durable_flush_and_runtime_overhead() {
+        assert_eq!(runtime_shutdown_timeout(|_| None), Duration::from_secs(195));
+        assert_eq!(
+            runtime_shutdown_timeout(|name| match name {
+                "MEMTRACE_MCP_SHUTDOWN_FLUSH_SECS" => Some("200".into()),
+                "MEMTRACE_SHUTDOWN_FLUSH_TIMEOUT_SECS" => Some("300".into()),
+                "MEMTRACE_MEMDB_SIDECAR_STOP_SECS" => Some("400".into()),
+                _ => None,
+            }),
+            Duration::from_secs(775),
+        );
+        assert_eq!(
+            runtime_shutdown_timeout(|_| Some("999999".into())),
+            Duration::from_secs(3975),
+        );
+        for invalid in ["0", "-1", "invalid", "2.5", ""] {
+            assert_eq!(
+                runtime_shutdown_timeout(|_| Some(invalid.into())),
+                Duration::from_secs(195),
+            );
+        }
+    }
+
+    #[test]
+    fn forced_cleanup_selects_only_exact_runtime_descendants_in_child_first_order() {
+        let processes = runtime_processes(
+            "100 1 Tue Nov 17 20:00:00 2026\n101 100 Tue Nov 17 20:01:00 2026\n102 101 Tue Nov 17 20:02:00 2026\n200 1 Tue Nov 17 20:00:00 2026\n201 200 Tue Nov 17 20:00:00 2026\nmalformed\n1 0 Tue Nov 17 20:00:00 2026\n103 103 Tue Nov 17 20:00:00 2026",
+        );
+        let selected = runtime_descendants(&processes, 100);
+        assert_eq!(
+            selected
+                .iter()
+                .map(|process| process.pid)
+                .collect::<Vec<_>>(),
+            [102, 101]
+        );
+        let mut reused = selected[0].clone();
+        reused.started = "Tue Nov 17 20:03:00 2026".into();
+        assert_ne!(
+            selected[0], reused,
+            "Reused PIDs cannot retain a captured process identity"
+        );
+        let mut reparented = selected[0].clone();
+        reparented.parent = 200;
+        assert_ne!(
+            selected[0], reparented,
+            "A borrowed/reparented process is no longer the captured child"
+        );
+    }
+
+    async fn shutdown_fixture(script: &str) -> (RuntimeBridge, tokio::task::JoinHandle<usize>) {
+        let mut command = Command::new(node_binary(None));
+        command
+            .arg("-e")
+            .arg(script)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .kill_on_drop(true);
+        #[cfg(windows)]
+        command.creation_flags(0x08000000);
+        let mut child = command
+            .spawn()
+            .expect("Start the isolated shutdown protocol child");
+        let stdout = child.stdout.take().unwrap();
+        let bridge = RuntimeBridge::new();
+        *bridge.0.writer.lock().await = child.stdin.take();
+        *bridge.0.child.lock().await = Some(child);
+        let replies = bridge.clone();
+        let reader = tokio::spawn(async move {
+            let mut lines = BufReader::new(stdout).lines();
+            let mut count = 0;
+            while let Ok(Some(line)) = lines.next_line().await {
+                let message: Value = serde_json::from_str(&line).unwrap();
+                let id = message["id"].as_str().unwrap();
+                if let Some(reply) = replies.0.pending.lock().await.remove(id) {
+                    count += 1;
+                    let _ = reply.send(Ok(Value::Null));
+                }
+            }
+            count
+        });
+        (bridge, reader)
+    }
+
+    #[test]
+    fn real_runtime_reply_after_twenty_seconds_is_drained_once_without_blocking_async_work() {
+        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+            let (bridge, reader) = shutdown_fixture(
+                r#"require('node:readline').createInterface({input:process.stdin}).on('line',line=>{const request=JSON.parse(line);setTimeout(()=>{process.stdout.write(JSON.stringify({kind:'response',id:request.id,result:null})+'\n');setTimeout(()=>process.exit(0),10);},21200);});"#,
+            ).await;
+            let started = std::time::Instant::now();
+            let first = bridge.clone();
+            let first = tokio::spawn(async move { first.shutdown().await });
+            let second = bridge.clone();
+            let second = tokio::spawn(async move { second.shutdown().await });
+            tokio::time::sleep(Duration::from_millis(20100)).await;
+            assert!(!bridge.shutdown_complete(), "The former 20s deadline must not cut off a durable graph flush");
+            assert!(!first.is_finished());
+            assert!(!second.is_finished(), "A concurrent updater/quit caller must await completion rather than only the closing flag");
+            tokio::time::timeout(Duration::from_secs(10), async { first.await.unwrap(); second.await.unwrap(); }).await.unwrap();
+            assert!(started.elapsed() >= Duration::from_secs(21));
+            assert!(bridge.shutdown_complete());
+            assert!(bridge.0.child.lock().await.is_none());
+            assert_eq!(reader.await.unwrap(), 1, "Only one shutdown request is sent");
+        });
+    }
+
+    #[test]
+    fn an_unresponsive_owned_runtime_has_a_bounded_forced_cleanup() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let (bridge, reader) =
+                    shutdown_fixture("process.stdin.resume();setInterval(()=>{},1000);").await;
+                tokio::time::timeout(
+                    Duration::from_secs(15),
+                    bridge.shutdown_with_timeout(Duration::from_millis(50)),
+                )
+                .await
+                .unwrap();
+                assert!(bridge.shutdown_complete());
+                assert!(bridge.0.child.lock().await.is_none());
+                assert_eq!(reader.await.unwrap(), 0);
+            });
+    }
 
     #[test]
     fn blocked_native_dispatch_keeps_only_latest_snapshots() {
@@ -538,7 +805,10 @@ fn node_binary(resources: Option<&std::path::Path>) -> PathBuf {
         return configured.into();
     }
     if let Some(resources) = resources {
-        let bundled = resources.join("desktop-runtime").join(if cfg!(windows) { "node.exe" } else { "node" });
+        let bundled =
+            resources
+                .join("desktop-runtime")
+                .join(if cfg!(windows) { "node.exe" } else { "node" });
         if bundled.is_file() || !cfg!(debug_assertions) {
             return bundled;
         }
