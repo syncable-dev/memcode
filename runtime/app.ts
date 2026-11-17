@@ -1306,7 +1306,10 @@ export async function createRuntime(
     async ({ ids, patch }) => {
       const unique = [...new Set(ids)] as string[],
         previouslyReviewing = new Set(
-          unique.filter((id) => isCodeReviewTask(state(), task(id))),
+          unique.filter((id) => {
+            const item = state().tasks.find((item) => item.id === id);
+            return !!item && isCodeReviewTask(state(), item);
+          }),
         ),
         candidate = structuredClone(state());
       const depth = (id: string) => {

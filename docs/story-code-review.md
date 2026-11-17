@@ -1,8 +1,9 @@
 # Review a story
 
-Move a finished story into **Code review**, open its card, and choose **Code
-review** between Changes and Artifacts. Click **Start review** when you want to
-review its current contribution. Moving a card alone does not start a model.
+Move a finished story into **Code review** to queue its review. Open its card and
+choose **Code review** between Changes and Artifacts to follow the checks. You can
+also start or repeat a review manually while the story is in that lane. The initial
+checks run in the local engine; the reviewer model is used when you ask it a question.
 
 The review captures the story's attributed changes, runs Memtrace's native code
 review detectors, measures the changed functions, traces their impact, and links
