@@ -5,6 +5,9 @@
 Completed worker passes enter **Code review**. The card opens a dedicated evidence
 workspace with a separate review conversation. Changes, local review rules, AST
 complexity, graph reach and actual linked checks are shown as distinct phases.
+The **Code review** tab stays between Changes and Artifacts in every lane. Saved
+results and their discussion remain accessible in acceptance and Done. Starting
+or rerunning the review is enabled only while the story is in Code review.
 Expand a finding to open its source line or inspect it in Changes. Missing coverage,
 an unverified graph, an intervening worker edit or an older test report prevents a
 ready result. The review never substitutes the epic's combined diff for the story.

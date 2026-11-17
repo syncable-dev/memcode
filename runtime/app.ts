@@ -1135,7 +1135,7 @@ export async function createRuntime(
   const requireReviewLane = (taskId: string) => {
     if (!isCodeReviewTask(state(), task(taskId)))
       throw Error(
-        "Move this story to the Code review lane to use its reviewer.",
+        "Move this story to the Code review lane to run a review or change its outcome.",
       );
   };
   register("code-review:get", reviewTask, ({ taskId }) =>
@@ -1151,10 +1151,7 @@ export async function createRuntime(
   register(
     "code-review:discuss",
     reviewRun.extend({ text: nonempty.max(20000) }).strict(),
-    ({ taskId, runId, text }) => {
-      requireReviewLane(taskId);
-      return codeReviews.discuss(taskId, runId, text);
-    },
+    ({ taskId, runId, text }) => codeReviews.discuss(taskId, runId, text),
   );
   register(
     "code-review:request-fixes",

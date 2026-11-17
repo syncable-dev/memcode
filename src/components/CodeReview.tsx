@@ -35,6 +35,7 @@ import "../styles-code-review.css";
 
 interface Props {
   task: WorkItem;
+  canStartReview: boolean;
   notify: (text: string) => void;
   onOpenSource: (path: string, line?: number) => void;
   onOpenChanges: (finding?: CodeReviewFinding) => void;
@@ -104,6 +105,7 @@ const outcomeLabel = (run: StoryReviewRun | null) =>
 /** The implementation thread and review thread deliberately have separate lifecycles. */
 export function CodeReview({
   task,
+  canStartReview,
   notify,
   onOpenSource,
   onOpenChanges,
@@ -177,12 +179,14 @@ export function CodeReview({
       setBusy(false);
     }
   };
-  const start = () =>
+  const start = () => {
+    if (!canStartReview) return;
     void action(async () => {
       if (!api.startCodeReview)
         throw Error("The local review service is not connected yet.");
       setRun(await api.startCodeReview(task.id));
     });
+  };
   const send = () => {
     if (!run || !draft.trim() || !api.sendCodeReviewMessage) return;
     const text = draft.trim();
@@ -254,6 +258,7 @@ export function CodeReview({
               <button
                 className="button primary small"
                 disabled={
+                  !canStartReview ||
                   busy ||
                   loading ||
                   activeWorker ||
@@ -273,6 +278,11 @@ export function CodeReview({
               </button>
             )}
           </div>
+          {!canStartReview && (
+            <p className="code-review-run-hint">
+              Move this story to Code review to run a new review.
+            </p>
+          )}
         </header>
         {error && (
           <div className="code-review-notice error" role="alert">
@@ -469,7 +479,12 @@ export function CodeReview({
                 {selected.length > 0 && (
                   <button
                     className="button secondary small"
-                    disabled={busy || working || !api.requestCodeReviewFixes}
+                    disabled={
+                      !canStartReview ||
+                      busy ||
+                      working ||
+                      !api.requestCodeReviewFixes
+                    }
                     onClick={() =>
                       void action(async () => {
                         await api.requestCodeReviewFixes!(
@@ -915,7 +930,7 @@ export function CodeReview({
                   </div>
                   <button
                     className="button primary small"
-                    disabled={busy || !api.acceptCodeReview}
+                    disabled={!canStartReview || busy || !api.acceptCodeReview}
                     onClick={() =>
                       void action(() => api.acceptCodeReview!(task.id, run.id))
                     }
@@ -950,7 +965,10 @@ export function CodeReview({
                     <button
                       className="button secondary small"
                       disabled={
-                        busy || !acceptReason.trim() || !api.acceptCodeReview
+                        !canStartReview ||
+                        busy ||
+                        !acceptReason.trim() ||
+                        !api.acceptCodeReview
                       }
                       onClick={() =>
                         void action(() =>
