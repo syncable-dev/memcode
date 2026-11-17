@@ -370,7 +370,8 @@ export function CodeReview({
                 <Sparkles size={16} />
                 <strong>Measured quality</strong>
                 <span>
-                  Complexity and nesting, with before and after where available.
+                  Measured complexity, nesting and maintainability for the changed
+                  code.
                 </span>
               </div>
               <div>
