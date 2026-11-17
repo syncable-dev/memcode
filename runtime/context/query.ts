@@ -1,5 +1,6 @@
 import type { ContextBinding, ContextPack, GraphClient } from "./contracts";
 import { recordSavedReadCoverage } from "./saved-read";
+import { verifiedIndexRevision } from "../memtrace-peer-index";
 
 export type Row = Record<string, any>;
 export type Query = (name: string, args: Row) => Promise<Row | null>;
@@ -13,8 +14,26 @@ export function scopedQuery(
   return async (name, args) => {
     calls.push(name);
     try {
-      const result = await engine.call(binding.project, name, args);
+      const governance =
+        ["governing_rules", "recall_decision"].includes(name) &&
+        binding.governanceProject;
+      const project = governance || binding.project;
+      const result = await engine.call(
+        project,
+        name,
+        governance && args.repo_id
+          ? { ...args, repo_id: project.repoId }
+          : args,
+      );
       checkAdmission(result);
+      if (
+        name === "get_query_revision" &&
+        binding.project.analysisCheckout === "owned-worktree-v1" &&
+        !verifiedIndexRevision(result, binding.project, binding.project.repoId!)
+      )
+        throw Error(
+          "The selected epic worktree graph is not certified. No other branch's graph can substitute for it.",
+        );
       recordCoverage(name, result, coverage);
       recordSavedReadCoverage(result, binding, coverage);
       return result ?? null;

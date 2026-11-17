@@ -29,6 +29,7 @@ export function WorkerChanges({
   focusedCommentId,
   focusVersion,
   onFocusComment,
+  focusTarget,
 }: {
   task: WorkItem;
   onComment: (reference: ReviewReference) => void;
@@ -36,11 +37,68 @@ export function WorkerChanges({
   focusedCommentId?: string;
   focusVersion?: number;
   onFocusComment: (id: string) => void;
+  focusTarget?: {
+    id: string;
+    path?: string;
+    line?: number;
+    checkpointId?: string;
+  };
 }) {
   const [changes, setChanges] = useState<Changes>(),
     [error, setError] = useState(""),
     [selected, setSelected] = useState("");
   const root = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (focusTarget?.path) setSelected(focusTarget.path);
+  }, [focusTarget?.id]);
+  useEffect(() => {
+    if (!focusTarget?.path || selected !== focusTarget.path || !changes) return;
+    const rootElement = root.current;
+    if (!rootElement) return;
+    const matching = changes.checkpoints.filter((item) =>
+      item.files.some((file) => file.path === selected),
+    );
+    // A net review finding names final source lines. Multiple intermediate
+    // checkpoints may reuse that line number for different code; only jump to
+    // an exact diff line when its checkpoint is explicit or unambiguous.
+    const checkpointId =
+      focusTarget.checkpointId ??
+      (matching.length === 1 ? matching[0].id : undefined);
+    let frame = 0;
+    const focus = () => {
+      const checkpoint = checkpointId
+        ? rootElement.querySelector<HTMLElement>(
+            `[data-checkpoint="${CSS.escape(checkpointId)}"]`,
+          )
+        : rootElement.querySelector<HTMLElement>(".change-file-content");
+      const line =
+        focusTarget.line && checkpointId
+          ? checkpoint?.querySelector<HTMLElement>(
+              `[data-new-line="${focusTarget.line}"]`,
+            )
+          : checkpoint;
+      if (line) {
+        line.scrollIntoView({ block: "center", behavior: "smooth" });
+        line.classList.add("code-review-source-focus");
+      }
+    };
+    // Syntax highlighting is lazy; one short observer also covers its first paint.
+    const observer = new MutationObserver(() => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(focus);
+    });
+    observer.observe(rootElement, { childList: true, subtree: true });
+    frame = requestAnimationFrame(focus);
+    const timeout = setTimeout(() => observer.disconnect(), 1800);
+    return () => {
+      observer.disconnect();
+      clearTimeout(timeout);
+      cancelAnimationFrame(frame);
+      rootElement
+        .querySelectorAll(".code-review-source-focus")
+        .forEach((node) => node.classList.remove("code-review-source-focus"));
+    };
+  }, [focusTarget?.id, selected, changes]);
   useEffect(() => {
     const path = comments.find((comment) => comment.id === focusedCommentId)
       ?.reference.path;

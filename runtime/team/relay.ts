@@ -20,6 +20,7 @@ import { createMemtraceIdentityVerifier, teamIdentityAudience, type TeamIdentity
 import { sanitizeRepositoryURL } from "../repository-onboarding";
 import { teamInvitationLanding } from "./landing";
 import { advancePlanningHistory, emptyPlanningHistory, planningImportSchema, planningMetadataSchema, planningMetadata, planningMetadataHasChanges, planningTimestampRepairSchema, planningHistorySeed, originalTimestampRepairs, planningValueHash, validatePlanningImport, updatePlanningMetadata, type TeamPlanningHistory, type TeamPlanningMetadata, type TeamPlanningSeed } from "./history";
+import { emptyWorkflowRoles, validateWorkflowRoles, workflowRolesUpdateSchema, type TeamWorkflowRoles } from "./workflow-roles";
 import type {
   TeamCredential,
   TeamEvent,
@@ -58,10 +59,12 @@ type RecordEntry =
   | { kind: "command"; dedup: string; commandHash: string; event: TeamEvent }
   | { kind: "planning_import"; dedup: string; commandHash: string; event: TeamEvent; history: TeamPlanningSeed; importedAt: string; opId: string }
   | { kind: "planning_metadata"; dedup: string; commandHash: string; event: TeamEvent; metadata: TeamPlanningMetadata; preserveUnchangedTimestamps?: true }
+  | { kind: "workflow_roles"; dedup: string; commandHash: string; event: TeamEvent; roles: TeamWorkflowRoles; assignLegacyReview?: true }
   | { kind: "planning_timestamps_repair"; dedup: string; commandHash: string; event: TeamEvent; sourceImportOpId: string; sourceImportHash: string; corrections: Array<{id:string;from:string;to:string}> };
 interface Room {
   snapshot: TeamSnapshot;
   history: TeamPlanningHistory;
+  workflowRoles: TeamWorkflowRoles;
   /** Retained only until a genuine post-import edit; used for constrained recovery. */
   importedPlanning?: TeamPlanningSeed;
   timestampRepairs: Map<string,number>;
@@ -181,7 +184,7 @@ function applyRecord(room: Room, record: RecordEntry) {
     room.snapshot = applyTeamEvent(room.snapshot, record.event);
     room.events.push(record.event);
   }
-  if (record.kind === "command" || record.kind === "planning_import" || record.kind === "planning_metadata" || record.kind === "planning_timestamps_repair") {
+  if (record.kind === "command" || record.kind === "planning_import" || record.kind === "planning_metadata" || record.kind === "planning_timestamps_repair" || record.kind === "workflow_roles") {
     room.operations.set(record.dedup, {
       commandHash: record.commandHash,
       event: record.event,
@@ -192,6 +195,24 @@ function applyRecord(room: Room, record: RecordEntry) {
   if (record.kind === "planning_import") {
     room.history = { ...structuredClone(record.history), version: 1, workspaceId: room.snapshot.workspaceId, through: record.event.sequence, import: { opId: record.opId, hash: record.commandHash, at: record.importedAt } };
     room.importedPlanning = structuredClone(record.history);
+  } else if (record.kind === "workflow_roles") {
+    // A first binding is bookkeeping, not a new edit of every old handoff.
+    // The explicit journal marker makes this migration replayable without
+    // changing the meaning of role records written before it was introduced.
+    if (record.assignLegacyReview === true) {
+      if (room.workflowRoles.binding || record.roles.revision !== 1 || !record.roles.binding)
+        throw Error("Legacy review assignment requires this project's first workflow role binding.");
+      validateWorkflowRoles(record.roles.binding, room.history.planning.workflowStates);
+      const valid = new Set(room.history.planning.workflowStates.map((item) => item.id));
+      const reviews = new Set(room.snapshot.stories.filter((item) => item.stage === "review").map((item) => item.id));
+      for (const story of room.history.stories) {
+        if (reviews.has(story.id) && (!story.statusId || !valid.has(story.statusId)))
+          story.statusId = record.roles.binding.acceptanceStatusId;
+      }
+    }
+    room.workflowRoles = structuredClone(record.roles);
+    // Role assignment does not change any story date, metric or occurrence.
+    room.history.through = record.event.sequence;
   } else if (record.kind === "planning_metadata") {
     if (planningMetadataHasChanges(room.history,record.metadata)) room.importedPlanning = undefined;
     // Old journal entries retain their original interpretation. Corrections
@@ -217,6 +238,7 @@ function roomFrom(record: Extract<RecordEntry, { kind: "create" }>): Room {
   return {
     snapshot: teamSnapshotSchema.parse(record.snapshot),
     history: emptyPlanningHistory(record.snapshot.workspaceId, record.snapshot.members[0]?.joinedAt ?? new Date(0).toISOString()),
+    workflowRoles: emptyWorkflowRoles(record.snapshot.workspaceId),
     timestampRepairs:new Map(),
     events: [],
     credentials: new Map([[record.credentialHash, record.actor]]),
@@ -490,7 +512,7 @@ export async function startTeamRelay(
         if (!allowedHosts.has(url.hostname))
           return error("HOST", "Unrecognized relay host.", 403);
         if (request.method === "GET" && url.pathname === "/v1/service")
-          return reply(response, 200, { version: 1, selfServiceTeams: options.selfServiceTeams === true, accountTeamLimit });
+          return reply(response, 200, { version: 1, selfServiceTeams: options.selfServiceTeams === true, accountTeamLimit, workflowRoles: 1 });
         if (request.method === "GET" && url.pathname === "/v1/team-auth/challenge") {
           for (const [key, value] of challenges) if (Date.parse(value.expiresAt) <= Date.now()) challenges.delete(key);
           if (challenges.size >= 500) return error("LIMIT", "Too many pending identity requests. Try again shortly.", 429);
@@ -704,6 +726,34 @@ export async function startTeamRelay(
               snapshot: room.snapshot,
               identity: "invite-preview",
             } satisfies TeamSessionReply);
+          });
+        }
+        // A separately negotiated resource keeps strict board/history v1 payloads intact.
+        if (url.pathname === "/v1/workflow-roles" && request.method === "GET") {
+          const workspaceId = teamId.parse(url.searchParams.get("workspaceId")), { room } = authenticate(request, workspaceId);
+          return reply(response, 200, room.workflowRoles);
+        }
+        if (url.pathname === "/v1/workflow-roles" && request.method === "POST") {
+          const input = workflowRolesUpdateSchema.parse(await json(request));
+          const { room, actor } = authenticate(request, input.workspaceId);
+          return await serialized(room, async () => {
+            authenticate(request, input.workspaceId);
+            if (memberFor(room, actor).role !== "owner") return error("FORBIDDEN", "Only this project's owner can assign its code review workflow roles.", 403);
+            const hash = planningValueHash(input), key = `workflow-roles/${actor.memberId}/${actor.deviceId}/${input.opId}`;
+            const prior = room.operations.get(key);
+            if (prior) {
+              if (prior.commandHash !== hash) return error("OP_ID_REUSE", "This workflow role update ID was used for different data.", 409);
+              return reply(response, 200, { roles: room.workflowRoles, replayed: true });
+            }
+            if (!room.history.import || room.history.through !== room.snapshot.head) return error("WORKFLOW_AUTHORITY", "Finish verifying the project's original planning history before assigning review workflow roles.", 409);
+            const planningHash = planningValueHash(planningMetadata(room.history).planning);
+            if (input.expectedRevision !== room.workflowRoles.revision || input.expectedPlanningHash !== planningHash) return error("WORKFLOW_CONFLICT", "The accepted workflow changed on another computer. Refresh before assigning its review roles.", 409);
+            try { validateWorkflowRoles(input.binding, room.history.planning.workflowStates); }
+            catch (failure) { return error("WORKFLOW_SCOPE", (failure as Error).message, 409); }
+            const event = teamEvent(room.snapshot, actor, input.opId, new Date().toISOString(), [], "Code review workflow configured", "workflow.roles.updated");
+            const roles: TeamWorkflowRoles = { version: 1, workspaceId: input.workspaceId, revision: room.workflowRoles.revision + 1, through: event.sequence, binding: input.binding, planningHash };
+            await commit(room, { kind: "workflow_roles", dedup: key, commandHash: hash, event, roles, ...(!room.workflowRoles.binding ? { assignLegacyReview: true as const } : {}) });
+            return reply(response, 200, { roles: room.workflowRoles, replayed: false });
           });
         }
         if (url.pathname === "/v1/planning-history" && request.method === "GET") {

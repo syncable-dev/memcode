@@ -260,6 +260,13 @@ export class ManagedMemtraceOwners {
     }
   }
 
+  async release(dataDirectory: string): Promise<void> {
+    const record = this.owned.get(dataDirectory);
+    if (!record) return;
+    this.owned.delete(dataDirectory);
+    await (this.options.stop ?? stopOwnedProcess)(record.child);
+  }
+
   async close(): Promise<void> {
     this.abort.abort();
     const owned = [...this.owned.values()];

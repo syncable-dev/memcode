@@ -1,13 +1,32 @@
 import type { WorkItem } from "../src/shared";
 import type { Project } from "../src/shared";
-import { resolve } from "node:path";
+import { isAbsolute, relative, resolve } from "node:path";
 
 export function touchedIdentities(task: WorkItem, project?: Project): string[] {
   const symbols = (task.evidence?.symbols ?? []).map(
     (symbol) => symbol.nodeId ?? `${symbol.file}::${symbol.name}`,
   );
-  const files = (task.scope ?? []).map((path) => {
-    const full = resolve(project?.path ?? ".", path).replaceAll("\\", "/");
+  const files = [
+    ...(task.scope ?? []),
+    ...(task.evidence?.symbols ?? []).map((symbol) => symbol.file),
+  ].map((path) => {
+    // Private graph UUIDs can differ from canonical graph UUIDs. The same
+    // source file still needs one shared identity within the canonical repo.
+    let local = path;
+    if (isAbsolute(path) && task.run.workspace) {
+      const candidate = relative(task.run.workspace, path);
+      if (
+        !isAbsolute(candidate) &&
+        candidate !== ".." &&
+        !candidate.startsWith("../") &&
+        !candidate.startsWith("..\\")
+      )
+        local = candidate;
+    }
+    const full = resolve(
+      project?.path ?? task.run.workspace ?? ".",
+      local,
+    ).replaceAll("\\", "/");
     return (
       "file::" + (process.platform === "win32" ? full.toLowerCase() : full)
     );

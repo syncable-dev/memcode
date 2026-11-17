@@ -330,6 +330,16 @@ export async function installNativeBridge(): Promise<void> {
       call("task:message", { id, text, references }),
     qualifyTask: (id) => call("task:qualify", id),
     startWorker: (id) => call("worker:start", id),
+    getCodeReview: (taskId) => call("code-review:get", { taskId }),
+    startCodeReview: (taskId) => call("code-review:start", { taskId }),
+    cancelCodeReview: (taskId, runId) =>
+      call("code-review:cancel", { taskId, runId }),
+    sendCodeReviewMessage: (taskId, runId, text) =>
+      call("code-review:discuss", { taskId, runId, text }),
+    requestCodeReviewFixes: (taskId, runId, findingIds, text) =>
+      call("code-review:request-fixes", { taskId, runId, findingIds, text }),
+    acceptCodeReview: (taskId, runId, reason) =>
+      call("code-review:accept", { taskId, runId, reason }),
     stopWorker: (id) => call("worker:stop", id),
     createEpic: (input) => call("epic:create", input),
     updateEpic: (id, patch) => call("epic:update", { id, patch }),

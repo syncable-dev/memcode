@@ -6,8 +6,9 @@ import { within, now } from "./local";
 
 /** A Class B refresh reads the current bounded source, rather than escalating overlap. */
 export async function rereadFleetSource(project: Project, task: WorkItem) {
-  if (!project.path) throw Error("The shared project folder is unavailable.");
-  const root = await realpath(project.path);
+  const workspace = task.run.workspace ?? project.path;
+  if (!workspace) throw Error("The shared project folder is unavailable.");
+  const root = await realpath(workspace);
   const files = [
     ...new Set([
       ...(task.scope ?? []),
@@ -17,9 +18,9 @@ export async function rereadFleetSource(project: Project, task: WorkItem) {
   const records = [];
   let remaining = 16000;
   for (const file of files) {
-    const candidate = resolve(project.path, file);
+    const candidate = resolve(workspace, file);
     if (
-      !within(project.path, candidate) &&
+      !within(workspace, candidate) &&
       !(isAbsolute(file) && within(root, candidate))
     )
       throw Error("Fleet source scope is outside this project.");

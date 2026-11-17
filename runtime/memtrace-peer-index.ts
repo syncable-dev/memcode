@@ -33,6 +33,14 @@ export const verifiedIndexRevision = (
   project: Project,
   repoId: string,
 ) =>
+  (project.analysisCheckout !== "owned-worktree-v1" ||
+    (value?.checkout_mode === "owned-worktree-v1" &&
+      value?.graph_scope === "owned_worktree_graph" &&
+      value?.repo_id === repoId &&
+      typeof value.worktree === "string" &&
+      pathKey(value.worktree) === pathKey(project.path!) &&
+      value?.source_unchanged_during_observation === true &&
+      value?.graph_revision?.publication_unchanged_during_call === true)) &&
   value?.ready === true &&
   value.branch === project.branch &&
   (!value.repo_id || value.repo_id === repoId) &&
@@ -56,13 +64,23 @@ export async function waitForIndexPublication(
   options: PeerIndexWaitOptions = {},
 ): Promise<string> {
   const now = options.now ?? Date.now,
-    sleep = options.sleep ?? ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))),
-    path = pathKey(project.path ?? ""), branch = project.branch,
+    sleep =
+      options.sleep ??
+      ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))),
+    path = pathKey(project.path ?? ""),
+    branch = project.branch,
     deadline = now() + (options.timeoutMs ?? 30_000),
     pollMs = Math.max(1, options.pollMs ?? 1000);
   const assertActive = () => {
-    if (options.isCancelled?.() || !project.path || pathKey(project.path) !== path || project.branch !== branch)
-      throw Error("Memtrace analysis was cancelled or its local checkout/branch changed. Its result was not adopted.");
+    if (
+      options.isCancelled?.() ||
+      !project.path ||
+      pathKey(project.path) !== path ||
+      project.branch !== branch
+    )
+      throw Error(
+        "Memtrace analysis was cancelled or its local checkout/branch changed. Its result was not adopted.",
+      );
   };
   let reason = "";
   while (now() < deadline) {
@@ -71,22 +89,46 @@ export async function waitForIndexPublication(
     try {
       revision = await Promise.race([
         client.call(project, "get_query_revision", { repo_id: repoId, branch }),
-        new Promise<never>((_, reject) => { timer = setTimeout(() => reject(Error("Memtrace source verification did not respond before its deadline.")), Math.max(1, Math.min(options.readTimeoutMs ?? 5000, deadline - now()))); }),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () =>
+              reject(
+                Error(
+                  "Memtrace source verification did not respond before its deadline.",
+                ),
+              ),
+            Math.max(
+              1,
+              Math.min(options.readTimeoutMs ?? 5000, deadline - now()),
+            ),
+          );
+        }),
       ]);
-    } finally { clearTimeout(timer); }
+    } finally {
+      clearTimeout(timer);
+    }
     assertActive();
-    if ((revision?.repo_id != null && revision.repo_id !== repoId) ||
-        (revision?.worktree != null && (typeof revision.worktree !== "string" || pathKey(revision.worktree) !== path)) ||
-        (revision?.branch != null && revision.branch !== branch))
-      throw Error(`Memtrace job completed, but current source on branch ${branch} is not verified: Memtrace reported another repository, checkout or branch. Its result was not adopted.`);
+    if (
+      (revision?.repo_id != null && revision.repo_id !== repoId) ||
+      (revision?.worktree != null &&
+        (typeof revision.worktree !== "string" ||
+          pathKey(revision.worktree) !== path)) ||
+      (revision?.branch != null && revision.branch !== branch)
+    )
+      throw Error(
+        `Memtrace job completed, but current source on branch ${branch} is not verified: Memtrace reported another repository, checkout or branch. Its result was not adopted.`,
+      );
     if (verifiedIndexRevision(revision, project, repoId)) return repoId;
-    reason = typeof revision?.reason === "string" ? revision.reason.slice(0, 200) : "";
+    reason =
+      typeof revision?.reason === "string" ? revision.reason.slice(0, 200) : "";
     update(`Waiting for Memtrace to verify code context on branch ${branch}…`);
     if (now() >= deadline) break;
     await sleep(Math.min(pollMs, Math.max(0, deadline - now())));
   }
   assertActive();
-  throw Error(`Memtrace job completed, but current source on branch ${branch} is not verified${reason ? ` (${reason})` : ""}. Retry to follow its publication; no duplicate index was queued.`);
+  throw Error(
+    `Memtrace job completed, but current source on branch ${branch} is not verified${reason ? ` (${reason})` : ""}. Retry to follow its publication; no duplicate index was queued.`,
+  );
 }
 
 /** Follow an existing owner's job. Never enqueue, clear a store or infer completion from a lease. */
@@ -316,7 +358,9 @@ export async function waitForPeerIndex(
       // only after the engine independently certifies this exact branch/source.
       return waitForIndexPublication(client, project, repoId!, update, {
         ...options,
-        now, sleep, pollMs,
+        now,
+        sleep,
+        pollMs,
         timeoutMs: Math.min(options.publicationMs ?? 30_000, deadline - now()),
       });
     }

@@ -10,7 +10,7 @@ const request = (path, options = {}) => fetch(origin + path, { ...options, redir
 const response = await request('/v1/service');
 assert.equal(response.status, 200);
 const service = await response.json();
-assert.deepEqual(service, { version: 1, selfServiceTeams: true, accountTeamLimit: 3 });
+assert.deepEqual(service, { version: 1, selfServiceTeams: true, accountTeamLimit: 3, workflowRoles: 1 });
 assert.match(response.headers.get('strict-transport-security') ?? '', /max-age=31536000/);
 checks.push('Public service contract over normally verified HTTPS; HSTS, no Team or operator data exposed');
 const redirect = await fetch('http://teams.hosted.memtrace.io/v1/service', { redirect: 'manual', signal: AbortSignal.timeout(15_000) });

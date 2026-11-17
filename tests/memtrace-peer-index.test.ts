@@ -24,6 +24,84 @@ const skipped = {
   repo_id: "fixture",
   branch: "main",
 };
+
+test("an idle epic retirement prevents an in-flight query from resurrecting its graph owner", async () => {
+  const epic = {
+    ...project,
+    id: "retiring-epic",
+    analysisCheckout: "owned-worktree-v1" as const,
+  };
+  const engine = new MemtraceEngine(() => "");
+  let reject!: (error: Error) => void,
+    connected = 0,
+    closed = 0,
+    released = 0;
+  const pending = new Promise((_resolve, fail) => {
+    reject = fail;
+  });
+  const client = {
+    callTool: () => pending,
+    close: async () => {
+      closed++;
+    },
+  };
+  (engine as any).connect = async () => {
+    connected++;
+    return client;
+  };
+  (engine as any).clients.set(epic.id, { client, projectPath: epic.path });
+  (engine as any).scopes.set(epic.id, {
+    mode: "project",
+    dataDirectory: "private-epic-store",
+  });
+  (engine as any).owners.release = async (store: string) => {
+    assert.equal(store, "private-epic-store");
+    released++;
+  };
+  const query = engine.call(epic, "get_query_revision", {
+    repo_id: epic.repoId,
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  await engine.releaseEpic(epic);
+  reject(Error("Connection closed"));
+  await assert.rejects(query, /retired/);
+  assert.equal(connected, 1);
+  assert.equal(closed, 1);
+  assert.equal(released, 1);
+  assert.equal(engine.scopeFor(epic.id), null);
+  await engine.close();
+});
+
+test("an owned epic rejects a canonical or incomplete certificate even when it says ready", () => {
+  const epic = { ...project, analysisCheckout: "owned-worktree-v1" as const };
+  const revision = {
+    ready: true,
+    repo_id: epic.repoId,
+    branch: epic.branch,
+    worktree: epic.path,
+    source_unchanged_during_observation: true,
+    graph_revision: { publication_unchanged_during_call: true },
+  };
+  assert.equal(verifiedIndexRevision(revision, epic, epic.repoId!), false);
+  const owned = {
+    ...revision,
+    checkout_mode: "owned-worktree-v1",
+    graph_scope: "owned_worktree_graph",
+  };
+  assert.equal(verifiedIndexRevision(owned, epic, epic.repoId!), true);
+  assert.equal(
+    verifiedIndexRevision(
+      { ...owned, worktree: epic.path + "/different" },
+      epic,
+      epic.repoId!,
+    ),
+    false,
+  );
+  assert.equal(
+    verifiedIndexRevision({ ...owned, repo_id: undefined }, epic, epic.repoId!),
+    false,
+  );
+});
 const job = (patch: Record<string, unknown> = {}) => ({
   id: "existing-job",
   repo_id: "fixture",
@@ -49,56 +127,158 @@ const clock = () => {
 
 test("a completed job waits beyond three seconds for independent publication without resubmitting or accepting partial results", async () => {
   let time = 0;
-  const calls: string[] = [], notes: string[] = [];
-  const client = { call: async (_project: Project, name: string, args: Record<string, any>) => {
-    calls.push(name);
-    assert.deepEqual(args, { repo_id: "fixture", branch: "main" });
-    return { repo_id: "fixture", worktree: project.path, branch: "main", ready: time >= 5000, status: time < 5000 ? "partial" : "current" };
-  } };
-  assert.equal(await waitForIndexPublication(client, project, "fixture", note => notes.push(note), {
-    now: () => time, sleep: async ms => { time += ms; }, pollMs: 1000, timeoutMs: 30_000,
-  }), "fixture");
+  const calls: string[] = [],
+    notes: string[] = [];
+  const client = {
+    call: async (
+      _project: Project,
+      name: string,
+      args: Record<string, any>,
+    ) => {
+      calls.push(name);
+      assert.deepEqual(args, { repo_id: "fixture", branch: "main" });
+      return {
+        repo_id: "fixture",
+        worktree: project.path,
+        branch: "main",
+        ready: time >= 5000,
+        status: time < 5000 ? "partial" : "current",
+      };
+    },
+  };
+  assert.equal(
+    await waitForIndexPublication(
+      client,
+      project,
+      "fixture",
+      (note) => notes.push(note),
+      {
+        now: () => time,
+        sleep: async (ms) => {
+          time += ms;
+        },
+        pollMs: 1000,
+        timeoutMs: 30_000,
+      },
+    ),
+    "fixture",
+  );
   assert.equal(time, 5000);
   assert.equal(calls.length, 6);
-  assert.ok(calls.every(name => name === "get_query_revision"));
-  assert.ok(notes.length > 0 && notes.every(note => note.includes("verify code context")));
+  assert.ok(calls.every((name) => name === "get_query_revision"));
+  assert.ok(
+    notes.length > 0 &&
+      notes.every((note) => note.includes("verify code context")),
+  );
 });
 
 test("completed-job publication rejects explicit foreign repository, checkout or branch immediately", async () => {
-  for (const patch of [{ repo_id: "foreign" }, { worktree: project.path + "-foreign" }, { branch: "epic/foreign" }]) {
+  for (const patch of [
+    { repo_id: "foreign" },
+    { worktree: project.path + "-foreign" },
+    { branch: "epic/foreign" },
+  ]) {
     let reads = 0;
-    const client = { call: async () => { reads++; return { ready: true, branch: "main", repo_id: "fixture", worktree: project.path, ...patch }; } };
-    await assert.rejects(waitForIndexPublication(client, project, "fixture", () => {}, clock()), /not verified.*another repository, checkout or branch/);
+    const client = {
+      call: async () => {
+        reads++;
+        return {
+          ready: true,
+          branch: "main",
+          repo_id: "fixture",
+          worktree: project.path,
+          ...patch,
+        };
+      },
+    };
+    await assert.rejects(
+      waitForIndexPublication(client, project, "fixture", () => {}, clock()),
+      /not verified.*another repository, checkout or branch/,
+    );
     assert.equal(reads, 1);
   }
 });
 
 test("a publication that stays partial times out with its reason and never becomes ready", async () => {
-  let time = 0, reads = 0;
-  const client = { call: async () => { reads++; return { ready: false, status: "partial", branch: "main", worktree: project.path, repo_id: "fixture", reason: "branch_publication_incomplete" }; } };
-  await assert.rejects(waitForIndexPublication(client, project, "fixture", () => {}, {
-    now: () => time, sleep: async ms => { time += ms; }, timeoutMs: 4000, pollMs: 1000,
-  }), /not verified.*branch_publication_incomplete.*no duplicate index/);
+  let time = 0,
+    reads = 0;
+  const client = {
+    call: async () => {
+      reads++;
+      return {
+        ready: false,
+        status: "partial",
+        branch: "main",
+        worktree: project.path,
+        repo_id: "fixture",
+        reason: "branch_publication_incomplete",
+      };
+    },
+  };
+  await assert.rejects(
+    waitForIndexPublication(client, project, "fixture", () => {}, {
+      now: () => time,
+      sleep: async (ms) => {
+        time += ms;
+      },
+      timeoutMs: 4000,
+      pollMs: 1000,
+    }),
+    /not verified.*branch_publication_incomplete.*no duplicate index/,
+  );
   assert.equal(time, 4000);
   assert.equal(reads, 4);
 });
 
 test("cancellation and source rebinding stop completed-job publication before another query", async () => {
   for (const change of ["cancel", "checkout", "branch"]) {
-    const selected = { ...project }; let cancelled = false, time = 0, reads = 0;
-    const client = { call: async () => { reads++; return { ready: false, branch: "main", worktree: project.path, repo_id: "fixture" }; } };
-    await assert.rejects(waitForIndexPublication(client, selected, "fixture", () => {}, {
-      now: () => time, isCancelled: () => cancelled, timeoutMs: 30_000,
-      sleep: async ms => { time += ms; if (change === "cancel") cancelled = true; else if (change === "checkout") selected.path += "-changed"; else selected.branch = "epic/changed"; },
-    }), /cancelled|checkout\/branch changed/);
+    const selected = { ...project };
+    let cancelled = false,
+      time = 0,
+      reads = 0;
+    const client = {
+      call: async () => {
+        reads++;
+        return {
+          ready: false,
+          branch: "main",
+          worktree: project.path,
+          repo_id: "fixture",
+        };
+      },
+    };
+    await assert.rejects(
+      waitForIndexPublication(client, selected, "fixture", () => {}, {
+        now: () => time,
+        isCancelled: () => cancelled,
+        timeoutMs: 30_000,
+        sleep: async (ms) => {
+          time += ms;
+          if (change === "cancel") cancelled = true;
+          else if (change === "checkout") selected.path += "-changed";
+          else selected.branch = "epic/changed";
+        },
+      }),
+      /cancelled|checkout\/branch changed/,
+    );
     assert.equal(reads, 1);
   }
 });
 
 test("an unresponsive final certificate query is bounded", async () => {
-  await assert.rejects(waitForIndexPublication({ call: async () => new Promise(() => {}) }, project, "fixture", () => {}, {
-    readTimeoutMs: 10, timeoutMs: 30_000,
-  }), /verification did not respond before its deadline/);
+  await assert.rejects(
+    waitForIndexPublication(
+      { call: async () => new Promise(() => {}) },
+      project,
+      "fixture",
+      () => {},
+      {
+        readTimeoutMs: 10,
+        timeoutMs: 30_000,
+      },
+    ),
+    /verification did not respond before its deadline/,
+  );
 });
 
 test("peer job discovery follows matching owner progress and verifies branch/source at completion", async () => {

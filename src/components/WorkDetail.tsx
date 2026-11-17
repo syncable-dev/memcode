@@ -26,6 +26,9 @@ import "../styles-review.css";
 import "../styles-annotations.css";
 import "../styles-card-comments.css";
 import { WorkerChanges } from "./WorkerChanges";
+import { isCodeReviewTask } from "../code-review-workflow";
+import { taskStatus, workflowFor } from "../planning/workflow";
+import type { CodeReviewFinding } from "../code-review";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import {
   ArrowDown,
@@ -63,15 +66,13 @@ import type {
   Artifact,
   Project,
   RuntimeInfo,
-  Stage,
   WorkItem,
   Message,
   Epic,
   FleetConflict,
   AppState,
 } from "../shared";
-import { stages } from "../shared";
-import { isActive, progress, stageLabel } from "../domain";
+import { isActive, progress } from "../domain";
 import { useDictation } from "../useDictation";
 import {
   Empty,
@@ -90,7 +91,11 @@ const WorkerTerminal = lazy(() =>
     default: module.WorkerTerminal,
   })),
 );
+const CodeReview = lazy(() =>
+  import("./CodeReview").then((module) => ({ default: module.CodeReview })),
+);
 type Tab =
+  | "review"
   | "conversation"
   | "queue"
   | "comments"
@@ -145,7 +150,13 @@ export function WorkDetail({
   const pendingInputs = (state.workerInputs ?? []).filter(
     (input) => input.taskId === task.id && input.status === "pending",
   );
-  const [tab, setTab] = useState<Tab>("conversation");
+  const [tab, setTab] = useState<Tab>(() =>
+    isCodeReviewTask(state, task) ? "review" : "conversation",
+  );
+  const reviewing = isCodeReviewTask(state, task);
+  const workflow = workflowFor(state, task.projectId);
+  const status = taskStatus(task, workflow);
+  const [changeTarget, setChangeTarget] = useState<CodeReviewFinding>();
   const {
     draft,
     setDraft,
@@ -183,12 +194,29 @@ export function WorkDetail({
       }
     });
   useEffect(() => {
-    if (!health.available || task.example || task.route || isActive(task))
+    // Reviewing saved evidence must not start implementation qualification or
+    // indexing. Check the lane too: an in-place card switch updates tab later.
+    if (
+      reviewing ||
+      tab === "review" ||
+      !health.available ||
+      task.example ||
+      task.route ||
+      isActive(task)
+    )
       return;
     if (measuredStory.current === task.id) return;
     measuredStory.current = task.id;
     plan();
-  }, [health.available, task.id, task.example, task.route, task.run.state]);
+  }, [
+    reviewing,
+    tab,
+    health.available,
+    task.id,
+    task.example,
+    task.route,
+    task.run.state,
+  ]);
   const [selectedArtifact, setArtifact] = useState<Artifact | null>(null);
   const artifact =
     artifacts.find((item) => item.id === selectedArtifact?.id) ??
@@ -201,7 +229,8 @@ export function WorkDetail({
     notify,
   );
   useEffect(() => {
-    setTab("conversation");
+    setTab(isCodeReviewTask(state, task) ? "review" : "conversation");
+    setChangeTarget(undefined);
     setCommentsOpen(false);
     setFocusedCommentId(undefined);
     setEditingComment(undefined);
@@ -215,6 +244,9 @@ export function WorkDetail({
     setFile(undefined);
     setReferences([]);
   }, [task.id]);
+  useEffect(() => {
+    if (isCodeReviewTask(state, task)) setTab("review");
+  }, [task.statusId]);
   useEffect(() => {
     if (initialArtifact) {
       setArtifact(initialArtifact);
@@ -398,6 +430,12 @@ export function WorkDetail({
     icon: typeof MessageSquare;
     count?: number;
   }> = [
+    {
+      id: "review",
+      label: "Code review",
+      icon: ShieldCheck,
+      count: task.codeReview?.findingCount,
+    },
     { id: "conversation", label: "Conversation", icon: MessageSquare },
     { id: "queue", label: "Queue", icon: ListChecks, count: pending.length },
     {
@@ -494,18 +532,18 @@ export function WorkDetail({
               <StageIcon stage={task.stage} />
               <Select
                 aria-label="Work item status"
-                value={task.stage}
+                value={status.id}
                 onValueChange={(e) =>
                   void act(() =>
                     window.memcode.updateTask(task.id, {
-                      stage: e as Stage,
+                      statusId: e,
                     }),
                   )
                 }
               >
-                {stages.map((stage) => (
-                  <option key={stage} value={stage}>
-                    {stageLabel(stage)}
+                {workflow.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name}
                   </option>
                 ))}
               </Select>
@@ -557,8 +595,28 @@ export function WorkDetail({
             </button>
           ))}
         </div>
-        <div className="detail-body">
+        <div
+          className={
+            "detail-body" + (tab === "review" ? " is-code-review" : "")
+          }
+        >
           <div className="detail-content">
+            {tab === "review" && (
+              <Suspense fallback={<Spinner />}>
+                <CodeReview
+                  key={task.id}
+                  task={task}
+                  notify={notify}
+                  onOpenSource={(path, line) =>
+                    void openLink(path + (line ? `:${line}` : ""))
+                  }
+                  onOpenChanges={(finding) => {
+                    setChangeTarget(finding);
+                    setTab("changes");
+                  }}
+                />
+              </Suspense>
+            )}
             {tab === "queue" && (
               <FollowupQueue
                 key={task.id}
@@ -889,6 +947,7 @@ export function WorkDetail({
             {tab === "changes" && (
               <WorkerChanges
                 task={task}
+                focusTarget={changeTarget}
                 onComment={comment}
                 comments={comments.filter(
                   (comment) => comment.reference.kind === "changes",

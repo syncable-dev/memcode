@@ -49,6 +49,13 @@ import { ManagedMemcodeEngine } from "./managed-engine";
 import { ManagedRetrievalAssistant } from "./context/managed-assistant";
 import { ProductTelemetry, observeTelemetryMutation } from "./telemetry";
 import { runTaskVerification } from "./verification";
+import { CodeReviewManager } from "./code-review";
+import {
+  initializeCodeReviewWorkflow,
+  isCodeReviewTask,
+} from "../src/code-review-workflow";
+import { epicAnalysisProject } from "./epic-checkout";
+import { createReadonlyReviewAgent } from "./review-agent";
 import { SpeechManager, registerSpeech } from "./speech";
 import { speechSettingsSchema } from "../src/speech";
 import {
@@ -195,6 +202,7 @@ export async function createRuntime(
   const retrieval = new ManagedRetrievalAssistant(store.dir, {
     runtimeDirectory: join(appPath, "retriever-runtime"),
   });
+  let codeReviews: CodeReviewManager;
   const workers = new WorkerManager(
       state,
       changed,
@@ -225,6 +233,19 @@ export async function createRuntime(
           (project.analysis === "ready" && !!project.repoId)),
       telemetry,
       () => retrieval.assistant(),
+      async (item) => {
+        if (item.messages.some((message) => message.followupState === "queued"))
+          return;
+        const binding = state().reviewWorkflows?.[item.projectId];
+        if (!binding) return;
+        item.stage = "review";
+        item.statusId = binding.codeReviewStatusId;
+        await changed();
+        await codeReviews.start(item.id);
+      },
+      async (item) => {
+        await codeReviews.interruptForWorker(item.id);
+      },
     ),
     preview = new PreviewManager(
       host,
@@ -660,7 +681,7 @@ export async function createRuntime(
     if (isActive(current)) throw new Error(activeRouteError);
     const installed = await discover();
     current.evidence = await engine.qualify(
-      project(current.projectId),
+      epicAnalysisProject(project(current.projectId), current),
       current,
     );
     const latest = task(id);
@@ -789,6 +810,7 @@ export async function createRuntime(
         createdAt: now(),
       };
       store.state.projects.push(item);
+      initializeCodeReviewWorkflow(store.state, item.id);
       store.state.activeProjectId = item.id;
       beginProjectGuide(store.state, item);
       await changed();
@@ -1088,6 +1110,60 @@ export async function createRuntime(
     () => preview.publishComments(),
     workers,
   );
+  codeReviews = new CodeReviewManager(store.dir, state, engine, changed, {
+    reviewProject: (item, parent) => epicAnalysisProject(parent, item),
+    engineVersion: (item) => engine.versionFor(item.id) ?? "Not reported",
+    reviewer: createReadonlyReviewAgent(store.dir, state),
+    settled: async (item) =>
+      workers.releaseIdleAnalysis(item, project(item.projectId)),
+    queueFixes: async (taskId, text) => {
+      await handlers.get("review:send")!.handle({ taskId, text });
+    },
+    accept: async (taskId) => {
+      const item = task(taskId),
+        binding = state().reviewWorkflows?.[item.projectId];
+      if (!binding)
+        throw Error(
+          "Set this project's Code review and acceptance lanes before accepting a review.",
+        );
+      applyTaskPatch(state(), item, { statusId: binding.acceptanceStatusId });
+      await changed();
+    },
+  });
+  const reviewTask = z.object({ taskId: identifier }).strict();
+  const reviewRun = reviewTask.extend({ runId: identifier }).strict();
+  register("code-review:get", reviewTask, ({ taskId }) =>
+    codeReviews.get(taskId),
+  );
+  register("code-review:start", reviewTask, ({ taskId }) =>
+    codeReviews.start(taskId),
+  );
+  register("code-review:cancel", reviewRun, ({ taskId, runId }) =>
+    codeReviews.cancel(taskId, runId),
+  );
+  register(
+    "code-review:discuss",
+    reviewRun.extend({ text: nonempty.max(20000) }).strict(),
+    ({ taskId, runId, text }) => codeReviews.discuss(taskId, runId, text),
+  );
+  register(
+    "code-review:request-fixes",
+    reviewRun
+      .extend({
+        findingIds: z.array(identifier).max(100),
+        text: z.string().max(20000).optional(),
+      })
+      .strict(),
+    ({ taskId, runId, findingIds, text }) =>
+      codeReviews.requestFixes(taskId, runId, findingIds, text),
+  );
+  register(
+    "code-review:accept",
+    reviewRun
+      .extend({ reason: z.string().trim().min(1).max(2000).optional() })
+      .strict(),
+    ({ taskId, runId, reason }) => codeReviews.accept(taskId, runId, reason),
+  );
   registerPlanningControls(register, state, project, changed);
   registerIntelligence(register, state, project, changed, engine);
   registerLocalAnalysis(register, project, engine);
@@ -1188,8 +1264,12 @@ export async function createRuntime(
     "task:update",
     z.object({ id: identifier, patch: taskPatch }),
     async ({ id, patch }) => {
-      applyTaskPatch(state(), task(id), patch);
+      const item = task(id),
+        wasReview = isCodeReviewTask(state(), item);
+      applyTaskPatch(state(), item, patch);
       await changed();
+      if (!wasReview && isCodeReviewTask(state(), item) && !isActive(item))
+        await codeReviews.start(id);
     },
   );
   register(
@@ -1219,6 +1299,12 @@ export async function createRuntime(
           candidate.tasks.find((task) => task.id === id),
         );
       await changed();
+      if (patch.statusId)
+        for (const id of unique) {
+          const item = task(id);
+          if (isCodeReviewTask(state(), item) && !isActive(item))
+            await codeReviews.start(id);
+        }
     },
   );
   register("worker:open-folder", identifier, async (id) => {
@@ -1306,6 +1392,9 @@ export async function createRuntime(
   await createExampleArtifacts(store);
   await reconcileCatalog();
   await team.initialize();
+  for (const parent of state().projects)
+    if (!team.status(parent.id))
+      initializeCodeReviewWorkflow(state(), parent.id);
   await changed();
   const artifactMaintenance = setInterval(() => {
     void reconcileCatalog().catch((error) =>
@@ -1344,6 +1433,36 @@ export async function createRuntime(
           method,
           (parsed as { id: string }).id,
         );
+        const deletedId = (parsed as { id: string }).id;
+        const affected =
+          method === "epic:delete"
+            ? state().tasks.filter((item) => item.epicId === deletedId)
+            : method === "story:delete"
+              ? [task(deletedId)]
+              : [];
+        if (
+          method === "story:delete" &&
+          (parsed as { cascade?: boolean }).cascade
+        ) {
+          for (const owner of affected)
+            for (const child of state().tasks.filter(
+              (item) => item.parentId === owner.id,
+            ))
+              if (!affected.some((item) => item.id === child.id))
+                affected.push(child);
+        }
+        if (affected.some(isActive))
+          throw Error(
+            "Stop or finish the active workers before deleting this item.",
+          );
+        for (const item of affected) {
+          await workers.stop(item.id, "cancelled");
+          if (item.codeReview)
+            await codeReviews.interruptForWorker(
+              item.id,
+              "The story or its epic is being removed. The saved review is preserved but no reviewer continues running.",
+            );
+        }
         const deletion = await team?.beginDeletion(
           method,
           (parsed as { id: string }).id,
@@ -1352,6 +1471,10 @@ export async function createRuntime(
           return await route.handle(parsed);
         } finally {
           await team?.finishDeletion(deletion);
+          for (const item of affected)
+            await workers
+              .releaseIdleAnalysis(item, project(item.projectId))
+              .catch(() => {});
         }
       }
       return route.handle(parsed);
@@ -1365,6 +1488,7 @@ export async function createRuntime(
         console.error("Artifact catalog check failed:", error),
       );
       await workers.close();
+      await codeReviews.close();
       await telemetry.close();
       teamIdentity.cancel();
       await repositories.close();

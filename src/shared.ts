@@ -9,6 +9,7 @@ import type {
 } from "./planning/types";
 import type { QualitySnapshot } from "./intelligence";
 import type { ContextAssistantSettings } from "./context-settings";
+import type { CodeReviewAPI } from "./code-review";
 import type { BrowserRequest, BrowserReply } from "./browser";
 export type { ContextAssistantSettings } from "./context-settings";
 export type { QualitySnapshot, IntelligenceDetail } from "./intelligence";
@@ -176,6 +177,9 @@ export interface WorkItem extends TaskPlanningFields {
     workspace?: string;
     baseline?: string;
     branch?: string;
+    /** Local graph binding for this epic checkout; never shared as planning. */
+    analysisProjectId?: string;
+    analysisRepoId?: string;
     exitCode?: number;
     error?: string;
     sessionId?: string;
@@ -187,9 +191,12 @@ export interface WorkItem extends TaskPlanningFields {
   evidence?: Evidence;
   diff?: string;
   changesRevision?: string;
+  codeReview?: import("./code-review").CodeReviewSummary;
   example?: boolean;
 }
 export interface Project {
+  /** Ephemeral local query scope, not a shared project identity. */
+  analysisCheckout?: "owned-worktree-v1";
   id: string;
   name: string;
   description: string;
@@ -265,6 +272,10 @@ export interface TeamInvite {
   expiresAt: string;
 }
 export interface AppState {
+  reviewWorkflows?: Record<
+    string,
+    import("./code-review").ReviewWorkflowBinding
+  >;
   team?: TeamWorkspaceState[];
   workerInputs?: import("./worker-input").WorkerInputRequest[];
   onboarding?: import("./onboarding").OnboardingProgress;
@@ -351,7 +362,7 @@ export interface PreviewInput {
   line?: number;
   bounds: { x: number; y: number; width: number; height: number };
 }
-export interface MemCodeAPI {
+export interface MemCodeAPI extends CodeReviewAPI {
   telemetryStatus(): Promise<import("./telemetry").TelemetryStatus>;
   setTelemetryEnabled(
     enabled: boolean,

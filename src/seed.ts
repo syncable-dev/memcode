@@ -128,7 +128,11 @@ export function initialState(): AppState {
         createdAt: at,
       },
     ],
-    tasks: exampleTasks.map(task),
+    tasks: exampleTasks.map((value) => {
+      const example = task(value);
+      if (example.stage === "review") example.statusId = "example:review";
+      return example;
+    }),
     epics: [],
     qualitySnapshots: [],
     cycles: [],

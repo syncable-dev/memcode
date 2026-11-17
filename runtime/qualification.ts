@@ -4,6 +4,7 @@ import { basename, resolve } from "node:path";
 import { isActive } from "../src/domain";
 import type { Evidence, Project, WorkItem } from "../src/shared";
 import { git, now, within } from "./local";
+import { verifiedIndexRevision } from "./memtrace-peer-index";
 
 interface GraphClient {
   call(
@@ -201,6 +202,16 @@ export async function observeIndex(
     return unobserved;
   }
   if (typeof revision?.ready !== "boolean") return unobserved;
+  if (
+    project.analysisCheckout === "owned-worktree-v1" &&
+    !verifiedIndexRevision(revision, project, project.repoId)
+  )
+    return {
+      ...unobserved,
+      known: true,
+      branch: revision.branch,
+      reason: "This epic's exact worktree graph has not been certified.",
+    };
   const listed: unknown[] = Array.isArray(revision.mismatched_paths)
     ? revision.mismatched_paths
     : [];

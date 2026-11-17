@@ -2,6 +2,8 @@ import type { AppState, Epic, Project, WorkItem } from "../src/shared";
 import { isActive } from "../src/domain";
 import { git, now } from "./local";
 import { ensureLocalRuntimeIgnored } from "./project-repository";
+import { enterEpicCheckout } from "./epic-checkout";
+import { realpath } from "node:fs/promises";
 
 export function ensureTaskEpic(state: AppState, task: WorkItem): Epic {
   const assigned = state.epics.find(
@@ -47,15 +49,19 @@ export function epicBranch(epic: Epic): string {
 // Switching that checkout to another epic is serialized and requires a quiet fleet.
 export class EpicWorkspace {
   private locks = new Map<string, Promise<unknown>>();
-  constructor(private state: () => AppState) {}
+  constructor(
+    private state: () => AppState,
+    private dataDir?: string,
+  ) {}
   async activate(
     task: WorkItem,
     project: Project,
+    options: { ownedCheckout?: boolean } = {},
   ): Promise<{ epic: Epic; changedBranch: boolean }> {
     const previous = this.locks.get(project.id) ?? Promise.resolve();
     const current = previous
       .catch(() => {})
-      .then(() => this.enter(task, project));
+      .then(() => this.enter(task, project, options));
     this.locks.set(project.id, current);
     try {
       return await current;
@@ -63,7 +69,11 @@ export class EpicWorkspace {
       if (this.locks.get(project.id) === current) this.locks.delete(project.id);
     }
   }
-  private async enter(task: WorkItem, project: Project) {
+  private async enter(
+    task: WorkItem,
+    project: Project,
+    options: { ownedCheckout?: boolean },
+  ) {
     if (!project.path) throw new Error("Choose a local project folder first.");
     if (task.run.worktree && !task.run.workspace)
       throw new Error(
@@ -71,6 +81,34 @@ export class EpicWorkspace {
       );
     const epic = ensureTaskEpic(this.state(), task),
       branch = epicBranch(epic);
+    if (options.ownedCheckout && this.dataDir) {
+      const checkout = await enterEpicCheckout(
+        this.dataDir,
+        project,
+        epic,
+        branch,
+      );
+      const canonical = await realpath(project.path);
+      epic.branch = branch;
+      epic.baseRevision ??= await git(checkout.workspace, [
+        "rev-parse",
+        "HEAD",
+      ]);
+      task.run.workspace = checkout.workspace;
+      task.run.branch = branch;
+      task.run.baseline = epic.baseRevision;
+      if (checkout.workspace !== canonical) {
+        const id = `${project.id}:epic:${epic.id}`;
+        if (task.run.analysisProjectId !== id)
+          task.run.analysisRepoId = undefined;
+        task.run.analysisProjectId = id;
+      } else {
+        task.run.analysisProjectId = undefined;
+        task.run.analysisRepoId = undefined;
+      }
+      task.updatedAt = now();
+      return { epic, changedBranch: false };
+    }
     const peers = this.state().tasks.filter(
       (other) =>
         other.id !== task.id &&

@@ -84,7 +84,7 @@ export async function refreshConstraints(
   pack.revision.constraintsDigest = hash(JSON.stringify(pack.constraints));
   const recall = decisionQuery(request);
   const decisions = await query("recall_decision", {
-    query: `${binding.project.repoId} ${recall}`,
+    query: `${binding.governanceProject?.repoId ?? binding.project.repoId} ${recall}`,
     top_k: 4,
   });
   if (decisions)
