@@ -26,6 +26,7 @@ interface ReviewHooks {
     task: WorkItem,
     project: Project,
     update: (note: string) => void,
+    assertActive: () => void,
   ): Promise<Project>;
   implementationCount?(): number;
   implementationStarting?(taskId: string): boolean;
@@ -605,9 +606,14 @@ export class CodeReviewManager {
       await this.graphRetirements.get(project.id);
       assertActive();
       if (this.hooks.prepare) {
-        project = await this.hooks.prepare(task, project, (note) => {
-          void phase("capture", note).catch(() => {});
-        });
+        project = await this.hooks.prepare(
+          task,
+          project,
+          (note) => {
+            void phase("capture", note).catch(() => {});
+          },
+          assertActive,
+        );
         assertActive();
       }
       const capture = await this.capture(clone(task));
