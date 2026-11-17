@@ -56,6 +56,11 @@
   line-height: 1.85;
   color: #809086;
 }
+.code-review-heading > .code-review-run-hint {
+  font-size: 10px;
+  margin-top: 13px;
+  color: #718a7b;
+}
 .code-review-status {
   display: inline-flex;
   flex-shrink: 0;
