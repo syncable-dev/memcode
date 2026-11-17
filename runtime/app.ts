@@ -244,8 +244,9 @@ export async function createRuntime(
         await codeReviews.start(item.id);
       },
       async (item) => {
-        await codeReviews.interruptForWorker(item.id);
+        await codeReviews.beforeWorker(item.id);
       },
+      (item) => codeReviews?.occupiedSlots(item) ?? 0,
     ),
     preview = new PreviewManager(
       host,
@@ -1114,8 +1115,21 @@ export async function createRuntime(
     reviewProject: (item, parent) => epicAnalysisProject(parent, item),
     engineVersion: (item) => engine.versionFor(item.id) ?? "Not reported",
     reviewer: createReadonlyReviewAgent(store.dir, state),
+    implementationCount: () => workers.implementationCount(),
+    implementationStarting: (taskId) => workers.implementationStarting(taskId),
+    capacityChanged: () => workers.dispatchQueued(),
+    prepare: async (item, selected, update) => {
+      if (selected.analysisCheckout !== "owned-worktree-v1") return selected;
+      // Join a worker's final eviction too, not only the review queue's drain.
+      await engine.releaseEpic(selected);
+      const repoId = await engine.analyze(selected, update);
+      item.run.analysisRepoId = repoId;
+      return { ...selected, repoId, analysis: "ready" };
+    },
     settled: async (item) =>
-      workers.releaseIdleAnalysis(item, project(item.projectId)),
+      workers.releaseIdleAnalysis(item, project(item.projectId), {
+        reviewSettled: true,
+      }),
     queueFixes: async (taskId, text) => {
       await handlers.get("review:send")!.handle({ taskId, text });
     },
@@ -1280,6 +1294,8 @@ export async function createRuntime(
         wasReview = isCodeReviewTask(state(), item);
       applyTaskPatch(state(), item, patch);
       await changed();
+      if (wasReview && !isCodeReviewTask(state(), item))
+        await codeReviews.leaveLane(id);
       if (!wasReview && isCodeReviewTask(state(), item) && !isActive(item))
         await codeReviews.start(id);
     },
@@ -1289,6 +1305,9 @@ export async function createRuntime(
     z.object({ ids: z.array(identifier).min(1).max(500), patch: taskPatch }),
     async ({ ids, patch }) => {
       const unique = [...new Set(ids)] as string[],
+        previouslyReviewing = new Set(
+          unique.filter((id) => isCodeReviewTask(state(), task(id))),
+        ),
         candidate = structuredClone(state());
       const depth = (id: string) => {
         let count = 0,
@@ -1311,6 +1330,9 @@ export async function createRuntime(
           candidate.tasks.find((task) => task.id === id),
         );
       await changed();
+      for (const id of previouslyReviewing)
+        if (!isCodeReviewTask(state(), task(id)))
+          await codeReviews.leaveLane(id);
       if (patch.statusId)
         for (const id of unique) {
           const item = task(id);

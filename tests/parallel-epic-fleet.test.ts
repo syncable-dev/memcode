@@ -379,6 +379,68 @@ test("a slow epic graph flush releases the global worker startup slot before it 
   }
 });
 
+test("worker shutdown leaves graph flushing to final engine close, including evictions already waiting for startup", async () => {
+  const f = await sourceFixture(),
+    state = initialState();
+  const task = story(f.project, "finished-a", "a", f.a);
+  task.run.state = "finished";
+  task.run.analysisProjectId = "owned-a";
+  state.projects = [f.project];
+  state.tasks = [task];
+  let retired = 0,
+    acquired = 0;
+  const manager = new WorkerManager(
+    () => state,
+    async () => {},
+    {
+      releaseEpic: async () => {
+        retired++;
+      },
+    } as unknown as MemtraceEngine,
+    join(f.root, "profile"),
+  );
+  const queue = (manager as any).startup,
+    unlock = await queue.enter(new AbortController().signal);
+  let released = false;
+  const release = () => {
+    if (!released) {
+      released = true;
+      unlock();
+    }
+  };
+  try {
+    const pendingEviction = manager.releaseIdleAnalysis(task, f.project);
+    await new Promise((resolve) => setImmediate(resolve));
+    await manager.close();
+    // This eviction passed its first closing check while the app was open.
+    // It must recheck after the startup slot becomes available.
+    release();
+    await pendingEviction;
+    assert.equal(retired, 0);
+    (manager as any).startup = {
+      enter: async () => {
+        acquired++;
+        return () => {};
+      },
+    };
+    await manager.releaseIdleAnalysis(task, f.project);
+    assert.equal(
+      acquired,
+      0,
+      "Callbacks after close do not even wait for a startup slot",
+    );
+    assert.equal(
+      retired,
+      0,
+      "Only the final app engine.close owns graph flushes",
+    );
+  } finally {
+    release();
+    await manager.close();
+    await rm(f.root, { recursive: true, force: true });
+  }
+});
+
 test("idle graph retirement cannot run while an implementation or review in that epic is active", async () => {
   const f = await sourceFixture(),
     state = initialState();
@@ -403,19 +465,38 @@ test("idle graph retirement cannot run while an implementation or review in that
     await manager.releaseIdleAnalysis(task, f.project);
     assert.equal(retired, 0);
     peer.run.state = "finished";
-    for (const status of ["queued", "running"] as const) {
-      peer.codeReview = {
-        runId: "review",
-        state: status,
-        findingCount: 0,
-        updatedAt: new Date().toISOString(),
-      };
-      await manager.releaseIdleAnalysis(task, f.project);
-      assert.equal(retired, 0);
-    }
+    peer.codeReview = {
+      runId: "review",
+      state: "running",
+      findingCount: 0,
+      updatedAt: new Date().toISOString(),
+    };
+    await manager.releaseIdleAnalysis(task, f.project);
+    assert.equal(retired, 0);
+    peer.codeReview = { ...peer.codeReview, state: "queued" };
+    (manager as any).reviewSlots = (item?: WorkItem) => (item ? 0 : 1);
+    await manager.releaseIdleAnalysis(task, f.project);
+    assert.equal(
+      retired,
+      0,
+      "Admitted reviews retain their graph before the Running summary is persisted",
+    );
+    await manager.releaseIdleAnalysis(task, f.project, { reviewSettled: true });
+    assert.equal(
+      retired,
+      1,
+      "Only the review manager may retire its drained admitted graph",
+    );
+    (manager as any).reviewSlots = () => 0;
+    await manager.releaseIdleAnalysis(task, f.project);
+    assert.equal(
+      retired,
+      2,
+      "A queued review reopens its cached graph only after admission",
+    );
     peer.codeReview = { ...peer.codeReview!, state: "completed" };
     await manager.releaseIdleAnalysis(task, f.project);
-    assert.equal(retired, 1);
+    assert.equal(retired, 3);
   } finally {
     await manager.close();
     await rm(f.root, { recursive: true, force: true });
