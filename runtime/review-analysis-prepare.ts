@@ -75,6 +75,43 @@ function ready(value: Json, project: Project, repoId: string): boolean {
   );
 }
 
+/** A native before/after envelope is a reason to read again, never a certificate. */
+function publicationTransition(value: Json): boolean {
+  const boundary = graph(value);
+  const observation = (part: unknown): part is Json =>
+    record(part) &&
+    Object.keys(part).every((key) => ["status", "token"].includes(key)) &&
+    ["partial", "published"].includes(part.status) &&
+    text(part.token);
+  if (
+    !boundary ||
+    boundary.publication_unchanged_during_call !== false ||
+    !Object.keys(boundary).every((key) =>
+      ["before", "after", "publication_unchanged_during_call"].includes(key),
+    ) ||
+    !observation(boundary.before) ||
+    !observation(boundary.after) ||
+    boundary.before.token === boundary.after.token ||
+    value._meta?.stale !== true ||
+    !record(value.publication) ||
+    !["partial", "published"].includes(value.publication.status) ||
+    !text(value.publication.token)
+  )
+    return false;
+  const bodyMatchesBoundary = [boundary.before, boundary.after].some(
+    (part) =>
+      part.token === value.publication.token &&
+      part.status === value.publication.status,
+  );
+  return (
+    bodyMatchesBoundary &&
+    ((value.ready === true &&
+      value.status === "complete" &&
+      value.publication.status === "published") ||
+      (value.ready === false && value.status === "partial"))
+  );
+}
+
 /** Repair the current owner only; never retire/reopen a graph inside a read group. */
 export async function repairReviewPublication(
   engine: Engine,
@@ -91,6 +128,11 @@ export async function repairReviewPublication(
       "Analyze this epic's exact source before repairing its review publication.",
     );
   let selected: Project = { ...project };
+  let sourceRevision = expectedSourceRevision,
+    freshReads = 0,
+    repairStarted = false;
+  const unverifiedAfterRepair =
+    "The epic's graph publication is still unverified after one incremental refresh, or its source changed. Retry review after checking its code context.";
   const inspect = async (): Promise<Json> => {
     assertActive();
     const watch = await engine.watch(selected, repoId);
@@ -105,16 +147,40 @@ export async function repairReviewPublication(
       throw Error(
         "The epic's local watch could not be verified. Retry review after checking its code context.",
       );
-    const value: unknown = await engine.call(selected, "get_query_revision", {
-      repo_id: repoId,
-      branch: selected.branch,
-      wait_ms: 1000,
-    });
-    assertActive();
-    if (!record(value))
-      throw Error(
-        "Memtrace returned an unrecognized review publication certificate.",
-      );
+    const read = async (): Promise<Json> => {
+      assertActive();
+      const value: unknown = await engine.call(selected, "get_query_revision", {
+        repo_id: repoId,
+        branch: selected.branch,
+        wait_ms: 1000,
+      });
+      assertActive();
+      if (!record(value))
+        throw Error(
+          "Memtrace returned an unrecognized review publication certificate.",
+        );
+      if (
+        sourceRevision !== undefined &&
+        value.source_revision !== sourceRevision
+      )
+        throw Error(
+          repairStarted
+            ? unverifiedAfterRepair
+            : "The epic's source changed before publication recovery. Its result was not adopted.",
+        );
+      if (text(value.source_revision)) sourceRevision ??= value.source_revision;
+      return value;
+    };
+    let value = await read();
+    while (
+      freshReads < 3 &&
+      exactSource(value, selected, repoId) &&
+      publicationTransition(value)
+    ) {
+      freshReads++;
+      update("Waiting for one stable graph publication observation…");
+      value = await read();
+    }
     return value;
   };
   const before = await inspect();
@@ -142,6 +208,7 @@ export async function repairReviewPublication(
   );
   // This flag bypasses MemCode's cached-current shortcut. MemtraceEngine.index
   // still passes incremental: !!match and never asks to clear the existing store.
+  repairStarted = true;
   repoId = await engine.analyze(selected, update, true);
   assertActive();
   if (repoId !== selected.repoId)
@@ -154,9 +221,7 @@ export async function repairReviewPublication(
     !ready(after, selected, repoId) ||
     after.source_revision !== before.source_revision
   )
-    throw Error(
-      "The epic's graph publication is still unverified after one incremental refresh, or its source changed. Retry review after checking its code context.",
-    );
+    throw Error(unverifiedAfterRepair);
   return selected;
 }
 
