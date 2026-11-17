@@ -17,7 +17,7 @@ import type { TeamIdentityChallenge } from "../runtime/team-identity";
 import { teamSyncReplySchema } from "../runtime/team/protocol";
 
 const at = "2026-11-01T09:00:00.000Z";
-function board(legacyReview = false): AppState {
+function board(legacyReview = false, implicitWorkflow = false): AppState {
   const state = initialState();
   state.projects = [{ id: "owner-project", name: "Workflow fixture", description: "", path: null, branch: "main", analysis: "idle", createdAt: at }];
   state.activeProjectId = "owner-project";
@@ -33,17 +33,18 @@ function board(legacyReview = false): AppState {
       { ...structuredClone(state.tasks[0]), id: "story-valid", identifier: "MC-003", statusId: "owner-project:review", updatedAt: "2026-11-05T09:00:00.000Z" },
     );
   }
+  if (implicitWorkflow) state.workflowStates = [];
   initializePlanning(state, at);
   return state;
 }
-async function fixture(options: { oldRoles?: boolean; oldHistory?: boolean; legacyReview?: boolean } = {}) {
+async function fixture(options: { oldRoles?: boolean; oldHistory?: boolean; legacyReview?: boolean; implicitWorkflow?: boolean } = {}) {
   const directory = await mkdtemp(join(tmpdir(), "memcode-workflow-roles-"));
   const verifyIdentity = async (proof: string, challenge: TeamIdentityChallenge) => {
     const value = JSON.parse(proof); assert.equal(value.nonce, challenge.nonce); assert.equal(value.audience, challenge.audience);
     return { issuer: "memtrace" as const, subject: value.subject, name: value.subject.toUpperCase(), email: `${value.subject}@example.test` };
   };
   let relay = await startTeamRelay({ dataDir: join(directory, "relay"), port: 0, verifyIdentity });
-  const aState = board(options.legacyReview), bState = initialState(), requests: Array<{ path: string; method: string; body?: string }> = [];
+  const aState = board(options.legacyReview, options.implicitWorkflow), bState = initialState(), requests: Array<{ path: string; method: string; body?: string }> = [];
   let rolesAvailable = !options.oldRoles, historyAvailable = !options.oldHistory, loseAck = false;
   const transport: typeof fetch = async (input, init) => {
     const url = new URL(String(input)); requests.push({ path: url.pathname, method: init?.method ?? "GET", ...(typeof init?.body === "string" ? { body: init.body } : {}) });
@@ -99,13 +100,14 @@ test("explicit workflow roles follow canonical identities across devices without
   } finally { await f.close(); }
 });
 
-test("first role bootstrap preserves legacy review dates through capture, a lost acknowledgement and relay restart", async () => {
-  const f = await fixture({ oldRoles: true, legacyReview: true });
+for (const implicitWorkflow of [false, true]) test(`first role bootstrap preserves ${implicitWorkflow ? "implicit-default" : "explicit-default"} legacy review dates through capture, a lost acknowledgement and relay restart`, async () => {
+  const f = await fixture({ oldRoles: true, legacyReview: true, implicitWorkflow });
   try {
     const originals = new Map(f.aState.tasks.map((task) => [task.identifier, { createdAt: task.createdAt, updatedAt: task.updatedAt }]));
     const shared = await f.share(), joined = await f.join(shared.workspace.workspaceId);
     const originalHistory = planningHistorySchema.parse(await (await f.get("a", `/v1/planning-history?workspaceId=${shared.workspace.workspaceId}`)).json());
-    assert.equal(f.aState.workflowStates.filter((item) => item.projectId === "owner-project").length, 4);
+    assert.equal(f.aState.workflowStates.filter((item) => item.projectId === "owner-project").length, implicitWorkflow ? 0 : 4);
+    assert.equal(f.bState.reviewWorkflows?.[joined.projectId], undefined, "Joined devices must wait for the owner's accepted roles");
     f.rolesAvailable(true); f.loseAck();
     await assert.rejects(f.a.synchronize("owner-project"), /lost workflow ACK/);
     const pending = (await f.saved("a")).connections[0].workflowRoleOutbox[0];
@@ -141,6 +143,20 @@ test("first role bootstrap preserves legacy review dates through capture, a lost
     const received = f.bState.tasks.find((item) => item.identifier === task.identifier && item.projectId === joined.projectId)!;
     assert.ok(Date.parse(received.updatedAt) > Date.parse(originals.get(task.identifier)!.updatedAt));
     assert.equal(isCodeReviewTask(f.bState, received), true);
+  } finally { await f.close(); }
+});
+
+test("an original owner with custom workflow identities does not infer review roles from their names", async () => {
+  const f = await fixture({ oldRoles: true });
+  try {
+    await f.share();
+    f.aState.workflowStates = f.aState.workflowStates.map((item, index) => ({ ...item, id: `custom-${index}`, ...(item.stage === "review" ? { name: "Code review" } : {}) }));
+    await f.a.capture(); await f.a.synchronize("owner-project");
+    const workflow = structuredClone(f.aState.workflowStates);
+    f.rolesAvailable(true); await f.a.synchronize("owner-project");
+    assert.equal(f.aState.reviewWorkflows?.["owner-project"], undefined);
+    assert.deepEqual(f.aState.workflowStates, workflow);
+    assert.equal(f.requests.some((item) => item.method === "POST" && item.path === "/v1/workflow-roles"), false);
   } finally { await f.close(); }
 });
 
