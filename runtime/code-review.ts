@@ -28,6 +28,13 @@ interface ReviewHooks {
     update: (note: string) => void,
     assertActive: () => void,
   ): Promise<Project>;
+  repairPublication?(
+    task: WorkItem,
+    project: Project,
+    update: (note: string) => void,
+    assertActive: () => void,
+    expectedSourceRevision: string,
+  ): Promise<void>;
   implementationCount?(): number;
   implementationStarting?(taskId: string): boolean;
   capacityChanged?(): void;
@@ -650,6 +657,19 @@ export class CodeReviewManager {
           capture,
           ({ phase: id, note }) => phase(id, note),
           assertActive,
+          this.hooks.repairPublication
+            ? async (sourceRevision) => {
+                await this.hooks.repairPublication!(
+                  task,
+                  project,
+                  (note) => {
+                    void phase("review", note).catch(() => {});
+                  },
+                  assertActive,
+                  sourceRevision,
+                );
+              }
+            : undefined,
         );
         assertActive();
         run.findings = result.findings;

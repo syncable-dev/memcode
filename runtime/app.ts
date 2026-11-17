@@ -50,7 +50,10 @@ import { ManagedRetrievalAssistant } from "./context/managed-assistant";
 import { ProductTelemetry, observeTelemetryMutation } from "./telemetry";
 import { runTaskVerification } from "./verification";
 import { CodeReviewManager } from "./code-review";
-import { prepareReviewAnalysis } from "./review-analysis-prepare";
+import {
+  prepareReviewAnalysis,
+  repairReviewPublication,
+} from "./review-analysis-prepare";
 import {
   initializeCodeReviewWorkflow,
   isCodeReviewTask,
@@ -1129,6 +1132,21 @@ export async function createRuntime(
       if (prepared.analysisCheckout === "owned-worktree-v1")
         item.run.analysisRepoId = prepared.repoId;
       return prepared;
+    },
+    repairPublication: async (
+      _item,
+      selected,
+      update,
+      assertActive,
+      expectedSourceRevision,
+    ) => {
+      await repairReviewPublication(
+        engine,
+        selected,
+        update,
+        assertActive,
+        expectedSourceRevision,
+      );
     },
     settled: async (item) =>
       workers.releaseIdleAnalysis(item, project(item.projectId), {

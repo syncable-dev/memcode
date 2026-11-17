@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { Project } from "../src/shared";
-import { prepareReviewAnalysis } from "../runtime/review-analysis-prepare";
+import {
+  prepareReviewAnalysis,
+  repairReviewPublication,
+} from "../runtime/review-analysis-prepare";
 
 function fixture() {
   const project: Project = {
@@ -263,4 +266,44 @@ test("non-owned legacy preparation keeps its existing behavior and starts no ext
   delete f.project.analysisCheckout;
   assert.equal(await f.run(), f.project);
   assert.deepEqual(f.calls, []);
+});
+
+test("late publication recovery repairs the current owner without retirement, reopening or cached analysis", async () => {
+  const f = fixture();
+  f.reads.splice(0, 1, f.certificate("partial"), f.certificate());
+  await repairReviewPublication(
+    f.engine,
+    f.project,
+    (note) => f.progress.push(note),
+    () => {},
+    "same-source",
+  );
+  assert.deepEqual(f.calls, [
+    "watch",
+    "get_query_revision",
+    "analyze:repair",
+    "watch",
+    "get_query_revision",
+  ]);
+  assert.equal(f.calls.includes("release"), false);
+  assert.equal(f.calls.includes("analyze:cached"), false);
+});
+
+test("late recovery cannot adopt a changed source between the group's boundary and its repair inspection", async () => {
+  for (const status of ["published", "partial"] as const) {
+    const f = fixture();
+    f.reads[0] = f.certificate(status);
+    f.reads[0].source_revision = "source-edited-after-group";
+    await assert.rejects(
+      repairReviewPublication(
+        f.engine,
+        f.project,
+        () => {},
+        () => {},
+        "same-source",
+      ),
+      /source changed before publication recovery/,
+    );
+    assert.deepEqual(f.calls, ["watch", "get_query_revision"]);
+  }
 });
