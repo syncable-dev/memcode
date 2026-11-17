@@ -683,6 +683,9 @@ export function SettingsDialog({
           />
           <AppUpdates
             currentVersion={runtime.appVersion}
+            beforeRestart={async () => {
+              onSaved(await window.memcode.saveSettings(draft));
+            }}
             automaticDownloads={draft.automaticUpdateDownloads !== false}
             onAutomaticDownloadsChange={(value) =>
               setDraft((draft) => ({

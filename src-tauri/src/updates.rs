@@ -1,78 +1,21 @@
 //! Only the application webview can request signed desktop updates.
 use crate::bridge::RuntimeBridge;
+use crate::update_cache::StagedDownload;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
-    io::Write,
     path::PathBuf,
     sync::Mutex,
     time::{Duration, Instant},
 };
 use tauri::{AppHandle, Webview};
-use tauri_plugin_updater::{Update, UpdaterExt};
+use tauri_plugin_updater::{Update, Updater, UpdaterExt};
 
 #[derive(Default)]
 pub struct UpdateState {
     operation: tokio::sync::Mutex<()>,
     pending: Mutex<Option<Update>>,
     downloaded: Mutex<Option<StagedDownload>>,
-}
-
-/// A verified installer waits on disk, never in the renderer or a large idle buffer.
-struct StagedDownload {
-    version: String,
-    path: PathBuf,
-    directory: PathBuf,
-    length: u64,
-}
-impl StagedDownload {
-    fn create(version: String, bytes: &[u8]) -> Result<Self, String> {
-        let nonce = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|e| e.to_string())?
-            .as_nanos();
-        let directory =
-            std::env::temp_dir().join(format!("memcode-update-{}-{nonce}", std::process::id()));
-        let mut builder = std::fs::DirBuilder::new();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::DirBuilderExt;
-            builder.mode(0o700);
-        }
-        builder.create(&directory).map_err(|e| e.to_string())?;
-        let staged = Self {
-            version,
-            path: directory.join("signed-update"),
-            directory,
-            length: bytes.len() as u64,
-        };
-        let mut options = std::fs::OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let mut file = options.open(&staged.path).map_err(|e| e.to_string())?;
-        file.write_all(bytes)
-            .and_then(|_| file.sync_all())
-            .map_err(|e| e.to_string())?;
-        Ok(staged)
-    }
-    fn read(path: &std::path::Path, length: u64) -> Result<Vec<u8>, String> {
-        let info = std::fs::symlink_metadata(path)
-            .map_err(|_| "Download this update again before restarting.".to_owned())?;
-        if !info.is_file() || info.file_type().is_symlink() || info.len() != length {
-            return Err("The staged update changed. Download it again before restarting.".into());
-        }
-        std::fs::read(path).map_err(|e| e.to_string())
-    }
-}
-impl Drop for StagedDownload {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.path);
-        let _ = std::fs::remove_dir(&self.directory);
-    }
 }
 
 #[derive(Serialize)]
@@ -105,7 +48,7 @@ fn previous_failure(app: &AppHandle) -> Option<String> {
         .then(|| failure.message.chars().take(1000).collect())
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Release {
     version: String,
@@ -145,24 +88,118 @@ fn installed_only() -> Result<(), String> {
     Ok(())
 }
 
+fn update_cache(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(crate::native::profile_dir(app)?.join("updates"))
+}
+
+fn updater(app: &AppHandle, runtime: &RuntimeBridge) -> Result<Updater, String> {
+    let runtime = runtime.clone();
+    app.updater_builder()
+        .timeout(Duration::from_secs(20))
+        .restart_after_install(true)
+        .on_before_exit(move || tauri::async_runtime::block_on(runtime.shutdown()))
+        .build()
+        .map_err(|e| e.to_string())
+}
+
+fn secure_release(update: &Update) -> Result<(), String> {
+    if update.download_url.scheme() != "https"
+        || !update.download_url.username().is_empty()
+        || update.download_url.password().is_some()
+    {
+        return Err("The release did not provide a secure download address.".into());
+    }
+    Ok(())
+}
+
+fn restore_download(
+    cache: &std::path::Path,
+    updater: &Updater,
+) -> Result<Option<(Update, StagedDownload)>, String> {
+    let Some(staged) = StagedDownload::load(cache)? else {
+        return Ok(None);
+    };
+    let restored = (|| {
+        // The native plugin rejects obsolete versions and requires a version-bound
+        // signature. Cached JSON is not trusted just because it is on disk.
+        let Some(update) = updater
+            .restore_update(staged.release.clone())
+            .map_err(|e| e.to_string())?
+        else {
+            return Ok(None);
+        };
+        secure_release(&update)?;
+        if update.version != staged.version {
+            return Err("The saved update version changed.".into());
+        }
+        update.verify(&staged.read()?).map_err(|e| e.to_string())?;
+        Ok(Some(update))
+    })();
+    match restored {
+        Ok(Some(update)) => Ok(Some((update, staged))),
+        Ok(None) => {
+            staged.remove();
+            Ok(None)
+        }
+        Err(error) => {
+            staged.remove();
+            Err(error)
+        }
+    }
+}
+
 #[tauri::command]
-pub fn app_update_info(
+pub async fn app_update_info(
     webview: Webview,
     app: AppHandle,
     state: tauri::State<'_, UpdateState>,
+    runtime: tauri::State<'_, RuntimeBridge>,
 ) -> Result<UpdateInfo, String> {
     main_only(&webview)?;
+    let _operation = state.operation.lock().await;
+    let mut previous_error = previous_failure(&app);
+    if !development()
+        && state
+            .downloaded
+            .lock()
+            .map_err(|_| "Update state is unavailable.")?
+            .is_none()
+    {
+        let cache = update_cache(&app)?;
+        let native = updater(&app, runtime.inner())?;
+        let restore_cache = cache.clone();
+        let restored =
+            tauri::async_runtime::spawn_blocking(move || restore_download(&restore_cache, &native))
+                .await
+                .map_err(|e| e.to_string())?;
+        match restored {
+            Ok(Some((update, staged))) => {
+                *state
+                    .pending
+                    .lock()
+                    .map_err(|_| "Update state is unavailable.")? = Some(update);
+                *state
+                    .downloaded
+                    .lock()
+                    .map_err(|_| "Update state is unavailable.")? = Some(staged);
+            }
+            Ok(None) => {}
+            Err(_) => {
+                StagedDownload::discard_manifest(&cache);
+                previous_error = Some("The saved update could not be verified. Check for updates to download a fresh copy.".into());
+            }
+        }
+    }
     Ok(UpdateInfo {
         current_version: app.package_info().version.to_string(),
         development: development(),
-        previous_error: previous_failure(&app),
+        previous_error,
         ready_release: {
             let version = state
                 .downloaded
                 .lock()
                 .map_err(|_| "Update state is unavailable.")?
                 .as_ref()
-                .filter(|value| value.path.is_file())
                 .map(|value| value.version.clone());
             state
                 .pending
@@ -209,37 +246,30 @@ pub async fn app_update_check(
         .operation
         .try_lock()
         .map_err(|_| "An update operation is already running.")?;
+    if state
+        .downloaded
+        .lock()
+        .map_err(|_| "Update state is unavailable.")?
+        .is_some()
+    {
+        return Ok(state
+            .pending
+            .lock()
+            .map_err(|_| "Update state is unavailable.")?
+            .as_ref()
+            .map(release_summary));
+    }
     // A failed recheck must not leave an older announcement installable.
     *state
         .pending
         .lock()
         .map_err(|_| "Update state is unavailable.")? = None;
-    *state
-        .downloaded
-        .lock()
-        .map_err(|_| "Update state is unavailable.")? = None;
-    let runtime = runtime.inner().clone();
-    let update = app
-        .updater_builder()
-        .timeout(Duration::from_secs(20))
-        .on_before_exit(move || {
-            // Windows closes this process within install(). Its upstream hook
-            // runs before ShellExecuteW, so a launch failure must restart the
-            // current app below rather than leave its sidecar stopped.
-            tauri::async_runtime::block_on(runtime.shutdown());
-        })
-        .build()
-        .map_err(|e| e.to_string())?
+    let update = updater(&app, runtime.inner())?
         .check()
         .await
         .map_err(|e| e.to_string())?;
     if let Some(update) = &update {
-        if update.download_url.scheme() != "https"
-            || !update.download_url.username().is_empty()
-            || update.download_url.password().is_some()
-        {
-            return Err("The release did not provide a secure download address.".into());
-        }
+        secure_release(update)?;
     }
     let release = update.as_ref().map(release_summary);
     *state
@@ -273,6 +303,7 @@ fn release_summary(update: &Update) -> Release {
 #[tauri::command]
 pub async fn app_update_download(
     webview: Webview,
+    app: AppHandle,
     state: tauri::State<'_, UpdateState>,
     version: String,
     channel: tauri::ipc::Channel<Progress>,
@@ -291,10 +322,20 @@ pub async fn app_update_download(
         .filter(|update| update.version == version)
         .cloned()
         .ok_or("Check for this update again before installing it.")?;
-    *state
+    if state
         .downloaded
         .lock()
-        .map_err(|_| "Update state is unavailable.")? = None;
+        .map_err(|_| "Update state is unavailable.")?
+        .as_ref()
+        .is_some_and(|value| value.version == version)
+    {
+        let _ = channel.send(Progress {
+            phase: "ready",
+            downloaded: 0,
+            total: None,
+        });
+        return Ok(());
+    }
     update.timeout = Some(Duration::from_secs(300));
     let mut downloaded = 0_u64;
     let mut last = Instant::now();
@@ -328,10 +369,13 @@ pub async fn app_update_download(
         .await
         .map_err(|e| e.to_string())?;
     let length = bytes.len() as u64;
-    let staged =
-        tauri::async_runtime::spawn_blocking(move || StagedDownload::create(version, &bytes))
-            .await
-            .map_err(|e| e.to_string())??;
+    let cache = update_cache(&app)?;
+    let manifest = update.raw_json.clone();
+    let staged = tauri::async_runtime::spawn_blocking(move || {
+        StagedDownload::create(&cache, version, manifest, &bytes)
+    })
+    .await
+    .map_err(|e| e.to_string())??;
     *state
         .downloaded
         .lock()
@@ -368,16 +412,16 @@ pub async fn app_update_install(
         .cloned()
         .ok_or("Check for this update again before installing it.")?;
     // Re-read and re-verify private staged bytes immediately before installation.
-    let (path, length) = state
+    let staged = state
         .downloaded
         .lock()
         .map_err(|_| "Update state is unavailable.")?
         .as_ref()
         .filter(|value| value.version == version)
-        .map(|value| (value.path.clone(), value.length))
+        .cloned()
         .ok_or("Download this update before restarting.")?;
     let (update, bytes) = tauri::async_runtime::spawn_blocking(move || {
-        let bytes = StagedDownload::read(&path, length)?;
+        let bytes = staged.read()?;
         update.verify(&bytes).map_err(|e| e.to_string())?;
         Ok::<_, String>((update, bytes))
     })
@@ -386,10 +430,6 @@ pub async fn app_update_install(
     // Workers can continue during the download. Reserve an idle workspace only
     // after explicit Restart to update; never cancel a running worker.
     runtime.request("app:update-prepare", Value::Null).await?;
-    *state
-        .downloaded
-        .lock()
-        .map_err(|_| "Update state is unavailable.")? = None;
     let _ = channel.send(Progress {
         phase: "installing",
         downloaded: bytes.len() as u64,
@@ -421,7 +461,7 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn fixture_update(fixture: &Value, public_key: &str, version: &str) -> Update {
+    fn fixture_updater(public_key: &str) -> Updater {
         let mut context = tauri::test::mock_context(tauri::test::noop_assets());
         context.config_mut().plugins.0.insert("updater".into(), json!({
             "pubkey": public_key,
@@ -432,9 +472,11 @@ mod tests {
             .plugin(tauri_plugin_updater::Builder::new().build())
             .build(context)
             .unwrap();
-        app.updater_builder()
-            .build()
-            .unwrap()
+        app.updater_builder().build().unwrap()
+    }
+
+    fn fixture_update(fixture: &Value, public_key: &str, version: &str) -> Update {
+        fixture_updater(public_key)
             .restore_update(json!({
                 "version": version,
                 "url": "https://example.invalid/signed-test-fixture.exe",
@@ -489,25 +531,147 @@ mod tests {
             fixture["version"].as_str().unwrap(),
         );
         update.verify(bytes).unwrap();
-        let staged =
-            StagedDownload::create(fixture["version"].as_str().unwrap().to_owned(), bytes).unwrap();
-        let path = staged.path.clone();
-        update
-            .verify(&StagedDownload::read(&staged.path, staged.length).unwrap())
-            .unwrap();
+        let cache = std::env::temp_dir().join(format!(
+            "memcode-cache-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let staged = StagedDownload::create(
+            &cache,
+            update.version.clone(),
+            update.raw_json.clone(),
+            bytes,
+        )
+        .unwrap();
+        let journal: Value =
+            serde_json::from_slice(&std::fs::read(cache.join("pending.json")).unwrap()).unwrap();
+        let path = cache
+            .join(journal["directory"].as_str().unwrap())
+            .join("signed-update");
+        update.verify(&staged.read().unwrap()).unwrap();
+        drop(staged);
+        let restored = restore_download(
+            &cache,
+            &fixture_updater(fixture["publicKey"].as_str().unwrap()),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            restored.1.read().unwrap(),
+            bytes,
+            "Dropping the original process state must keep the verified download"
+        );
         let mut tampered = bytes.to_vec();
         tampered[0] ^= 1;
         std::fs::write(&path, tampered).unwrap();
         assert!(
-            update
-                .verify(&StagedDownload::read(&staged.path, staged.length).unwrap())
-                .is_err(),
+            restore_download(
+                &cache,
+                &fixture_updater(fixture["publicKey"].as_str().unwrap())
+            )
+            .is_err(),
             "Tampering after download must not become an installable update"
         );
-        let directory = staged.directory.clone();
-        drop(staged);
         assert!(!path.exists());
-        assert!(!directory.exists());
+        assert!(!cache.join("pending.json").exists());
+        std::fs::remove_dir(cache).unwrap();
+    }
+
+    #[test]
+    fn staged_update_survives_an_actual_process_restart_without_a_download() {
+        let fixture: Value =
+            serde_json::from_str(include_str!("../../tests/fixtures/updater-signature.json"))
+                .unwrap();
+        if let Some(cache) = std::env::var_os("MEMCODE_CACHE_RESTART_TEST") {
+            let (_, staged) = restore_download(
+                &PathBuf::from(cache),
+                &fixture_updater(fixture["publicKey"].as_str().unwrap()),
+            )
+            .unwrap()
+            .unwrap();
+            assert_eq!(
+                staged.read().unwrap(),
+                fixture["payload"].as_str().unwrap().as_bytes()
+            );
+            return;
+        }
+        let cache = std::env::temp_dir().join(format!(
+            "memcode-cache-restart-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let update = fixture_update(
+            &fixture,
+            fixture["publicKey"].as_str().unwrap(),
+            fixture["version"].as_str().unwrap(),
+        );
+        let staged = StagedDownload::create(
+            &cache,
+            update.version.clone(),
+            update.raw_json.clone(),
+            fixture["payload"].as_str().unwrap().as_bytes(),
+        )
+        .unwrap();
+        drop(staged);
+        let result = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["updates::tests::staged_update_survives_an_actual_process_restart_without_a_download", "--exact", "--nocapture"])
+            .env("MEMCODE_CACHE_RESTART_TEST", &cache).output().unwrap();
+        assert!(
+            result.status.success(),
+            "A fresh native process must restore the signed download: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        StagedDownload::load(&cache).unwrap().unwrap().remove();
+        std::fs::remove_dir(cache).unwrap();
+    }
+
+    #[test]
+    fn cached_update_rejects_manifest_relabelling_and_cleans_completed_upgrades() {
+        let fixture: Value =
+            serde_json::from_str(include_str!("../../tests/fixtures/updater-signature.json"))
+                .unwrap();
+        let cache = std::env::temp_dir().join(format!(
+            "memcode-cache-version-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let updater = fixture_updater(fixture["publicKey"].as_str().unwrap());
+        let mut update = fixture_update(
+            &fixture,
+            fixture["publicKey"].as_str().unwrap(),
+            fixture["version"].as_str().unwrap(),
+        );
+        update.raw_json["version"] = json!("0.4.0-beta.999999");
+        let staged = StagedDownload::create(
+            &cache,
+            "0.4.0-beta.999999".into(),
+            update.raw_json.clone(),
+            fixture["payload"].as_str().unwrap().as_bytes(),
+        )
+        .unwrap();
+        drop(staged);
+        assert!(restore_download(&cache, &updater).is_err());
+        update.raw_json["version"] = json!("0.0.1");
+        let staged = StagedDownload::create(
+            &cache,
+            "0.0.1".into(),
+            update.raw_json.clone(),
+            fixture["payload"].as_str().unwrap().as_bytes(),
+        )
+        .unwrap();
+        drop(staged);
+        assert!(restore_download(&cache, &updater).unwrap().is_none());
+        assert!(!cache.join("pending.json").exists());
+        std::fs::remove_dir(cache).unwrap();
     }
 
     #[test]

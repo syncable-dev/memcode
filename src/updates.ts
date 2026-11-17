@@ -79,7 +79,7 @@ const nativeAPI: AppUpdateAPI = {
   },
 };
 
-/** Retain download progress when Settings closes; no automatic installation. */
+/** Native owns the durable verified download; only an explicit action installs. */
 export class AppUpdater {
   private snapshot: AppUpdateSnapshot = { phase: "loading" };
   private listeners = new Set<() => void>();
@@ -147,15 +147,14 @@ export class AppUpdater {
     if (
       this.snapshot.info &&
       !this.snapshot.info.development &&
-      this.snapshot.phase === "idle"
+      this.snapshot.phase !== "ready"
     )
       await this.poll();
   }
-  async poll() {
+  async poll(maximumAge = 15 * 60_000) {
     if (
       !this.snapshot.info ||
       this.snapshot.info.development ||
-      this.snapshot.info.previousError ||
       this.busy ||
       updateBusy(this.snapshot.phase) ||
       this.snapshot.phase === "ready"
@@ -163,10 +162,16 @@ export class AppUpdater {
       return;
     if (
       this.lastPassiveCheck !== undefined &&
-      this.clock() - this.lastPassiveCheck < 15 * 60_000
+      this.clock() - this.lastPassiveCheck < maximumAge
     )
       return;
     await this.check();
+  }
+  async openSettings() {
+    await this.initialize();
+    // Opening Settings is an explicit interest in current availability. The
+    // background timer's throttle must not make a newly published update hidden.
+    await this.poll(0);
   }
   async check() {
     if (
@@ -246,12 +251,16 @@ export class AppUpdater {
       this.set({ phase: "installing" });
     } catch (error) {
       const message = errorMessage(error);
+      const info = await this.api.info().catch(() => this.snapshot.info);
       this.set({
-        phase: /running worker|running workers|workers.*before updating/i.test(
-          message,
-        )
-          ? "ready"
-          : "error",
+        phase:
+          info?.readyRelease?.version === this.snapshot.release?.version ||
+          /running worker|running workers|workers.*before updating/i.test(
+            message,
+          )
+            ? "ready"
+            : "error",
+        info,
         error: message,
       });
     } finally {

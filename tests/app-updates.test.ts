@@ -339,7 +339,7 @@ test("passive focus and long-running checks are throttled and leave ready downlo
   assert.equal(updater.getSnapshot().phase, "ready");
 });
 
-test("a successful retry clears the prior install failure and resumes passive discovery", async () => {
+test("a prior installation error stays visible without permanently stopping automatic discovery", async () => {
   let now = 1000,
     checks = 0;
   const updater = new AppUpdater(
@@ -351,6 +351,7 @@ test("a successful retry clears the prior install failure and resumes passive di
       }),
       check: async () => {
         checks++;
+        if (checks === 1) throw Error("Temporarily offline");
         return release;
       },
     }),
@@ -359,8 +360,8 @@ test("a successful retry clears the prior install failure and resumes passive di
   await updater.start();
   assert.equal(
     checks,
-    0,
-    "a failed prior install stays visible until user retries",
+    1,
+    "a previous error must not prevent discovering a newer release on startup",
   );
   await updater.check();
   assert.equal(updater.getSnapshot().info?.previousError, undefined);
@@ -368,9 +369,50 @@ test("a successful retry clears the prior install failure and resumes passive di
   await updater.poll();
   assert.equal(
     checks,
-    2,
+    3,
     "a recovered install error must not permanently disable update checks",
   );
+});
+
+test("opening Settings discovers a newly published release even inside the background throttle", async () => {
+  let checks = 0;
+  const updater = new AppUpdater(
+    api({ check: async () => (++checks === 1 ? null : release) }),
+  );
+  await updater.start();
+  assert.equal(updater.getSnapshot().phase, "current");
+  await updater.openSettings();
+  assert.equal(checks, 2);
+  assert.equal(updater.getSnapshot().release?.version, release.version);
+});
+
+test("an installation failure keeps a verified native download ready for retry without downloading again", async () => {
+  let downloads = 0,
+    saved = false;
+  const updater = new AppUpdater(
+    api({
+      info: async () => ({
+        currentVersion: "0.4.0-beta.1",
+        development: false,
+        readyRelease: saved ? release : null,
+      }),
+      download: async () => {
+        downloads++;
+        saved = true;
+      },
+      install: async () => {
+        throw Error("Installer could not start");
+      },
+    }),
+  );
+  await updater.check();
+  await updater.download();
+  await updater.requestRestart();
+  assert.equal(updater.getSnapshot().phase, "ready");
+  assert.match(updater.getSnapshot().error!, /could not start/);
+  await updater.openSettings();
+  await updater.download();
+  assert.equal(downloads, 1);
 });
 
 test("one explicit restart click updates an idle workspace without another confirmation", async () => {
