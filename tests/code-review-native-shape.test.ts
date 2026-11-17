@@ -243,6 +243,35 @@ test("source edits never qualify for the graph-publication-only retry", async ()
   assert.ok(result.limitations.some((note) => note.includes("cannot certify")));
 });
 
+test("a malformed closing envelope cannot request publication recovery", async () => {
+  let queries = 0,
+    measured = 0;
+  const result = await run(undefined, stableGraph, (name, value) => {
+    if (name === "get_query_revision" && ++queries === 2) {
+      value.token = "query-2";
+      value._meta.graph_revision = null;
+    }
+    if (name === "get_function_quality_metrics") measured++;
+    return value;
+  });
+  assert.equal(queries, 2);
+  assert.equal(measured, 1);
+  assert.equal(result.impact.complete, false);
+});
+
+test("publication recovery is bounded to one wholly new measurement group", async () => {
+  let queries = 0,
+    measured = 0;
+  const result = await run(undefined, stableGraph, (name, value) => {
+    if (name === "get_query_revision") value.token = `query-${++queries}`;
+    if (name === "get_function_quality_metrics") measured++;
+    return value;
+  });
+  assert.equal(queries, 4);
+  assert.equal(measured, 2);
+  assert.equal(result.impact.complete, false);
+});
+
 test(
   "review accepts native Windows extended checkout paths without losing zero measurements",
   {
