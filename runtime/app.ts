@@ -1132,19 +1132,29 @@ export async function createRuntime(
   });
   const reviewTask = z.object({ taskId: identifier }).strict();
   const reviewRun = reviewTask.extend({ runId: identifier }).strict();
+  const requireReviewLane = (taskId: string) => {
+    if (!isCodeReviewTask(state(), task(taskId)))
+      throw Error(
+        "Move this story to the Code review lane to use its reviewer.",
+      );
+  };
   register("code-review:get", reviewTask, ({ taskId }) =>
     codeReviews.get(taskId),
   );
-  register("code-review:start", reviewTask, ({ taskId }) =>
-    codeReviews.start(taskId),
-  );
+  register("code-review:start", reviewTask, ({ taskId }) => {
+    requireReviewLane(taskId);
+    return codeReviews.start(taskId);
+  });
   register("code-review:cancel", reviewRun, ({ taskId, runId }) =>
     codeReviews.cancel(taskId, runId),
   );
   register(
     "code-review:discuss",
     reviewRun.extend({ text: nonempty.max(20000) }).strict(),
-    ({ taskId, runId, text }) => codeReviews.discuss(taskId, runId, text),
+    ({ taskId, runId, text }) => {
+      requireReviewLane(taskId);
+      return codeReviews.discuss(taskId, runId, text);
+    },
   );
   register(
     "code-review:request-fixes",
@@ -1154,15 +1164,20 @@ export async function createRuntime(
         text: z.string().max(20000).optional(),
       })
       .strict(),
-    ({ taskId, runId, findingIds, text }) =>
-      codeReviews.requestFixes(taskId, runId, findingIds, text),
+    ({ taskId, runId, findingIds, text }) => {
+      requireReviewLane(taskId);
+      return codeReviews.requestFixes(taskId, runId, findingIds, text);
+    },
   );
   register(
     "code-review:accept",
     reviewRun
       .extend({ reason: z.string().trim().min(1).max(2000).optional() })
       .strict(),
-    ({ taskId, runId, reason }) => codeReviews.accept(taskId, runId, reason),
+    ({ taskId, runId, reason }) => {
+      requireReviewLane(taskId);
+      return codeReviews.accept(taskId, runId, reason);
+    },
   );
   registerPlanningControls(register, state, project, changed);
   registerIntelligence(register, state, project, changed, engine);
