@@ -10,7 +10,7 @@ import {
   stat,
   realpath,
 } from "node:fs/promises";
-import { join } from "node:path";
+import { join, relative, sep } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { verifyBetaAccess } from "../memcode/runtime/beta-auth";
@@ -159,9 +159,9 @@ async function main() {
       throw error;
     }
   };
-  async function ready(scope: Scope) {
+  async function ready(scope: Scope, executable = join(candidate, nativeName)) {
     scope.owner = spawn(
-      join(candidate, nativeName),
+      executable,
       ["start", "--headless", "--workspace-file", scope.manifest],
       {
         cwd: scope.anchor,
@@ -600,23 +600,112 @@ async function main() {
       const authEnv = { ...scopes[1].env };
       delete authEnv.MEMTRACE_MEMDB_DATA_DIR;
       delete authEnv.MEMTRACE_DATA_DIR;
-      productEngine = new MemtraceEngine(() => join(candidate, nativeName), {
-        privateProject: () => true,
-        environment: async () => authEnv,
-      });
-      const projects = scopes
-        .slice(1)
-        .map((scope) => ({
-          id: "qa-product-" + scope.name,
-          name: scope.name,
-          description: "Disposable native owned epic acceptance",
-          path: scope.root,
-          branch: scope.branch,
-          analysisCheckout: "owned-worktree-v1" as const,
-          analysis: "idle" as const,
+      const managedGraphRoot = join(
+        root,
+        "memcode-profile",
+        "memtrace-projects",
+      );
+      const createProductEngine = () =>
+        new MemtraceEngine(() => join(candidate, nativeName), {
+          privateProject: () => true,
+          managedGraphRoot,
+          environment: async () => authEnv,
+        });
+      if (process.platform === "darwin") {
+        stage("managed-primary-analysis-with-foreign-owner");
+        const canonical = scopes[0];
+        const foreignInstallation = join(root, "foreign-installation");
+        await cp(candidate, foreignInstallation, { recursive: true });
+        await ready(canonical, join(foreignInstallation, nativeName));
+        const foreignPid = canonical.ownerState.pid;
+        assert.equal(canonical.ownerState.installRoot, foreignInstallation);
+        assert.throws(
+          () =>
+            execFileSync(
+              join(candidate, nativeName),
+              ["index", canonical.root, "--workspace-file", canonical.manifest],
+              {
+                cwd: canonical.anchor,
+                env: canonical.env,
+                stdio: ["ignore", "pipe", "pipe"],
+                timeout: 30000,
+              },
+            ),
+          (error: { stderr?: Buffer }) =>
+            /different Memtrace installation/.test(String(error.stderr)),
+          "The native index command must refuse the old store while its other owner is live",
+        );
+        productEngine = createProductEngine();
+        const primary = {
+          id: "qa-managed-primary",
+          name: "Managed primary",
+          path: canonical.root,
+          branch: canonical.branch,
           repoId: "repo",
+          analysis: "idle" as const,
+          description: "Disposable store-isolation acceptance",
           createdAt: new Date().toISOString(),
-        }));
+        };
+        primary.repoId = await productEngine.analyze(primary, () => {});
+        const binding = productEngine.scopeFor(primary.id)!;
+        assert.match(
+          relative(managedGraphRoot, binding.dataDirectory)
+            .split(sep)
+            .join("/"),
+          /^[a-f0-9]{32}\/\.memcode\/memtrace\/\.memdb$/,
+        );
+        const revision = await productEngine.call(
+          primary,
+          "get_query_revision",
+          { repo_id: primary.repoId },
+        );
+        assert.equal(revision.ready, true);
+        const managedPid = JSON.parse(
+          await readFile(
+            join(binding.dataDirectory, "daemon-state.json"),
+            "utf8",
+          ),
+        ).pid;
+        assert.notEqual(managedPid, foreignPid);
+        const pid = (productEngine as any).clients.get(primary.id)?.transport
+          ?.pid;
+        if (pid) canonical.mcpPids.push(pid);
+        await snapshot([managedPid]);
+        await productEngine.close();
+        productEngine = undefined;
+        assert.ok(
+          !(await snapshot([managedPid])).processes.some(
+            (entry) => entry.ProcessId === managedPid,
+          ),
+          "MemCode must retire the profile's owner when it closes",
+        );
+        assert.equal(
+          JSON.parse(
+            await readFile(join(canonical.store, "daemon-state.json"), "utf8"),
+          ).pid,
+          foreignPid,
+        );
+        process.kill(foreignPid, 0);
+        report.tests.managedGraphIsolation = {
+          foreignWriteRefused: true,
+          managedStore: binding.dataDirectory,
+          revision,
+          foreignPid,
+        };
+        await stop(canonical);
+      }
+      productEngine = createProductEngine();
+      const projects = scopes.slice(1).map((scope) => ({
+        id: "qa-product-" + scope.name,
+        name: scope.name,
+        description: "Disposable native owned epic acceptance",
+        path: scope.root,
+        branch: scope.branch,
+        analysisCheckout: "owned-worktree-v1" as const,
+        analysis: "idle" as const,
+        repoId: "repo",
+        createdAt: new Date().toISOString(),
+      }));
       report.tests.product = {
         memcodeCommit: git(appDirectory, ["rev-parse", "HEAD"]),
         runtimeSha256: hash(

@@ -6,8 +6,9 @@ import {
   writeFile,
   realpath,
   readFile,
+  rm,
 } from "node:fs/promises";
-import { join } from "node:path";
+import { join, relative, sep } from "node:path";
 import { tmpdir } from "node:os";
 import {
   resolveMcpWorkspace,
@@ -108,5 +109,42 @@ test("the MCP SDK receives a single uppercase PATH with the prepared child path 
       normalizeMcpEnvironment({ PATH: "prepared", Path: "duplicate" }),
     ).filter((key) => key.toLowerCase() === "path"),
     ["PATH"],
+  );
+});
+
+test("managed project graphs open under the app profile without touching a legacy owner's store", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "memcode-managed-graph-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const project = join(root, "checkout");
+  await mkdir(project);
+  const legacy = await projectMcpWorkspace(project);
+  await mkdir(legacy.dataDirectory);
+  const owner = join(legacy.dataDirectory, "daemon-state.json");
+  const existingOwner = JSON.stringify({
+    pid: process.pid,
+    installRoot: "/cli-install",
+  });
+  await writeFile(owner, existingOwner);
+  const graphRoot = join(root, "profile", "memtrace-projects");
+
+  const managed = await projectMcpWorkspace(project, {
+    managedGraphRoot: graphRoot,
+  });
+
+  assert.equal(managed.directory, await realpath(project));
+  assert.match(
+    relative(await realpath(graphRoot), managed.dataDirectory)
+      .split(sep)
+      .join("/"),
+    /^[a-f0-9]{32}\/\.memcode\/memtrace\/\.memdb$/,
+  );
+  assert.equal(await readFile(owner, "utf8"), existingOwner);
+  assert.equal(
+    await readFile(managed.workspaceFile, "utf8"),
+    await readFile(legacy.workspaceFile, "utf8"),
+  );
+  assert.deepEqual(
+    await projectMcpWorkspace(project, { managedGraphRoot: graphRoot }),
+    managed,
   );
 });

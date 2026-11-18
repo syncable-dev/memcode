@@ -26,6 +26,7 @@ import { HarnessMark, Spinner } from "./UI";
 import { Select } from "./Select";
 import { useRuntimeHealth } from "../useRuntimeHealth";
 import { approvedRuntime } from "../worker-availability";
+import { desktopPlatform } from "../platform";
 import "../styles-connections.css";
 import "../styles-worker-defaults.css";
 
@@ -60,7 +61,11 @@ export function WorkerConnections({
     [busy, setBusy] = useState(false),
     [loading, setLoading] = useState(true),
     [error, setError] = useState(""),
+    [dialogError, setDialogError] = useState(""),
     [savingDefault, setSavingDefault] = useState<Harness>();
+  const selectedHarness = selected?.harness;
+  const readyToApprove =
+    selected?.auth === "authenticated" || selected?.auth === "local";
   const busyRef = useRef(busy);
   busyRef.current = busy;
   const onRuntimeRef = useRef(onRuntime);
@@ -68,10 +73,18 @@ export function WorkerConnections({
   const refresh = useCallback(async (discover = false) => {
     setLoading(true);
     try {
-      if (discover)
-        onRuntimeRef.current?.(await window.memcode.refreshWorkerCatalog());
-      setStatuses(await window.memcode.workerConnectionStatus());
+      if (discover) {
+        const catalog = await window.memcode.refreshWorkerCatalog();
+        onRuntimeRef.current?.(catalog);
+      }
+      const current = await window.memcode.workerConnectionStatus();
+      setStatuses(current);
+      setSelected(
+        (open) =>
+          current.find((status) => status.harness === open?.harness) ?? open,
+      );
       setError("");
+      return current;
     } catch (error) {
       setError((error as Error).message);
     } finally {
@@ -86,11 +99,8 @@ export function WorkerConnections({
     void refresh();
   }, [key, refresh]);
   useEffect(() => {
-    if (!selected) return;
+    if (!selectedHarness) return;
     const previous = document.activeElement;
-    const frame = requestAnimationFrame(() =>
-      document.querySelector<HTMLElement>(".connection-consent input")?.focus(),
-    );
     window.dispatchEvent(new CustomEvent("memcode:popover", { detail: true }));
     const escape = (event: KeyboardEvent) => {
       if (event.key === "Escape" && !busyRef.current) setSelected(undefined);
@@ -114,16 +124,61 @@ export function WorkerConnections({
     window.addEventListener("keydown", escape);
     return () => {
       window.removeEventListener("keydown", escape);
-      cancelAnimationFrame(frame);
       if (previous instanceof HTMLElement && previous.isConnected)
         previous.focus();
       window.dispatchEvent(
         new CustomEvent("memcode:popover", { detail: false }),
       );
     };
-  }, [selected?.harness]);
+  }, [selectedHarness]);
+  useEffect(() => {
+    if (!selectedHarness) return;
+    const frame = requestAnimationFrame(() =>
+      document
+        .querySelector<HTMLElement>(
+          readyToApprove
+            ? ".connection-approval input"
+            : ".connection-sign-in button",
+        )
+        ?.focus(),
+    );
+    return () => cancelAnimationFrame(frame);
+  }, [selectedHarness, readyToApprove]);
+  const showConnection = (status: WorkerConnectionStatus) => {
+    setSelected(status);
+    setApproved(false);
+    setDialogError("");
+  };
+  const checkSignIn = async () => {
+    setDialogError("");
+    const current = (await refresh(true))?.find(
+      (status) => status.harness === selectedHarness,
+    );
+    if (current?.connected) {
+      setSelected(undefined);
+      notify(harnessNames[current.harness] + " connected.");
+    } else if (!current) {
+      setDialogError("MemCode couldn’t check sign-in. Try again.");
+    } else if (current.installed && current.auth === "not-authenticated") {
+      setDialogError(
+        "You’re still signed out. Finish sign-in in Terminal, then check again.",
+      );
+    }
+  };
+  const copySignInCommand = async (command: string) => {
+    try {
+      await navigator.clipboard.writeText(command);
+      setDialogError("");
+      notify("Sign-in command copied.");
+    } catch {
+      setDialogError(
+        "Select the command above and copy it into your terminal.",
+      );
+    }
+  };
   const connect = async () => {
-    if (!selected || !approved) return;
+    if (!selected || !readyToApprove || !approved) return;
+    setDialogError("");
     setBusy(true);
     try {
       await window.memcode.connectWorker(selected.harness, true);
@@ -136,7 +191,9 @@ export function WorkerConnections({
       );
       onConnected?.(selected.harness);
     } catch (error) {
-      notify((error as Error).message);
+      setApproved(false);
+      await refresh();
+      setDialogError((error as Error).message);
     } finally {
       setBusy(false);
     }
@@ -211,6 +268,7 @@ export function WorkerConnections({
             desktopFound = !!(
               status?.desktopAppPath ?? installed.desktopAppPath
             ),
+            cursorNeedsAgent = installed.id === "cursor" && !available,
             defaultMode =
               state.settings.workerPermissionDefaults?.[installed.id] ??
               "review",
@@ -246,6 +304,8 @@ export function WorkerConnections({
                     "Connection saved"
                   ) : available ? (
                     "Installed"
+                  ) : cursorNeedsAgent && desktopFound ? (
+                    "Desktop app installed"
                   ) : desktopFound ? (
                     "App found"
                   ) : (
@@ -257,12 +317,14 @@ export function WorkerConnections({
               <p>
                 {!health.available
                   ? "Runtime disconnected. Your saved connection approval is unchanged."
-                  : !available && desktopFound && !approvalSaved
-                    ? "Your desktop app is installed. Set up its agent command to run workers here, then refresh."
-                    : (status?.note ??
-                      (loading
-                        ? "Checking your installed setup…"
-                        : "Connect your installed worker to use it here."))}
+                  : cursorNeedsAgent && desktopFound
+                    ? "Cursor is installed. MemCode runs workers through the separate Cursor Agent CLI. Install it, then refresh here."
+                    : !available && desktopFound && !approvalSaved
+                      ? "Your desktop app is installed. Set up its agent command to run workers here, then refresh."
+                      : (status?.note ??
+                        (loading
+                          ? "Checking your installed setup…"
+                          : "Connect your installed worker to use it here."))}
               </p>
               {connected && status?.accountLabel && (
                 <small className="connection-account-label">
@@ -360,11 +422,13 @@ export function WorkerConnections({
                     </button>
                     <button
                       className="text-button"
-                      onClick={() =>
-                        void window.memcode
-                          .openWorkerSetup(installed.id)
-                          .catch((error) => notify((error as Error).message))
-                      }
+                      onClick={() => {
+                        if (status?.installed) showConnection(status);
+                        else
+                          void window.memcode
+                            .openWorkerSetup(installed.id)
+                            .catch((error) => notify((error as Error).message));
+                      }}
                     >
                       {available ? "Sign-in help" : "Set up agent"}
                       <ArrowUpRight size={12} />
@@ -389,14 +453,16 @@ export function WorkerConnections({
                     }
                   >
                     <ArrowUpRight size={12} />
-                    Set up {installed.name}
+                    {cursorNeedsAgent
+                      ? "Install Cursor Agent CLI"
+                      : "Set up " + installed.name}
                   </button>
                 ) : (
                   <button
                     className="button secondary worker-connect-button"
                     disabled={busy || loading}
                     onClick={() => {
-                      setSelected(
+                      showConnection(
                         status ?? {
                           harness: installed.id,
                           installed: true,
@@ -412,7 +478,6 @@ export function WorkerConnections({
                                 : "codex login",
                         },
                       );
-                      setApproved(false);
                     }}
                   >
                     <Link2 size={12} />
@@ -449,68 +514,126 @@ export function WorkerConnections({
                 <X size={16} />
               </button>
             </header>
-            <span className="eyebrow">YOUR APPROVAL</span>
             <h2 id="connection-consent-title">
               Connect {harnessNames[selected.harness]}.
             </h2>
-            <p>
-              Use the CLI and sign-in already on this computer. MemCode does not
-              ask for your provider password or API key.
-            </p>
-            <div className="connection-permissions">
-              <ShieldCheck size={16} />
-              <div>
-                <strong>What you’re allowing</strong>
-                <ul>
-                  <li>Start this worker in projects you select.</li>
-                  <li>
-                    Pass your brief and relevant code context to its configured
-                    model.
-                  </li>
-                  <li>
-                    Show its managed browser, terminal, changes and saved
-                    outputs here.
-                  </li>
-                </ul>
-                <small>
-                  Your provider’s own permissions still apply. Models may use
-                  cloud services according to your existing setup.
-                </small>
-              </div>
-            </div>
-            <details>
-              <summary>Installed runtime and sign-in</summary>
-              <code>{selected.runtimePath}</code>
-              <p>
-                {selected.auth === "authenticated"
-                  ? "An existing provider sign-in was detected."
-                  : selected.auth === "local"
-                    ? "Using the configured local model."
-                    : "Sign-in has not been confirmed. Run the command below in your terminal, then try connecting again."}
+            {dialogError && (
+              <p className="connection-error" role="alert">
+                {dialogError}
               </p>
-              {!["authenticated", "local"].includes(selected.auth) && (
-                <code>{selected.loginCommand}</code>
-              )}
-            </details>
-            <label className="connection-approval">
-              <input
-                type="checkbox"
-                checked={approved}
-                onChange={(event) => setApproved(event.target.checked)}
-                disabled={busy}
-              />
-              <span>I allow MemCode to use this installed worker.</span>
-            </label>
-            <footer>
-              <small>Connecting does not start a coding task.</small>
-              <button
-                className="button primary"
-                disabled={!approved || busy}
-                onClick={() => void connect()}
-              >
-                {busy ? <Spinner /> : <Link2 size={13} />}Approve & connect
-              </button>
-            </footer>
+            )}
+            {!readyToApprove ? (
+              <div className="connection-sign-in">
+                {selected.installed ? (
+                  <>
+                    <p>
+                      {selected.auth === "not-authenticated"
+                        ? `Sign in to ${harnessNames[selected.harness]} with the command below, then return here.`
+                        : "Check your existing sign-in. If you need to sign in, run this command in your terminal first."}
+                    </p>
+                    <code>{selected.loginCommand}</code>
+                    <div className="connection-sign-in-actions">
+                      <button
+                        className="button secondary"
+                        onClick={() =>
+                          void copySignInCommand(selected.loginCommand)
+                        }
+                      >
+                        Copy command
+                      </button>
+                      {desktopPlatform() === "macos" && (
+                        <button
+                          className="button secondary"
+                          onClick={() =>
+                            void window.memcode
+                              .openWorkerTerminal()
+                              .catch(() =>
+                                setDialogError(
+                                  "Open Terminal from Applications to run the sign-in command.",
+                                ),
+                              )
+                          }
+                        >
+                          Open Terminal
+                        </button>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <p>
+                    Install the worker’s command-line app, then check again.
+                  </p>
+                )}
+                <div className="connection-sign-in-actions">
+                  <button
+                    className="button primary"
+                    disabled={loading}
+                    onClick={() => void checkSignIn()}
+                  >
+                    {loading ? <Spinner /> : <RefreshCw size={12} />}
+                    {selected.installed
+                      ? "Check sign-in"
+                      : "Check installation"}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <p>
+                  Use the CLI and sign-in already on this computer. MemCode does
+                  not ask for your provider password or API key.
+                </p>
+                <div className="connection-permissions">
+                  <ShieldCheck size={16} />
+                  <div>
+                    <strong>What you’re allowing</strong>
+                    <ul>
+                      <li>Start this worker in projects you select.</li>
+                      <li>
+                        Pass your brief and relevant code context to its
+                        configured model.
+                      </li>
+                      <li>
+                        Show its managed browser, terminal, changes and saved
+                        outputs here.
+                      </li>
+                    </ul>
+                    <small>
+                      Your provider’s own permissions still apply. Models may
+                      use cloud services according to your existing setup.
+                    </small>
+                  </div>
+                </div>
+                <details>
+                  <summary>Installed runtime and sign-in</summary>
+                  <code>{selected.runtimePath}</code>
+                  <p>
+                    {selected.auth === "local"
+                      ? "Using the configured local model."
+                      : "An existing provider sign-in was detected."}
+                  </p>
+                </details>
+                <label className="connection-approval">
+                  <input
+                    type="checkbox"
+                    checked={approved}
+                    onChange={(event) => setApproved(event.target.checked)}
+                    disabled={busy}
+                  />
+                  <span>I allow MemCode to use this installed worker.</span>
+                </label>
+                <footer>
+                  <small>Connecting does not start a coding task.</small>
+                  <button
+                    className="button primary"
+                    disabled={!approved || busy}
+                    onClick={() => void connect()}
+                  >
+                    {busy ? <Spinner /> : <Link2 size={13} />}Approve & connect
+                  </button>
+                </footer>
+              </>
+            )}
           </section>
         </div>
       )}

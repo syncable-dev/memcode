@@ -157,6 +157,7 @@ export async function createRuntime(
           : environment;
       },
       privateProject: () => beta?.usesBeta() === true,
+      managedGraphRoot: join(store.dir, "memtrace-projects"),
     },
   );
   const appUpdateGate = new AppUpdateGate(state);
@@ -532,16 +533,24 @@ export async function createRuntime(
       const branch = await git(path, ["branch", "--show-current"]).catch(
         () => "",
       );
-      if (closed || item.path !== path || item.repoId !== repoId) return;
+      await beta?.initialize();
+      const stillCurrent = () =>
+        !closed &&
+        item.path === path &&
+        item.repoId === repoId &&
+        item.analysis === "ready";
+      if (!stillCurrent()) return;
       if (branch) item.branch = branch;
-      const watch = await ensureProjectWatch(engine, item);
-      if (
-        closed ||
-        item.path !== path ||
-        item.repoId !== repoId ||
-        item.analysis !== "ready"
-      )
+      // An older installation can report Ready from its checkout-local graph.
+      // Validate the profile's graph on the first connection and build it if
+      // needed. The saved board and the old graph do not need a migration.
+      if (beta?.usesBeta() && !engine.scopeFor(id)) {
+        await beta.environment();
+        if (stillCurrent()) await analyze(id);
         return;
+      }
+      const watch = await ensureProjectWatch(engine, item);
+      if (!stillCurrent()) return;
       item.analysisNote =
         watch.state === "watching"
           ? "Code context connected. Local changes are watched."
@@ -727,6 +736,9 @@ export async function createRuntime(
   });
   register("connection:guide", z.object({ harness }).strict(), ({ harness }) =>
     host.call("open_worker_setup", { harness }),
+  );
+  register("connection:terminal", z.undefined(), () =>
+    host.call("open_worker_terminal", {}),
   );
   register("workspace:load", z.undefined(), async () => {
     await reconcileCatalog();

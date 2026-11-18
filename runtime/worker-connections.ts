@@ -7,6 +7,7 @@ import {
   commandIdentity,
   findCommand,
   findDesktopApp,
+  type Command,
 } from "./commands";
 import { MemtraceAccountManager, type MemtraceAccountOptions } from "./account";
 import type { NativeHost } from "./host";
@@ -23,11 +24,26 @@ import {
 } from "../src/connections";
 const execute = promisify(execFile);
 const clean = (text: string) => text.replace(/\u001b\[[0-9;]*m/g, "");
+const loginArguments = {
+  codex: ["login"],
+  claude: ["auth", "login"],
+  cursor: ["login"],
+};
 export const loginCommands = {
   codex: "codex login",
   claude: "claude auth login",
   cursor: "agent login",
 };
+function workerLoginCommand(harness: Harness, command: Command) {
+  if (process.platform !== "darwin") return loginCommands[harness];
+  return [command.command, ...command.prefix, ...loginArguments[harness]]
+    .map((word) =>
+      !word || /[^\w./-]/.test(word)
+        ? "'" + word.replaceAll("'", "'\\''") + "'"
+        : word,
+    )
+    .join(" ");
+}
 function accountLabel(value: unknown) {
   return typeof value === "string" &&
     /^[^\s@<>]{1,80}@[^\s@<>]{1,80}$/.test(value)
@@ -55,11 +71,10 @@ export function parseWorkerAuth(
             : "unknown",
         };
   try {
-    const data = JSON.parse(stdout);
+    const data = JSON.parse(clean(stdout));
     const authenticated =
-      harness === "claude"
-        ? data.loggedIn === true
-        : data.isAuthenticated === true;
+      harness === "claude" ? data?.loggedIn : data?.isAuthenticated;
+    if (typeof authenticated !== "boolean") return { auth: "unknown" };
     return {
       auth: authenticated ? "authenticated" : "not-authenticated",
       accountLabel: authenticated
@@ -230,15 +245,17 @@ export function registerConnections(
         : approved
           ? auth.auth === "unknown"
             ? "Your worker approval is saved. Sign-in status could not be checked; check again before starting work."
-            : `Your worker approval is saved. Sign in with ${loginCommands[harness]}, then check again.`
+            : "Your worker approval is saved. Sign in to use this worker again."
           : receipt && !approved
             ? "The installed runtime changed. Review and approve its connection again."
             : auth.auth === "local"
               ? "A local model is configured. Review and approve the connection."
               : auth.auth === "authenticated"
                 ? "Installed and signed in. Review and approve the connection."
-                : `Sign in with ${loginCommands[harness]}, then check again.`,
-      loginCommand: loginCommands[harness],
+                : auth.auth === "unknown"
+                  ? "MemCode couldn’t check your sign-in. Open Connect to check again."
+                  : "Installed. Sign in to connect this worker.",
+      loginCommand: workerLoginCommand(harness, command),
     };
   };
   register("connection:status", z.undefined(), () =>
@@ -253,7 +270,9 @@ export function registerConnections(
         throw Error("Install the worker CLI before connecting it.");
       if (result.auth !== "authenticated" && result.auth !== "local")
         throw Error(
-          `Sign in using ${result.loginCommand}, then connect again.`,
+          result.auth === "not-authenticated"
+            ? `Sign in to ${harnessNames[result.harness]} before approving the connection.`
+            : `MemCode couldn’t verify your ${harnessNames[result.harness]} sign-in.`,
         );
       (state().workerConnections ??= {})[input.harness as Harness] = {
         harness: input.harness,

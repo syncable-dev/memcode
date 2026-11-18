@@ -151,6 +151,22 @@ pub async fn host_call(app: AppHandle, method: &str, input: Value) -> Result<Val
                 .map_err(|e| e.to_string())??;
             Ok(Value::Null)
         }
+        #[cfg(target_os = "macos")]
+        "open_worker_terminal" => {
+            tauri::async_runtime::spawn_blocking(|| {
+                let status = std::process::Command::new("/usr/bin/open")
+                    .args(["-a", "Terminal"])
+                    .status()
+                    .map_err(|error| error.to_string())?;
+                if status.success() {
+                    Ok(Value::Null)
+                } else {
+                    Err("Terminal could not be opened.".to_owned())
+                }
+            })
+            .await
+            .map_err(|error| error.to_string())?
+        }
         "open_memcode_telemetry_privacy" => {
             tauri::async_runtime::spawn_blocking(|| open_claim("https://www.memtrace.io/docs/privacy/telemetry#memcode"))
                 .await

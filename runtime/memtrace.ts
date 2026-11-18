@@ -16,7 +16,7 @@ import {
   normalizeMcpEnvironment,
   type MemtraceScopeBinding,
 } from "./memtrace-workspace";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { ensureLocalRuntimeIgnored } from "./project-repository";
 import {
   ManagedMemtraceOwners,
@@ -103,6 +103,7 @@ export class MemtraceEngine {
     private readonly options: {
       environment?: () => Promise<Record<string, string>>;
       privateProject?: () => boolean;
+      managedGraphRoot?: string;
     } = {},
   ) {}
   scopeFor(projectId: string): MemtraceScopeBinding | null {
@@ -490,9 +491,9 @@ export class MemtraceEngine {
   ): Promise<Client> {
     if (!project.path) throw new Error("Choose a local project folder first.");
     const authentication = await this.options.environment?.();
+    const managed = this.options.privateProject?.() === true;
     privateProject ||=
-      this.options.privateProject?.() === true ||
-      project.analysisCheckout === "owned-worktree-v1";
+      managed || project.analysisCheckout === "owned-worktree-v1";
     const command = await findCommand("memtrace", this.configuredPath());
     if (!command)
       throw new Error(
@@ -500,12 +501,21 @@ export class MemtraceEngine {
       );
     await ensureLocalRuntimeIgnored(project.path);
     const scope = await resolveMcpWorkspace(project.path);
+    const ownedCheckout = project.analysisCheckout === "owned-worktree-v1";
+    const managedGraphRoot = managed
+      ? this.options.managedGraphRoot
+      : undefined;
+    const useManagedOwner = ownedCheckout || !!managedGraphRoot;
     const local = privateProject
-      ? await projectMcpWorkspace(
-          project.path,
-          project.analysisCheckout === "owned-worktree-v1",
-        )
+      ? await projectMcpWorkspace(project.path, {
+          checkoutMode: project.analysisCheckout,
+          managedGraphRoot,
+        })
       : null;
+    const launchDirectory =
+      local && managedGraphRoot && !ownedCheckout
+        ? dirname(local.workspaceFile)
+        : (local?.directory ?? scope.directory);
     const env = normalizeMcpEnvironment(
       Object.fromEntries(
         Object.entries({
@@ -524,13 +534,11 @@ export class MemtraceEngine {
       // Each epic needs current structure, not another embedding-model copy.
       // Its retrieval uses the checkout's lexical/AST graph; facts never fall
       // back to another branch's semantic index.
-      if (project.analysisCheckout === "owned-worktree-v1")
-        env.MEMTRACE_SKIP_EMBED = "1";
+      if (ownedCheckout) env.MEMTRACE_SKIP_EMBED = "1";
       // The SDK stops stdio children after a two-second EOF budget. A native
-      // graph owner needs a durable flush, so owned epics attach as clients
-      // only; ready() starts a separately tracked headless owner when cold.
-      if (project.analysisCheckout === "owned-worktree-v1")
-        env.MEMTRACE_MCP_ATTACH_ONLY = "1";
+      // graph owner needs a durable flush. Managed graphs attach as clients
+      // and ready() starts a separately tracked headless owner when cold.
+      if (useManagedOwner) env.MEMTRACE_MCP_ATTACH_ONLY = "1";
     }
     let active: { client: Client; transport: StdioClientTransport } | undefined;
     const disconnect = async () => {
@@ -548,16 +556,14 @@ export class MemtraceEngine {
         args: [
           ...command.prefix,
           "mcp",
-          ...(project.analysisCheckout === "owned-worktree-v1"
-            ? ["--attach-only"]
-            : []),
+          ...(useManagedOwner ? ["--attach-only"] : []),
           ...(local
             ? ["--workspace-file", local.workspaceFile]
             : scope.workspace
               ? ["--workspace", scope.workspace]
               : []),
         ],
-        cwd: local?.directory ?? scope.directory,
+        cwd: launchDirectory,
         env,
         stderr: "pipe",
       });
@@ -607,7 +613,7 @@ export class MemtraceEngine {
           return this.open(project, true);
         }
         await this.owners.ready(
-          local,
+          { ...local, directory: launchDirectory },
           command,
           env,
           async () => {

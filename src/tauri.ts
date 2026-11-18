@@ -263,6 +263,7 @@ export async function installNativeBridge(): Promise<void> {
     showInstallationSource: () => call("installation:show-source"),
     showApplications: () => call("installation:show-applications"),
     openWorkerSetup: (harness) => call("connection:guide", { harness }),
+    openWorkerTerminal: () => call("connection:terminal"),
     workerConnectionStatus: () => call("connection:status"),
     connectWorker: (harness, approved) =>
       call("connection:approve", { harness, approved }),

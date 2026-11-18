@@ -229,7 +229,13 @@ async function fixture(onSourceCheck?: () => void) {
     const deadline = Date.now() + 5000;
     while (Date.now() < deadline) {
       const value = await client.get(task.id);
-      if (value && !["queued", "running"].includes(value.state)) return value;
+      if (
+        value &&
+        !["queued", "running"].includes(value.state) &&
+        task.codeReview?.runId === value.id &&
+        task.codeReview.state === value.state
+      )
+        return value;
       await new Promise((resolve) => setTimeout(resolve, 5));
     }
     throw Error("Review did not settle");

@@ -1,4 +1,12 @@
-import { stat, realpath, mkdir, readFile, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import {
+  lstat,
+  stat,
+  realpath,
+  mkdir,
+  readFile,
+  writeFile,
+} from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 async function isKind(path: string, kind: "file" | "directory") {
@@ -43,15 +51,58 @@ export interface MemtraceScopeBinding {
   workspaceFile?: string;
 }
 
+async function rejectRedirectedGraphPath(path: string): Promise<void> {
+  const entry = await lstat(path).catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== "ENOENT") throw error;
+  });
+  if (entry?.isSymbolicLink())
+    throw Error("The managed Memtrace graph cannot use a redirected path.");
+}
+
+async function managedProjectDirectory(root: string, checkout: string) {
+  await mkdir(root, { recursive: true, mode: 0o700 });
+  await rejectRedirectedGraphPath(root);
+  const key = createHash("sha256")
+    .update(admissionPath(checkout))
+    .digest("hex")
+    .slice(0, 32);
+  return join(await realpath(root), key);
+}
+
 export async function projectMcpWorkspace(
   projectPath: string,
-  ownedWorktree = false,
+  options: {
+    checkoutMode?: "owned-worktree-v1";
+    managedGraphRoot?: string;
+  } = {},
 ) {
-  const directory = await realpath(projectPath),
-    anchor = join(directory, ".memcode", "memtrace"),
-    workspaceFile = join(anchor, "workspace.toml");
+  const directory = await realpath(projectPath);
+  const ownedWorktree = options.checkoutMode === "owned-worktree-v1";
+  // Owned epic manifests must remain underneath the linked checkout. The
+  // managed primary graph lives in the profile so a standalone CLI can keep
+  // its existing checkout-local graph and indexing history.
+  const managedRoot = ownedWorktree ? undefined : options.managedGraphRoot;
+  const graphDirectory = managedRoot
+    ? await managedProjectDirectory(managedRoot, directory)
+    : directory;
+  const anchor = join(graphDirectory, ".memcode", "memtrace");
+  const workspaceFile = join(anchor, "workspace.toml");
+  const dataDirectory = join(anchor, ".memdb");
+  const jobDirectory = join(anchor, ".memtrace");
   const expected = `version = 1\n${ownedWorktree ? 'checkout_mode = "owned-worktree-v1"\n' : ""}name = "MemCode project"\nmembers = [${JSON.stringify(directory.replaceAll("\\", "/"))}]\n`;
-  await mkdir(anchor, { recursive: true });
+  if (managedRoot) {
+    for (const path of [
+      graphDirectory,
+      dirname(anchor),
+      anchor,
+      workspaceFile,
+      dataDirectory,
+      jobDirectory,
+    ])
+      await rejectRedirectedGraphPath(path);
+  }
+  await mkdir(anchor, { recursive: true, mode: 0o700 });
+  if (managedRoot) await mkdir(dataDirectory, { recursive: true, mode: 0o700 });
   let existing: string | null = null;
   try {
     existing = await readFile(workspaceFile, "utf8");
@@ -67,8 +118,8 @@ export async function projectMcpWorkspace(
   return {
     directory,
     workspaceFile,
-    dataDirectory: join(anchor, ".memdb"),
-    jobDirectory: join(anchor, ".memtrace"),
+    dataDirectory,
+    jobDirectory,
   };
 }
 

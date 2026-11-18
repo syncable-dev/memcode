@@ -504,6 +504,7 @@ export interface MemCodeAPI extends CodeReviewAPI {
   showInstallationSource(): Promise<void>;
   showApplications(): Promise<void>;
   openWorkerSetup(harness: Harness): Promise<void>;
+  openWorkerTerminal(): Promise<void>;
   workerConnectionStatus(): Promise<
     import("./connections").WorkerConnectionStatus[]
   >;

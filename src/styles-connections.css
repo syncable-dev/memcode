@@ -206,6 +206,26 @@
   font-size: 10px;
   line-height: 1.7;
 }
+.connection-sign-in > p {
+  font-size: 12px;
+  line-height: 1.8;
+  color: #637d6d;
+}
+.connection-sign-in > code {
+  display: block;
+  padding: 12px;
+  border-radius: 8px;
+  background: #edf4e6;
+  color: #305542;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.connection-sign-in-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
 .connection-approval {
   display: flex;
   align-items: center;

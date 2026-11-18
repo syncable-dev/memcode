@@ -101,6 +101,23 @@ test("provider auth status parsing exposes only harmless account labels", () => 
   assert.equal(parseWorkerAuth("claude", "unexpected output").auth, "unknown");
 });
 
+test("provider auth distinguishes signed out from a status it cannot verify", () => {
+  assert.equal(
+    parseWorkerAuth("claude", '{"loggedIn":false}').auth,
+    "not-authenticated",
+  );
+  assert.equal(
+    parseWorkerAuth("cursor", '\u001b[32m{"isAuthenticated":false}\u001b[0m')
+      .auth,
+    "not-authenticated",
+  );
+  assert.equal(
+    parseWorkerAuth("claude", '{"message":"unavailable"}').auth,
+    "unknown",
+  );
+  assert.equal(parseWorkerAuth("cursor", "null").auth, "unknown");
+});
+
 test("installed adapters are disconnected until an explicit path-bound grant", () => {
   const state = initialState(),
     runtime: HarnessRuntime = {

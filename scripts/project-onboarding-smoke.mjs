@@ -53,7 +53,15 @@ const listeners=new Set(),calls=[];window.fixtureCalls=calls;
 const runtime={appVersion:'Synthetic onboarding fixture',memtraceAvailable:true,dataPath:'Synthetic fixture · no local access',harnesses:['codex','claude','cursor'].map(id=>({id,name:{codex:'Codex',claude:'Claude Code',cursor:'Cursor'}[id],available:true,path:'/synthetic/'+id,models:[]}))};
 const emit=async()=>{localStorage.setItem('project-guide-fixture',JSON.stringify(state));for(const fn of listeners)fn(structuredClone(state));};
 const routes=new Map();registerOnboarding((name,schema,handle)=>routes.set(name,{schema,handle}),()=>state,emit);
-const status=()=>runtime.harnesses.map(h=>({harness:h.id,installed:true,connected:!!state.workerConnections[h.id],runtimePath:h.path,auth:'authenticated',note:'Synthetic connection fixture; no installed tool is accessed.',loginCommand:''}));
+let claudeSignedIn=false,cursorAgentInstalled=false;
+const status=()=>runtime.harnesses.map(h=>({
+  harness:h.id,installed:h.id!=='cursor'||cursorAgentInstalled,
+  connected:!!state.workerConnections[h.id]&&(h.id!=='claude'||claudeSignedIn),
+  runtimePath:h.path,auth:h.id==='claude'&&!claudeSignedIn?'not-authenticated':'authenticated',
+  desktopAppPath:h.id==='cursor'?'/synthetic/Cursor.app':undefined,
+  note:'Synthetic connection fixture; no installed tool is accessed.',
+  loginCommand:h.id==='claude'?'claude auth login':'agent login'
+}));
 const beta={state:'connected',accessMode:'beta',detail:'Synthetic fixture; no real account.',loginPending:false,account:{id:'synthetic-account',name:'Example account'}};
 const methods={
 load:async()=>({state:structuredClone(state),runtime}),onState:fn=>{listeners.add(fn);return()=>listeners.delete(fn)},onRuntimeHealth:()=>()=>{},onBetaStatus:()=>()=>{},betaStatus:async()=>beta,resumeBeta:async()=>beta,
@@ -64,6 +72,7 @@ selectFolder:async()=>'/synthetic/selected-folder',
 createProject:async input=>{calls.push('create-project');const project={id:crypto.randomUUID(),name:input.name,description:input.description,path:'/synthetic/'+input.name.toLowerCase().replaceAll(' ','-'),branch:'main',analysis:'ready',createdAt:at};state.projects.push(project);state.activeProjectId=project.id;beginProjectGuide(state,project);await emit();return project;},
 analyzeProject:async id=>{calls.push('analyze-fixture');state.projects.find(p=>p.id===id).analysis='ready';await emit();},
 workerConnectionStatus:async()=>status(),connectWorker:async(harness,approved)=>{if(approved!==true)throw Error('Explicit approval required');calls.push('approve-worker');state.workerConnections[harness]={harness,approvedAt:at,runtimePath:'/synthetic/'+harness,auth:'authenticated',scopeVersion:1};await emit();return status().find(s=>s.harness===harness)},
+refreshWorkerCatalog:async()=>runtime,openWorkerTerminal:async()=>{calls.push('open-worker-terminal')},
 setWorkerPermissionDefault:async()=>{},speechStatus:async()=>({state:'unavailable',detail:'Synthetic fixture; no microphone.'}),
 teamsList:async()=>({teams:[],configured:false,canCreate:false,identityAvailable:false}),
 windowAction:async()=>{},createEpic:async input=>{calls.push('create-epic');const epic={...input,id:crypto.randomUUID(),identifier:'EP-01',order:0,color:'mint'};state.epics.push(epic);await emit();return epic;},
@@ -71,7 +80,7 @@ saveSettings:async()=>runtime,
 createTask:async input=>{const story={...structuredClone(state.tasks[0]),...input,id:'guided-story',identifier:'MC-102',stage:'planned',statusId:'fresh:planned',messages:[],runbook:[],run:{state:'idle'},example:false};state.tasks.push(story);await emit();return story;},
 };
 window.memcode=new Proxy(methods,{get:(target,key)=>key in target?target[key]:String(key).startsWith('on')?()=>()=>{}:async()=>null});
-window.fixture={snapshot:()=>structuredClone(state),select:methods.selectProject};
+window.fixture={snapshot:()=>structuredClone(state),select:methods.selectProject,signInClaude:()=>{claudeSignedIn=true},installCursorAgent:()=>{cursorAgentInstalled=true}};
 createRoot(document.getElementById('root')).render(<><App/><div style={{position:'fixed',bottom:3,left:220,fontSize:9,color:'#7c8f80',zIndex:200,pointerEvents:'none'}}>Synthetic onboarding fixture · no real accounts or workers</div></>);
 `,
   },
@@ -118,7 +127,11 @@ let browser, page;
 try {
   browser = await chromium.launch({
     headless: true,
-    ...(process.platform === "win32" ? { channel: "msedge" } : {}),
+    ...(process.env.MEMCODE_BROWSER_EXECUTABLE
+      ? { executablePath: process.env.MEMCODE_BROWSER_EXECUTABLE }
+      : process.platform === "win32"
+        ? { channel: "msedge" }
+        : {}),
   });
   page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   page.on("pageerror", (e) => errors.push(e.message));
@@ -172,6 +185,61 @@ try {
   await expect(guide).toHaveCount(0);
   assert.deepEqual(await counts("fresh"), { stories: 0, epics: 0, cycles: 0 });
   checks.push("Setup can complete without creating an epic, story or cycle");
+  await page.getByRole("button", { name: "Workers", exact: true }).click();
+  const cursor = page.locator('[data-harness="cursor"]');
+  await expect(cursor).toContainText("Desktop app installed");
+  await expect(
+    cursor.getByRole("button", { name: "Install Cursor Agent CLI" }),
+  ).toBeVisible();
+  await page.evaluate(() => window.fixture.installCursorAgent());
+  await page
+    .getByRole("button", { name: "Refresh worker connections" })
+    .click();
+  await expect(
+    cursor.getByRole("button", { name: "Connect Cursor" }),
+  ).toBeVisible();
+  checks.push(
+    "Cursor's desktop app and its separate agent CLI are shown distinctly",
+  );
+
+  await page
+    .getByRole("button", { name: "Connect Claude Code", exact: true })
+    .click();
+  const claude = page.getByRole("dialog", { name: "Connect Claude Code." });
+  await expect(claude).toContainText("claude auth login");
+  await expect(
+    claude.getByRole("button", { name: "Approve & connect" }),
+  ).toHaveCount(0);
+  if (process.platform === "darwin") {
+    await claude.getByRole("button", { name: "Open Terminal" }).click();
+    assert.equal(
+      await page.evaluate(() =>
+        window.fixtureCalls.includes("open-worker-terminal"),
+      ),
+      true,
+    );
+  }
+  await claude.getByRole("button", { name: "Check sign-in" }).click();
+  await expect(claude.getByRole("alert")).toContainText(
+    "You’re still signed out",
+  );
+  assert.equal((await snapshot()).workerConnections.claude, undefined);
+  await page.evaluate(() => window.fixture.signInClaude());
+  await claude.getByRole("button", { name: "Check sign-in" }).click();
+  await expect(
+    claude.getByRole("button", { name: "Approve & connect" }),
+  ).toBeDisabled();
+  await expect(claude.getByRole("checkbox")).toBeFocused();
+  await claude.getByRole("checkbox").check();
+  await claude.getByRole("button", { name: "Approve & connect" }).click();
+  await expect(claude).toHaveCount(0);
+  await expect(page.locator('[data-harness="claude"]')).toContainText(
+    "Connected",
+  );
+  checks.push(
+    "Claude sign-in can be rechecked in place and still requires approval",
+  );
+
   await page.getByRole("button", { name: "Docs", exact: true }).click();
   const flow = page.getByRole("navigation", {
     name: "From project to code review",
