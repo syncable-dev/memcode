@@ -486,16 +486,23 @@ export async function createRuntime(
       await changed();
       return;
     }
+    const previousFailure =
+      item.analysis === "error" ? item.analysisNote : undefined;
     item.analysis = "connecting";
     item.analysisNote = "Connecting to local Memtrace…";
     await changed();
     try {
       await ensureProjectRepository(item);
-      item.repoId = await engine.analyze(item, (note) => {
-        item.analysis = "indexing";
-        item.analysisNote = note;
-        void changed();
-      });
+      item.repoId = await engine.analyze(
+        item,
+        (note) => {
+          item.analysis = "indexing";
+          item.analysisNote = note;
+          void changed();
+        },
+        false,
+        previousFailure,
+      );
       item.analysis = "ready";
       item.analysisNote = "Project code context is connected.";
       await changed();
@@ -1257,7 +1264,14 @@ export async function createRuntime(
   );
   registerPlanningControls(register, state, project, changed);
   registerIntelligence(register, state, project, changed, engine);
-  registerLocalAnalysis(register, project, engine);
+  registerLocalAnalysis(register, project, engine, async (item, repoId) => {
+    if (closed || analyses.has(item.id)) return;
+    item.repoId = repoId;
+    item.analysis = "ready";
+    item.analysisNote =
+      "Memtrace verified the current source and graph for this checkout.";
+    await changed();
+  });
   registerAppUpdates(register, appUpdateGate, changed, () =>
     workers.dispatchQueued(),
   );

@@ -29,6 +29,7 @@ for (const variant of [
   "mismatch",
   "unstable",
   "unknown",
+  "replaying",
 ]) {
   const project = {
     id: "personal",
@@ -110,13 +111,24 @@ for (const variant of [
           return {
             repo_id: "fixture",
             ready: ["aligned", "mismatch", "unstable"].includes(variant),
+            worktree: project.path,
+            status: variant === "aligned" ? "complete" : "partial",
+            publication: { status: "published" },
+            _meta: {
+              graph_revision: { publication_unchanged_during_call: true },
+            },
+            source_unchanged_during_observation: true,
+            requested_source_matches: true,
+            requested_revision_matches: true,
             branch: variant === "mismatch" ? "epic/different" : "main",
             source_revision: "synthetic-source-revision",
             mismatched_files: variant === "aligned" ? 0 : 2,
             reason:
-              variant === "blocked" || variant === "unknown"
-                ? "source_index_not_qualified"
-                : undefined,
+              variant === "replaying"
+                ? "branch_publication_incomplete"
+                : variant === "blocked" || variant === "unknown"
+                  ? "source_index_not_qualified"
+                  : undefined,
             ...(variant === "unstable"
               ? {
                   retry_query_group: true,
@@ -136,6 +148,7 @@ for (const variant of [
         mode: "project",
         dataDirectory: "C:/Synthetic/observatory/.memcode/memtrace/.memdb",
       }),
+      bindingStillCurrent: () => () => true,
       certificateDiagnosticsFor: () => [
         "full owned source could not qualify its independently verified input certificate",
       ],
@@ -192,7 +205,7 @@ window.memcode={
  analyzeProject:async(id)=>{window.calls.push(['analyze',id]);source.projects.find(p=>p.id===id).analysis='ready';publish()},
  startWorker:async()=>{window.calls.push(['UNEXPECTED-WORKER-START'])},
  teamStatus:async()=>null,
- localAnalysisDiagnostics:async(id)=>{window.calls.push(['diagnostics',id]);const value=structuredClone(window.diagnosticReports[window.diagnosticVariant]);const project=source.projects.find(p=>p.id===id);value.project={...value.project,name:project.name,path:project.path,branch:project.branch};if(window.holdDiagnostics)return await new Promise(resolve=>{window.releaseDiagnostics=()=>resolve(value)});return value;},
+ localAnalysisDiagnostics:async(id)=>{window.calls.push(['diagnostics',id]);const value=structuredClone(window.diagnosticReports[window.diagnosticVariant]);const project=source.projects.find(p=>p.id===id);value.project={...value.project,name:project.name,path:project.path,branch:project.branch};if(window.holdDiagnostics)return await new Promise(resolve=>{window.releaseDiagnostics=()=>resolve(value)});if(value.sourcePublication==='verified' && project.analysis==='error' && project.analysisNote==='owned source changed after verification; refusing publication') window.setLocalAnalysis('ready','Verified on this checkout.');return value;},
 };
 function Fixture(){const[state,setState]=useState(source),[selected,setSelected]=useState(mode==='owner'||mode==='diagnostics'?'personal':'shared');update=setState;window.selectProject=setSelected;const project=state.projects.find(p=>p.id===selected);window.setLocalAnalysis=(analysis,note)=>{Object.assign(project,{analysis,analysisNote:note});publish();};window.changeLocalPath=(path)=>{project.path=path;publish();};return <main style={{maxWidth:1170,padding:30,margin:'0 auto'}}><div style={{fontSize:10,color:'#87968c',marginBottom:20,letterSpacing:1}}>SYNTHETIC ONBOARDING FIXTURE · NO LIVE ACCOUNTS</div>{mode==='diagnostics'?<LocalProjectSetup project={project} repository={repository} notify={text=>window.calls.push(['notify',text])} onWorkers={()=>window.calls.push(['workers-page'])}/>:<TeamOnboarding state={state} project={project} notify={text=>window.calls.push(['notify',text])} open={()=>{}} openArtifact={()=>{}} onWorkers={()=>window.calls.push(['workers-page'])}/>}<aside data-testid="current-project" style={{fontSize:11,color:'#7e9183',padding:'20px 0',borderTop:'1px solid #dfe7dd'}}>Current project: {project.name}<div>{state.tasks.filter(t=>t.projectId===selected).map(t=><p key={t.id}>{t.title}</p>)}</div></aside></main>};
 createRoot(document.getElementById('root')).render(<Fixture/>);
@@ -719,6 +732,34 @@ try {
     "branch-mismatched revisions are never labelled Aligned",
     "watch/job failures remain Unknown rather than absent",
     "diagnostics clear after local path changes and stale responses cannot cross projects",
+  );
+  await page.goto(url + "/?mode=diagnostics");
+  await page.evaluate(() => {
+    window.diagnosticVariant = "replaying";
+    window.setLocalAnalysis(
+      "error",
+      "owned source changed after verification; refusing publication",
+    );
+  });
+  await expect(
+    page.getByText("Not yet verified", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Retry analysis" }),
+  ).toBeVisible();
+  await page.evaluate(() => {
+    window.diagnosticVariant = "aligned";
+  });
+  await expect(
+    page.getByText("Code context is ready", { exact: true }),
+  ).toBeVisible({ timeout: 12_000 });
+  expect(
+    await page.evaluate(
+      () => window.calls.filter((call) => call[0] === "analyze").length,
+    ),
+  ).toBe(0);
+  flows.push(
+    "a later certified replay automatically clears a saved refusal without submitting an index",
   );
   await page.setViewportSize({ width: 640, height: 900 });
   await page.goto(url + "/?mode=reuse");

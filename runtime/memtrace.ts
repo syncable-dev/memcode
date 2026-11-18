@@ -24,10 +24,14 @@ import {
   disconnectedMemtraceClient,
 } from "./memtrace-owner";
 import {
+  certifiedPublication,
+  pathKey,
+  exactRevisionSource,
   verifiedIndexRevision,
   waitForIndexPublication,
   waitForPeerIndex,
 } from "./memtrace-peer-index";
+import { sourceChangedBeforePublication } from "../src/local-analysis";
 import { appVersion } from "../src/version";
 
 type Json = Record<string, any>;
@@ -49,13 +53,6 @@ function unwrap(value: unknown): any {
   }
   return result;
 }
-const pathKey = (value: string) =>
-  value
-    .replace(/^\\\\\?\\/, "")
-    .replaceAll("\\", "/")
-    .replace(/\/$/, "")
-    .toLowerCase();
-
 /** MemCode's record of the engine's live watch on one project folder. */
 export interface MemtraceWatch {
   /** watching: the engine lists a watch on this folder. unavailable: see reason. */
@@ -109,6 +106,15 @@ export class MemtraceEngine {
   scopeFor(projectId: string): MemtraceScopeBinding | null {
     const scope = this.scopes.get(projectId);
     return scope ? { ...scope } : null;
+  }
+  /** Guard a multi-call observation against owner replacement or retirement. */
+  bindingStillCurrent(projectId: string): () => boolean {
+    const owner = this.clients.get(projectId);
+    return () =>
+      !!owner &&
+      !this.closing &&
+      !this.retiring.has(projectId) &&
+      this.clients.get(projectId) === owner;
   }
   /** Version advertised by the connected engine, never inferred from an install pin. */
   versionFor(projectId: string): string | undefined {
@@ -757,8 +763,16 @@ export class MemtraceEngine {
     project: Project,
     update: (note: string) => void,
     force = false,
+    previousFailure = project.analysis === "error"
+      ? project.analysisNote
+      : undefined,
   ): Promise<string> {
-    const repoId = await this.index(project, update, force);
+    const repoId = await this.index(
+      project,
+      update,
+      force,
+      sourceChangedBeforePublication(previousFailure),
+    );
     // Watcher lifecycle step 1. Analysis is complete without waiting for it.
     void this.watch(project, repoId).catch(() => {});
     return repoId;
@@ -767,6 +781,7 @@ export class MemtraceEngine {
     project: Project,
     update: (note: string) => void,
     force: boolean,
+    retryPublication: boolean,
   ): Promise<string> {
     update("Connecting to the local Memtrace engine…");
     await this.connect(project, update);
@@ -780,8 +795,12 @@ export class MemtraceEngine {
     );
     const connection = this.clients.get(project.id),
       scope = this.scopes.get(project.id);
+    const selectedPath = project.path,
+      selectedBranch = project.branch;
     const isCancelled = () =>
       this.closing ||
+      project.path !== selectedPath ||
+      project.branch !== selectedBranch ||
       this.clients.get(project.id) !== connection ||
       this.scopes.get(project.id) !== scope;
     const assertActive = () => {
@@ -790,23 +809,41 @@ export class MemtraceEngine {
           "Memtrace analysis was cancelled or its engine binding changed. Its result was not adopted.",
         );
     };
-    if (!force && match?.index_state === "current") {
+    if (
+      !force &&
+      (match?.index_state === "current" || (retryPublication && match?.repo_id))
+    ) {
       const revision = await this.call(project, "get_query_revision", {
         repo_id: match.repo_id,
+        branch: project.branch,
       });
       assertActive();
-      if (verifiedIndexRevision(revision, project, match.repo_id))
+      if (retryPublication) {
+        if (
+          (project.repoId && project.repoId !== match.repo_id) ||
+          !exactRevisionSource(revision, project, match.repo_id)
+        )
+          throw Error(
+            "Memtrace could not verify the repository, branch and checkout for this retry.",
+          );
+        if (certifiedPublication(revision, project, match.repo_id))
+          return match.repo_id;
+      } else if (verifiedIndexRevision(revision, project, match.repo_id))
         return match.repo_id;
       // Native startup can publish the repository summary before its independent
       // source certificate. Follow that publication without enqueueing a duplicate.
-      return waitForPeerIndex(
-        this,
-        project,
-        { repo_id: match.repo_id, branch: project.branch },
-        match.repo_id,
-        update,
-        { isCancelled },
-      );
+      if (
+        !retryPublication ||
+        revision?.reason !== "branch_publication_incomplete"
+      )
+        return waitForPeerIndex(
+          this,
+          project,
+          { repo_id: match.repo_id, branch: project.branch },
+          match.repo_id,
+          update,
+          { isCancelled, requireCertificate: retryPublication },
+        );
     }
     update("Reading the project structure and building its code graph…");
     const queueIndex = () =>
@@ -830,7 +867,7 @@ export class MemtraceEngine {
         job,
         match?.repo_id ?? project.repoId,
         update,
-        { isCancelled },
+        { isCancelled, requireCertificate: retryPublication },
       );
     if (job.skipped)
       throw new Error(
@@ -848,8 +885,24 @@ export class MemtraceEngine {
       });
       assertActive();
       update(`Analyzing code · ${status.stage ?? status.status ?? "working"}`);
-      if (status.status === "failed")
+      if (status.status === "failed") {
+        // A later replay can already have certified the same checkout. The
+        // original failed job remains available in engine diagnostics.
+        const repoId = match?.repo_id ?? status.repo_id ?? project.repoId;
+        if (
+          sourceChangedBeforePublication(status.error) &&
+          typeof repoId === "string" &&
+          (!project.repoId || project.repoId === repoId)
+        ) {
+          const revision = await this.call(project, "get_query_revision", {
+            repo_id: repoId,
+            branch: project.branch,
+          }).catch(() => null);
+          assertActive();
+          if (certifiedPublication(revision, project, repoId)) return repoId;
+        }
         throw new Error(status.error ?? "Project analysis failed");
+      }
       if (status.status === "completed") {
         const indexed = await this.call(
           project,
@@ -875,6 +928,7 @@ export class MemtraceEngine {
           );
         return waitForIndexPublication(this, project, repoId, update, {
           isCancelled,
+          requireCertificate: retryPublication,
         });
       }
     }

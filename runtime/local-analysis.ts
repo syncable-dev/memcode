@@ -7,9 +7,15 @@ import type {
 } from "../src/local-analysis";
 import type { Project } from "../src/shared";
 import type { MemtraceEngine } from "./memtrace";
+import {
+  certifiedPublication,
+  exactRevisionSource,
+} from "./memtrace-peer-index";
+import { sourceChangedBeforePublication } from "../src/local-analysis";
 
 type Engine = Pick<MemtraceEngine, "call" | "scopeFor"> & {
   certificateDiagnosticsFor?: (projectId: string) => string[];
+  bindingStillCurrent?: (projectId: string) => () => boolean;
 };
 type Register = (
   name: string,
@@ -122,6 +128,8 @@ const revisionKeys = [
   "branch",
   "repo_id",
   "worktree",
+  "checkout_mode",
+  "graph_scope",
   "source_commit",
   "source_revision",
   "indexing_revision",
@@ -165,9 +173,13 @@ const jobKeys = [
 export async function localAnalysisDiagnostics(
   project: Project,
   engine: Engine,
-  options: { timeoutMs?: number } = {},
+  options: {
+    timeoutMs?: number;
+    onRecovered?: (repoId: string) => Promise<void>;
+  } = {},
 ): Promise<LocalAnalysisDiagnostics> {
   const result: LocalAnalysisDiagnostics = {
+    sourcePublication: "unverified",
     platform: process.platform,
     project: {
       name: text(project.name, 240)!,
@@ -239,6 +251,10 @@ export async function localAnalysisDiagnostics(
     );
     return result;
   }
+  const root = pathKey(project.path);
+  const savedNote = project.analysisNote;
+  const savedRepo = project.repoId;
+  const savedCheckout = project.analysisCheckout;
   const [repositories, watches, jobs] = await Promise.all([
     query("list_indexed_repositories"),
     query("list_watched_paths"),
@@ -256,7 +272,6 @@ export async function localAnalysisDiagnostics(
       );
     return rows(value, keys);
   };
-  const root = pathKey(project.path);
   const matched = listed(
     repositories,
     ["repos", "repositories"],
@@ -278,6 +293,13 @@ export async function localAnalysisDiagnostics(
     typeof repository?.repo_id === "string"
       ? repository.repo_id
       : project.repoId;
+  const bindingStillCurrent = engine.bindingStillCurrent?.(project.id);
+  const sameCheckout = () =>
+    root === pathKey(project.path) &&
+    result.project.branch === project.branch &&
+    savedRepo === project.repoId &&
+    savedCheckout === project.analysisCheckout &&
+    bindingStillCurrent?.() === true;
   if (
     repository?.repo_id &&
     project.repoId &&
@@ -352,7 +374,10 @@ export async function localAnalysisDiagnostics(
       return output;
     });
   if (repoId) {
-    const revision = await query("get_query_revision", { repo_id: repoId });
+    const revision = await query("get_query_revision", {
+      repo_id: repoId,
+      branch: result.project.branch,
+    });
     if (
       revision !== undefined &&
       !["ready", "status", "reason"].some((key) => key in row(revision))
@@ -362,6 +387,22 @@ export async function localAnalysisDiagnostics(
         "The engine returned unrecognized index revision metadata; readiness is unknown.",
       );
     else if (revision !== undefined) {
+      const exactOwner =
+        sameCheckout() &&
+        repository?.repo_id === repoId &&
+        (!(repository.live_branch ?? repository.branch) ||
+          (repository.live_branch ?? repository.branch) === project.branch) &&
+        (!savedRepo || savedRepo === repoId) &&
+        exactRevisionSource(row(revision), project, repoId);
+      if (exactOwner) {
+        if (certifiedPublication(row(revision), project, repoId))
+          result.sourcePublication = "verified";
+        else if (
+          row(revision).ready === false &&
+          row(revision).reason === "branch_publication_incomplete"
+        )
+          result.sourcePublication = "incomplete";
+      }
       result.indexRevision = metadata(revision, revisionKeys);
       const paths = row(revision).mismatched_paths;
       if (Array.isArray(paths))
@@ -462,6 +503,20 @@ export async function localAnalysisDiagnostics(
       reason: failure.reason.slice(0, 256),
     }));
   }
+  if (
+    result.sourcePublication === "verified" &&
+    sameCheckout() &&
+    options.onRecovered &&
+    project.analysis === "error" &&
+    project.analysisNote === savedNote &&
+    sourceChangedBeforePublication(savedNote) &&
+    typeof repoId === "string"
+  ) {
+    await options.onRecovered(repoId);
+    result.project.analysis = project.analysis;
+    result.project.note = text(project.analysisNote);
+    result.project.repoId = text(project.repoId);
+  }
   return result;
 }
 
@@ -469,10 +524,21 @@ export function registerLocalAnalysis(
   register: Register,
   projectById: (id: string) => Project,
   engine: Engine,
+  onRecovered?: (project: Project, repoId: string) => Promise<void>,
 ) {
   register(
     "project:local-diagnostics",
     z.object({ projectId: z.string().min(1).max(200) }).strict(),
-    ({ projectId }) => localAnalysisDiagnostics(projectById(projectId), engine),
+    ({ projectId }) => {
+      const item = projectById(projectId);
+      return localAnalysisDiagnostics(item, engine, {
+        onRecovered:
+          onRecovered &&
+          (async (repoId) => {
+            if (projectById(projectId) === item)
+              await onRecovered(item, repoId);
+          }),
+      });
+    },
   );
 }

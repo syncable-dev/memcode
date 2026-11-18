@@ -22,6 +22,114 @@ const project = (): Project => ({
 });
 type Engine = Pick<MemtraceEngine, "call" | "scopeFor">;
 
+test("only a stable certificate from the same owner recovers a saved publication refusal", async () => {
+  const item = project();
+  const refused =
+    "owned source changed after verification; refusing publication";
+  const stable = {
+    ready: true,
+    status: "complete",
+    publication: { status: "published" },
+    _meta: { graph_revision: { publication_unchanged_during_call: true } },
+    source_unchanged_during_observation: true,
+    requested_source_matches: true,
+    requested_revision_matches: true,
+    repo_id: item.repoId,
+    worktree: item.path,
+    branch: item.branch,
+  };
+  for (const [name, patch, ownerCurrent, note, recovered] of [
+    [
+      "replay and embeddings still running",
+      {
+        ready: false,
+        status: "partial",
+        reason: "branch_publication_incomplete",
+      },
+      true,
+      refused,
+      false,
+    ],
+    [
+      "wrong checkout",
+      { worktree: item.path + "-other" },
+      true,
+      refused,
+      false,
+    ],
+    ["wrong repo", { repo_id: "other" }, true, refused, false],
+    ["wrong branch", { branch: "other" }, true, refused, false],
+    [
+      "revision changed",
+      { requested_revision_matches: false },
+      true,
+      refused,
+      false,
+    ],
+    [
+      "unstable publication",
+      {
+        _meta: { graph_revision: { publication_unchanged_during_call: false } },
+      },
+      true,
+      refused,
+      false,
+    ],
+    ["owner retired during capture", {}, false, refused, false],
+    ["unrelated saved error", {}, true, "Authorization failed", false],
+    ["stable verified publication", {}, true, refused, true],
+  ] as const) {
+    item.analysis = "error";
+    item.analysisNote = note;
+    const observed = await localAnalysisDiagnostics(
+      item,
+      {
+        call: async (_p, name) => {
+          if (name === "list_indexed_repositories")
+            return [
+              {
+                repo_id: item.repoId,
+                repo_path: item.path,
+                live_branch: item.branch,
+                index_state: "current",
+              },
+            ];
+          if (name === "list_watched_paths")
+            return { watches: [{ path: item.path, branch: item.branch }] };
+          if (name === "list_jobs")
+            return {
+              jobs: [
+                { repo_id: item.repoId, status: "completed", stage: "replay" },
+                { repo_id: item.repoId, status: "running", stage: "embed" },
+              ],
+            };
+          if (name === "get_query_revision") return { ...stable, ...patch };
+          throw Error("Unexpected operation " + name);
+        },
+        scopeFor: () => null,
+        bindingStillCurrent: () => () => ownerCurrent,
+      },
+      {
+        onRecovered: async (id) => {
+          assert.equal(id, item.repoId);
+          item.analysis = "ready";
+        },
+      },
+    );
+    assert.equal(item.analysis, recovered ? "ready" : "error", name);
+    assert.equal(
+      observed.sourcePublication,
+      recovered || name === "unrelated saved error"
+        ? "verified"
+        : name === "replay and embeddings still running"
+          ? "incomplete"
+          : "unverified",
+      name,
+    );
+    assert.equal(observed.project.analysis, item.analysis, name);
+  }
+});
+
 test("diagnostics query the actual engine and exact local checkout while excluding other projects and secret/source payloads", async () => {
   const item = project(),
     before = structuredClone(item),
@@ -147,6 +255,7 @@ test("diagnostics query the actual engine and exact local checkout while excludi
   ]);
   assert.deepEqual(calls.find((c) => c.name === "get_query_revision")!.args, {
     repo_id: "local-repo",
+    branch: item.branch,
   });
   assert.equal(value.repoMetadata!.index_state, "catching_up");
   assert.equal(value.repoMetadata!.repo_path, item.path);
@@ -206,7 +315,9 @@ test("an unbound checkout performs no engine work; an exact-path discovered iden
     scopeFor: () => null,
   } as Engine;
   const observed = await localAnalysisDiagnostics(item, known);
-  assert.deepEqual(queried, [{ repo_id: "actual-admitted-repo" }]);
+  assert.deepEqual(queried, [
+    { repo_id: "actual-admitted-repo", branch: item.branch },
+  ]);
   assert.equal(item.repoId, "local-repo");
   assert.equal(observed.project.repoId, "local-repo");
   assert.equal(observed.repoMetadata!.repo_id, "actual-admitted-repo");

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowRight,
   Check,
@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import type { Project } from "../shared";
 import type { LocalAnalysisDiagnostics } from "../local-analysis";
+import { sourceChangedBeforePublication } from "../local-analysis";
 import type {
   RepositoryAccess,
   RepositoryDescriptor,
@@ -55,14 +56,12 @@ export function LocalProjectSetup({
     useState<LocalAnalysisDiagnostics | null>(null);
   const diagnosticScope = `${project.id}\0${project.path ?? ""}\0${project.branch}`;
   const currentDiagnosticScope = useRef(diagnosticScope);
+  const diagnosticRequest = useRef<{
+    scope: string;
+    promise: Promise<LocalAnalysisDiagnostics>;
+  } | null>(null);
   currentDiagnosticScope.current = diagnosticScope;
   const revision = diagnostics?.indexRevision;
-  const publication = revision?.graph_revision;
-  const publicationChanged =
-    !!publication &&
-    typeof publication === "object" &&
-    !Array.isArray(publication) &&
-    publication.publication_unchanged_during_call === false;
   const sourceLabel = diagnostics?.failures.some(
     (failure) => failure.operation === "get_query_revision",
   )
@@ -70,11 +69,7 @@ export function LocalProjectSetup({
     : typeof revision?.branch === "string" &&
         revision.branch !== diagnostics?.project.branch
       ? "Branch mismatch"
-      : revision?.ready === true &&
-          revision.branch === diagnostics?.project.branch &&
-          !publicationChanged &&
-          revision.retry_query_group !== true &&
-          revision.source_unchanged_during_observation !== false
+      : diagnostics?.sourcePublication === "verified"
         ? "Aligned"
         : revision
           ? "Not yet verified"
@@ -83,6 +78,9 @@ export function LocalProjectSetup({
   const blocked = !!busy || recovering || cloneActive;
   const connected = !!project.path || !!inspection;
   const analyzing = ["connecting", "indexing"].includes(project.analysis);
+  const publicationRefused =
+    project.analysis === "error" &&
+    sourceChangedBeforePublication(project.analysisNote);
   const source = repository ?? inspection?.repository;
   const perform = async (key: string, action: () => Promise<void>) => {
     setBusy(key);
@@ -257,24 +255,63 @@ export function LocalProjectSetup({
     setInspection(await window.memcode.inspectProjectRepository(value.id));
     notify("Local code connected to this shared project");
   };
-  const checkDiagnostics = async () => {
-    const scope = diagnosticScope;
-    setBusy("diagnostics");
-    setError("");
-    try {
-      const value = await window.memcode.localAnalysisDiagnostics(project.id);
-      if (currentDiagnosticScope.current === scope) setDiagnostics(value);
-    } catch (reason) {
-      if (currentDiagnosticScope.current === scope)
-        setError(
-          reason instanceof Error
-            ? reason.message
-            : "Local engine diagnostics could not be read.",
-        );
-    } finally {
-      if (currentDiagnosticScope.current === scope) setBusy("");
-    }
-  };
+  const checkDiagnostics = useCallback(
+    async (background = false) => {
+      const scope = diagnosticScope;
+      if (!background) {
+        setBusy("diagnostics");
+        setError("");
+      }
+      let request = diagnosticRequest.current;
+      if (request?.scope !== scope) {
+        request = {
+          scope,
+          promise: window.memcode.localAnalysisDiagnostics(project.id),
+        };
+        diagnosticRequest.current = request;
+      }
+      try {
+        const value = await request.promise;
+        if (currentDiagnosticScope.current === scope) {
+          setDiagnostics(value);
+          return value;
+        }
+      } catch (reason) {
+        if (!background && currentDiagnosticScope.current === scope)
+          setError(
+            reason instanceof Error
+              ? reason.message
+              : "Local engine diagnostics could not be read.",
+          );
+      } finally {
+        if (diagnosticRequest.current === request)
+          diagnosticRequest.current = null;
+        if (!background && currentDiagnosticScope.current === scope)
+          setBusy("");
+      }
+    },
+    [diagnosticScope, project.id],
+  );
+  useEffect(() => {
+    if (!publicationRefused || !project.path) return;
+    let stopped = false,
+      timer: ReturnType<typeof setTimeout>;
+    const deadline = Date.now() + 120_000;
+    const check = async () => {
+      const report = await checkDiagnostics(true);
+      if (
+        !stopped &&
+        report?.sourcePublication === "incomplete" &&
+        Date.now() + 5_000 <= deadline
+      )
+        timer = setTimeout(check, 5_000);
+    };
+    void check();
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  }, [publicationRefused, project.path, checkDiagnostics]);
   const bind = (path: string) =>
     void perform("folder", async () =>
       finishConnection(
@@ -411,8 +448,10 @@ export function LocalProjectSetup({
                       : "Prepare the context for your workers"}
               </strong>
               <p>
-                {project.analysisNote ??
-                  "Memtrace analyzes this checkout locally so workers can explore and route the work with context."}
+                {publicationRefused
+                  ? "The source changed during verification. Once edits settle, retry analysis to verify the current checkout."
+                  : (project.analysisNote ??
+                    "Memtrace analyzes this checkout locally so workers can explore and route the work with context.")}
               </p>
             </div>
           </div>
@@ -518,7 +557,9 @@ export function LocalProjectSetup({
               )}
               {project.analysis === "ready"
                 ? "Refresh code context"
-                : "Analyze local code"}
+                : publicationRefused
+                  ? "Retry analysis"
+                  : "Analyze local code"}
             </button>
             <button className="button primary" onClick={onWorkers}>
               Connect your worker
