@@ -1,7 +1,10 @@
 import { useState } from "react";
 import { ArrowRight, ArrowUpRight, Layers3, Plus, X } from "lucide-react";
 import type { AppState, Cycle, WorkItem } from "../shared";
-import { isActive, stageLabel } from "../domain";
+import { isActive } from "../domain";
+import { taskStatus, workflowFor } from "../planning/workflow";
+import { storyReadiness } from "../planning/readiness";
+import type { WorkflowState } from "../planning/types";
 import { Spinner, StageIcon, WorkerMark } from "./UI";
 import { countLabel } from "./PlanningCharts";
 
@@ -18,7 +21,11 @@ export function CycleStories({
   add: () => void;
   notify: (message: string) => void;
 }) {
-  const tasks = state.tasks.filter(
+  const projectTasks = state.tasks.filter(
+    (item) => item.projectId === cycle.projectId,
+  );
+  const workflow = workflowFor(state, cycle.projectId);
+  const tasks = projectTasks.filter(
     (task) =>
       task.cycleId === cycle.id && (!task.archivedAt || task.stage === "done"),
   );
@@ -112,6 +119,7 @@ export function CycleStories({
                 )}
                 <th>Story</th>
                 <th>Status</th>
+                {cycle.state !== "completed" && <th>Readiness</th>}
                 <th>Estimate</th>
                 <th>Worker</th>
                 {cycle.state !== "completed" && <th />}
@@ -144,9 +152,19 @@ export function CycleStories({
                   <td>
                     <span className="cycle-story-status">
                       <StageIcon stage={task.stage} />
-                      {stageLabel(task.stage)}
+                      {taskStatus(task, workflow).name}
                     </span>
                   </td>
+                  {cycle.state !== "completed" && (
+                    <td>
+                      <CycleReadiness
+                        task={task}
+                        projectTasks={projectTasks}
+                        workflow={workflow}
+                        open={open}
+                      />
+                    </td>
+                  )}
                   <td>
                     <span
                       className={
@@ -237,5 +255,53 @@ export function CycleStories({
         </p>
       )}
     </section>
+  );
+}
+
+function CycleReadiness({
+  task,
+  projectTasks,
+  workflow,
+  open,
+}: {
+  task: WorkItem;
+  projectTasks: WorkItem[];
+  workflow: WorkflowState[];
+  open: (task: WorkItem) => void;
+}) {
+  const readiness = storyReadiness(task, projectTasks, workflow);
+  if (!readiness) return <span aria-label="Not awaiting a start">—</span>;
+  if (readiness.state !== "blocked")
+    return (
+      <span className="cycle-readiness" title={readiness.detail}>
+        {readiness.label}
+      </span>
+    );
+  const { blockers } = readiness;
+  return (
+    <div className="cycle-readiness blocked">
+      <span>
+        Waiting on{" "}
+        {blockers.length === 1 ? "1 story" : `${blockers.length} stories`}
+      </span>
+      {blockers.map(({ id, story }) =>
+        story ? (
+          <button type="button" key={id} onClick={() => open(story)}>
+            <span>
+              {story.identifier} · {story.title}
+            </span>
+            <small>
+              {story.archivedAt && "Archived · "}
+              {taskStatus(story, workflow).name}
+              {story.cycleId !== task.cycleId && " · Outside this cycle"}
+            </small>
+          </button>
+        ) : (
+          <button type="button" key={id} onClick={() => open(task)}>
+            Review unavailable prerequisite
+          </button>
+        ),
+      )}
+    </div>
   );
 }

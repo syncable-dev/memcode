@@ -169,12 +169,14 @@ export function App() {
     null,
   );
   const [storyEpic, setStoryEpic] = useState<string | undefined>();
+  const [storyStatus, setStoryStatus] = useState<string | undefined>();
   const [storyParent, setStoryParent] = useState<string | undefined>();
   const [dialog, setDialog] = useState<
     "task" | "project" | "settings" | "search" | "welcome" | null
   >(null);
   const [projectMenu, setProjectMenu] = useState(false);
   const [joinTeamRequest, setJoinTeamRequest] = useState(0);
+  const [localSetupProjectId, setLocalSetupProjectId] = useState("");
   const [docsArticle, setDocsArticle] = useState("start");
   const [createEpicRequest, setCreateEpicRequest] = useState(0);
   const [account, setAccount] = useState<MemtraceAccount>();
@@ -296,6 +298,7 @@ export function App() {
       ) {
         setStoryEpic(undefined);
         setStoryParent(undefined);
+        setStoryStatus(undefined);
         setDialog("task");
       }
     };
@@ -346,10 +349,25 @@ export function App() {
     setSelectedId(task.id);
     setDialog(null);
   };
-  const create = (epicId?: string, parentId?: string) => {
+  const create = (epicId?: string, parentId?: string, statusId?: string) => {
+    setStoryStatus(statusId);
     setStoryEpic(epicId);
     setStoryParent(parentId);
     setDialog("task");
+  };
+  const openCodeAnalysis = async () => {
+    if (!project.path || project.example) {
+      if (state.team?.some((room) => room.projectId === project.id)) {
+        setLocalSetupProjectId(project.id);
+        setView("team");
+      } else setDialog("project");
+      return;
+    }
+    if (!runtime.memtraceAvailable && betaStatus && betaStatus.state !== "connected") {
+      setDialog("settings");
+      return;
+    }
+    await window.memcode.analyzeProject(project.id);
   };
   const updateGuide = (patch: OnboardingPatch) => {
     if (patch.step === "code-review") setView("board");
@@ -410,7 +428,7 @@ export function App() {
       return;
     }
     if (action === "analyze") {
-      void act(() => window.memcode.analyzeProject(project.id));
+      void act(openCodeAnalysis);
       return;
     }
     const progress = guideProgress;
@@ -649,28 +667,44 @@ export function App() {
           ))}
         </nav>
         <div className="sidebar-bottom">
-          <div className="engine-card">
+          <button
+            type="button"
+            className="engine-card"
+            disabled={
+              project.analysis === "connecting" ||
+              project.analysis === "indexing"
+            }
+            onClick={() => {
+              if (project.analysis === "ready") setView("insights");
+              else void act(openCodeAnalysis);
+            }}
+          >
             <span
               className={`engine-orb ${project.analysis === "ready" ? "connected" : ""}`}
             >
               <GitBranch size={15} />
             </span>
-            <div>
+            <span className="engine-card-label">
               <strong>Powered by Memtrace</strong>
               <small>
                 {project.analysis === "ready"
                   ? "Code context connected"
-                  : project.example
-                    ? "Your code. Understood."
-                    : "Connect your code context"}
+                  : project.analysis === "error"
+                    ? "Retry code analysis"
+                    : project.analysis === "connecting" ||
+                        project.analysis === "indexing"
+                      ? "Analyzing code…"
+                      : project.example
+                        ? "Your code. Understood."
+                        : "Connect your code context"}
               </small>
-            </div>
+            </span>
             {project.analysis === "ready" ? (
               <span className="live-dot" />
             ) : (
               <ArrowUpRight size={13} />
             )}
-          </div>
+          </button>
           <div className="sidebar-footer">
             <button onClick={() => setDialog("settings")}>
               <Settings2 size={15} />
@@ -776,8 +810,11 @@ export function App() {
               state={state}
               project={project}
               joinRequested={joinTeamRequest}
+              localSetupRequested={localSetupProjectId === project.id}
+              onLocalSetupHandled={() => setLocalSetupProjectId("")}
               onJoinHandled={() => setJoinTeamRequest(0)}
               onWorkers={() => setView("workers")}
+              onInsights={() => setView("insights")}
               notify={notify}
               open={open}
               openArtifact={(artifact) => {
@@ -815,6 +852,13 @@ export function App() {
           )}
           {view === "insights" && (
             <InsightsPage
+              key={JSON.stringify([
+                project.id,
+                project.path,
+                project.repoId,
+                project.branch,
+              ])}
+              onAnalyze={openCodeAnalysis}
               state={state}
               project={project}
               open={open}
@@ -823,6 +867,13 @@ export function App() {
           )}
           {view === "improve" && (
             <Improve
+              key={JSON.stringify([
+                project.id,
+                project.path,
+                project.repoId,
+                project.branch,
+              ])}
+              onAnalyze={openCodeAnalysis}
               state={state}
               project={project}
               open={open}
@@ -863,7 +914,7 @@ export function App() {
               project={project}
               runtime={runtime}
               open={open}
-              create={() => create()}
+              create={(statusId) => create(undefined, undefined, statusId)}
               notify={notify}
               act={act}
               addProject={() => setDialog("project")}
@@ -1113,6 +1164,7 @@ export function App() {
           defaultHarness={state.settings.defaultHarness}
           epics={epics}
           initialEpicId={storyEpic}
+          initialStatusId={storyStatus}
           cycles={state.cycles.filter(
             (cycle) => cycle.projectId === project.id,
           )}

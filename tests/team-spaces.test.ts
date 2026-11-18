@@ -26,6 +26,7 @@ import type { TeamSpaceSession } from "../runtime/team/spaces";
 import type { AppState, Project } from "../src/shared";
 import { initialState } from "../src/seed";
 import { sanitizeRepositoryURL } from "../runtime/repository-onboarding";
+import { teamClaimForStory } from "../src/team-presentation";
 
 const verifyIdentity: TeamIdentityProofVerifier = async (proof, challenge) => {
   const value = JSON.parse(proof);
@@ -141,6 +142,136 @@ async function fixture(
     },
   };
 }
+
+test("two devices on one account see only the current claim owner's reported worker and model", async () => {
+  const f = await fixture();
+  const ownerState = workspace("project-a");
+  const peerState = workspace("personal-b");
+  const ownerDir = join(f.root, "a");
+  const peerDir = join(f.root, "b");
+  const options = {
+    background: false,
+    identityProof: async (challenge: TeamIdentityChallenge) => JSON.stringify({ ...challenge, subject: "alice" }),
+  };
+  let legacyEndpoint = false, dropNextClaimRead = false, droppedClaimRead = false;
+  const published: string[] = [];
+  const owner = new TeamSyncClient(() => ownerState, ownerDir, async () => {}, {
+    ...options,
+    fetch: (input, init) => {
+      if (String(input).includes("/v1/commands") && String(init?.body).includes('"claim.acquire"')) dropNextClaimRead = true;
+      if (dropNextClaimRead && String(input).includes("/v1/sync?")) {
+        dropNextClaimRead = false; droppedClaimRead = true;
+        return Promise.reject(new TypeError("Transient sync read failure after the relay granted the claim"));
+      }
+      if (String(input).includes("/v1/worker-activity") && init?.method === "POST") published.push(String(init.body));
+      return fetch(input, init);
+    },
+  });
+  const makePeer = (background = false) => new TeamSyncClient(() => peerState, peerDir, async () => {}, {
+    ...options, background,
+    fetch: (input, init) => {
+      if (legacyEndpoint && String(input).includes("/v1/worker-activity"))
+        return Promise.resolve(Response.json({ error: { code: "NOT_FOUND", message: "Unknown route" } }, { status: 404 }));
+      return fetch(input, init);
+    },
+  });
+  let peer = makePeer();
+  try {
+    await Promise.all([owner.initialize(), peer.initialize()]);
+    await writeFile(join(ownerDir, "team", "service.private.json"), JSON.stringify({ endpoint: f.relay.url, bootstrapSecret: f.relay.adminCapability }));
+    const team = await owner.createTeamWorkspace({ name: "Worker collaboration" });
+    const projectId = ownerState.activeProjectId!;
+    const shared = await owner.shareProject({ teamId: team.id, projectId });
+    const invite = await owner.inviteTeamMember({ teamId: team.id, email: "alice@example.test", projectWorkspaceId: shared.workspace.workspaceId });
+    const joined = (await peer.acceptTeamInvitation({ invite: invite.url })).project!;
+    const remoteStory = peerState.tasks.find((story) => story.projectId === joined.projectId)!;
+    const story = ownerState.tasks[0];
+    const peerClaim = () => teamClaimForStory(peer.status(joined.projectId) ?? undefined, remoteStory.id);
+    assert.equal(shared.memberId, joined.memberId);
+    assert.notEqual(shared.deviceId, joined.deviceId);
+    assert.notEqual(remoteStory.id, story.id, "the recipient uses a local story ID");
+
+    await owner.acquire(story.id, projectId);
+    assert.equal(droppedClaimRead, true, "a failed board refresh cannot strand a confirmed claim");
+    await peer.synchronize(joined.projectId);
+    assert.equal(peerClaim()?.local, false);
+    assert.equal(peerClaim()?.activity, undefined, "a bare claim or an assigned harness does not prove a worker is running");
+
+    const at = new Date().toISOString();
+    story.harness = "codex";
+    story.route = {
+      policyVersion: "memcode-envelope-v2", tier: "balanced", harness: "codex", model: "gpt-6.1-terra", effort: "medium", mode: "automatic", status: "measured",
+      plannedAt: at, reasons: ["PRIVATE ROUTING EVIDENCE"],
+      inputs: { cognitive: 3, cyclomatic: 2, nesting: 1, affected: 1, processes: 1, moduleRoots: 1, incomplete: false },
+    };
+    story.run = {
+      state: "running", startedAt: at, sessionId: "PRIVATE SESSION",
+      workspace: "/PRIVATE/checkout", activity: { phase: "working", label: "PRIVATE file and command", at },
+    };
+    await owner.synchronize(projectId);
+    await peer.synchronize(joined.projectId);
+    assert.equal(peerClaim()?.activity?.harness, "codex");
+    assert.equal(peerClaim()?.activity?.requestedModel, "gpt-6.1-terra");
+    assert.equal(peerClaim()?.activity?.actualModel, undefined, "provider has not yet reported its model");
+
+    story.run.measurements = { modelId: "gpt-6.2-sol", modelSource: "codex-rerouted", modelIds: ["gpt-6.2-sol"] };
+    story.run.activity = { phase: "waiting_for_user", label: "PRIVATE approval request", at: new Date().toISOString() };
+    await owner.synchronize(projectId);
+    await peer.synchronize(joined.projectId);
+    const current = peerClaim()?.activity;
+    assert.ok(current);
+    assert.equal(current.harness, "codex");
+    assert.equal(current.actualModel, "gpt-6.2-sol");
+    assert.equal(current.requestedModel, "gpt-6.1-terra");
+    assert.equal(current.storyId, remoteStory.id);
+    assert.equal(current.phase, "waiting");
+    assert.deepEqual(current.recent?.map(entry => entry.phase).slice(-2), ["working", "waiting"]);
+    assert.equal(remoteStory.run.state, "idle", "the worker process belongs exclusively to the owner device");
+    assert.ok(published.length >= 2);
+    assert.doesNotMatch(published.join(" ") + JSON.stringify(peerClaim()), /PRIVATE|capability|bootstrapSecret/);
+
+    const otherCapability = JSON.parse(await readFile(join(peerDir, "team", "connections.json"), "utf8")).connections[0].credential.capability;
+    const ownerCapability = JSON.parse(await readFile(join(ownerDir, "team", "connections.json"), "utf8")).connections[0].credential.capability;
+    const lastUpdate = JSON.parse(published.at(-1)!);
+    assert.equal((await f.request("/v1/worker-activity", lastUpdate, otherCapability)).status, 403, "the same account on another device cannot report on the owner's claim");
+    assert.equal((await f.request("/v1/worker-activity", { ...lastUpdate, command: "PRIVATE command" }, ownerCapability)).status, 400);
+
+    await peer.close();
+    legacyEndpoint = true;
+    peer = makePeer();
+    await peer.initialize();
+    await peer.synchronize(joined.projectId);
+    assert.equal(peerClaim()?.local, false);
+    assert.equal(peerClaim()?.activity, undefined, "older relays can still share the claim without live status");
+    await peer.close();
+    legacyEndpoint = false;
+    peer = makePeer(true);
+    await peer.initialize();
+    await peer.synchronize(joined.projectId);
+    assert.equal(peerClaim()?.activity?.actualModel, "gpt-6.2-sol", "reconnecting obtains current activity directly from the relay");
+
+    async function waitForPeer(predicate: () => boolean, message: string) {
+      const deadline = Date.now() + 6000;
+      while (!predicate() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 30));
+      assert.ok(predicate(), message);
+    }
+    story.run.activity = { phase: "tool", label: "Testing PRIVATE code", at: new Date().toISOString() };
+    await owner.synchronize(projectId);
+    await waitForPeer(() => peerClaim()?.activity?.phase === "testing", "an open teammate's board receives phase changes without a manual refresh");
+    story.run.state = "finished";
+    await owner.release(story.id, projectId);
+    await waitForPeer(() => !peerClaim(), "the remote worker disappears automatically when its claim is released");
+    await peer.acquire(remoteStory.id, joined.projectId);
+    await owner.synchronize(projectId);
+    assert.equal(peerClaim()?.activity, undefined);
+    assert.equal(peerClaim()?.local, true);
+    assert.notEqual(peerClaim()?.claim.attemptId, current.attemptId);
+    assert.equal((await f.request("/v1/worker-activity", lastUpdate, ownerCapability)).status, 409, "a late update cannot overwrite the next claim");
+  } finally {
+    await Promise.all([owner.close(), peer.close()]);
+    await f.close();
+  }
+});
 
 test("verified named Teams contain multiple projects, targeted invitations and revocable membership across restart", async () => {
   const f = await fixture();

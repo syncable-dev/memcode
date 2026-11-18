@@ -13,6 +13,7 @@ export function teamClaimForStory(
   const device = member?.devices.find((item) => item.id === claim.deviceId);
   return {
     claim,
+    activity: team.workerActivity?.find((row) => row.storyId === storyId && row.attemptId === claim.attemptId && row.epoch === claim.epoch),
     name: member?.name ?? "Workspace member",
     device: device?.name ?? "Another device",
     local: claim.memberId === team.memberId && claim.deviceId === team.deviceId,

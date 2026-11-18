@@ -20,6 +20,7 @@ export type AgentEvent =
       type: "activity";
       label: string;
       toolId?: string;
+      toolResult?: "completed" | "failed";
       phase?: "working" | "tool" | "waiting" | "finishing";
     }
   | { type: "session"; sessionId: string }
@@ -31,6 +32,7 @@ export interface AgentSessionOptions {
   env: NodeJS.ProcessEnv;
   model: string;
   effort: ReasoningEffort;
+  automaticModelTier?: import("../../src/shared").ModelTier;
   prompt: string;
   briefPath: string;
   contextConfig?: string;

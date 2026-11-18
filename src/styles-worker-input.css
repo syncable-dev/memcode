@@ -263,6 +263,7 @@
 }
 .worker-live-activity {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   padding: 13px 0;
@@ -271,7 +272,8 @@
   color: #7e9176;
 }
 .worker-live-activity > span {
-  flex: 1;
+  flex: 1 1 140px;
+  overflow-wrap: anywhere;
 }
 .worker-live-activity small {
   font: 9px var(--mono);
@@ -283,6 +285,28 @@
 }
 .worker-live-activity.waiting_for_worker {
   color: #578779;
+}
+.worker-start-progress {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px 8px;
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  background: #f4f8f4;
+  border-radius: 6px;
+  color: #42634f;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.worker-start-progress > span {
+  flex: 1 1 auto;
+  overflow-wrap: anywhere;
+}
+.worker-start-progress small {
+  color: #536c5b;
+  font: 10px var(--mono);
+  font-variant-numeric: tabular-nums;
 }
 .worker-reply-link {
   display: inline-flex;

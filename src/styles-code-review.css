@@ -853,16 +853,13 @@
   margin-top: 10px;
   line-height: 1.5;
 }
-.review-function-details,
 .review-comparison-coverage {
   margin-top: 16px;
   border-top: 1px solid #e7ede4;
 }
-.review-function-details > summary,
 .review-comparison-coverage > summary,
 .review-dismissed-findings > summary,
-.review-dismissed-finding > summary,
-.review-function-list > details > summary {
+.review-dismissed-finding > summary {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -871,29 +868,23 @@
   padding: 13px 0;
   font-size: 11px;
 }
-.review-function-details summary::-webkit-details-marker,
 .review-comparison-coverage summary::-webkit-details-marker,
 .review-dismissed-findings summary::-webkit-details-marker {
   display: none;
 }
-.review-function-details > summary > svg,
 .review-comparison-coverage > summary > svg,
 .review-dismissed-findings > summary > svg,
-.review-dismissed-finding > summary > svg,
-.review-function-list > details > summary > svg {
+.review-dismissed-finding > summary > svg {
   margin-left: auto;
   flex-shrink: 0;
   color: #829889;
   transition: transform 0.15s;
 }
-.review-function-details[open] > summary > svg,
 .review-comparison-coverage[open] > summary > svg,
 .review-dismissed-findings[open] > summary > svg,
-.review-dismissed-finding[open] > summary > svg,
-.review-function-list > details[open] > summary > svg {
+.review-dismissed-finding[open] > summary > svg {
   transform: rotate(180deg);
 }
-.review-function-details > summary > small,
 .review-dismissed-findings > summary > small {
   font: 9px var(--mono);
   padding: 2px 5px;
@@ -901,43 +892,129 @@
   color: #768b79;
   background: #f0f5ed;
 }
-.review-function-list > details + details {
-  border-top: 1px solid #edf1e9;
+.review-function-key {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 10px;
+  color: #425e50;
+  margin: 0 0 8px;
 }
-.review-function-list > details > summary {
-  padding: 13px 0;
-  gap: 10px;
+.review-function-key > span {
+  color: #64776a;
 }
-.review-function-list > details > summary > span {
+.review-function-scroll {
+  overflow: auto;
+  max-height: min(46vh, 420px);
+  border: 1px solid #e1e8df;
+  border-radius: 6px;
+}
+.review-function-scroll:focus-visible {
+  outline: 2px solid #45977e;
+}
+.review-function-table {
+  width: 100%;
+  border-spacing: 0;
+  font-size: 11px;
+  text-align: left;
+}
+.review-function-table th,
+.review-function-table td {
+  padding: 8px;
+  text-align: center;
+  font-weight: 400;
+}
+.review-function-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  color: #506659;
+  background: #f3f6f1;
+  border-bottom: 1px solid #e1e8df;
+  font-size: 10px;
+}
+.review-function-table tr > th:first-child {
+  position: sticky;
+  left: 0;
+  min-width: 130px;
+  max-width: 220px;
+  text-align: left;
+}
+.review-function-table thead th:first-child {
+  z-index: 2;
+}
+.review-function-table tbody th {
+  background: white;
+}
+.review-function-table tbody tr + tr > * {
+  border-top: 1px solid #e7ede4;
+}
+.review-function-table tbody button {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
   min-width: 0;
-  flex: 1;
-}
-.review-function-list strong {
-  display: block;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #2b604d;
+  text-align: left;
   overflow-wrap: anywhere;
   font-size: 11px;
-  font-weight: 500;
+  font-weight: 520;
+  cursor: pointer;
 }
-.review-function-list summary small {
+.review-function-table tbody button svg {
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin-top: 1px;
+}
+.review-function-table tbody button:hover {
+  text-decoration: underline;
+}
+.review-function-table small,
+.review-function-status {
   display: block;
-  margin-top: 5px;
+  margin-top: 3px;
   overflow-wrap: anywhere;
-  color: #87988a;
+  color: #64776a;
   font-size: 9px;
 }
-.review-function-list summary em {
-  font-size: 9px;
-  color: #778e7c;
-  font-style: normal;
-  max-width: 90px;
-  text-align: right;
+.review-function-status summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  cursor: pointer;
+  list-style: none;
 }
-.review-function-measurements {
-  padding: 0 0 15px;
+.review-function-status summary::-webkit-details-marker {
+  display: none;
 }
-.review-function-measurements > .text-button {
-  margin-top: 12px;
-  font-size: 10px;
+.review-function-status[open] summary svg {
+  transform: rotate(180deg);
+}
+.review-function-status p {
+  margin: 5px 0;
+  line-height: 1.5;
+}
+.review-function-pair {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: #52685a;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.review-function-pair svg {
+  color: #829889;
+}
+.review-function-pair b {
+  color: #2b604d;
+  font-weight: 550;
+}
+.review-means-heading {
+  margin: 18px 0 10px;
 }
 .review-comparison-coverage ul {
   padding-left: 16px;

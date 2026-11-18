@@ -296,7 +296,7 @@ export function FinishCycle({
                   value={target}
                   onValueChange={setTarget}
                 >
-                  <option value="backlog">Backlog · no cycle</option>
+                  <option value="backlog">No cycle</option>
                   {destinations.map((other) => (
                     <option key={other.id} value={other.id}>
                       {other.name}

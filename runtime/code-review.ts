@@ -17,7 +17,11 @@ import {
   captureStoryReview,
   type StoryReviewCapture,
 } from "./code-review-snapshot";
-import { analyzeStoryReview, type ReviewEngine } from "./code-review-analysis";
+import {
+  analyzeStoryReview,
+  measureCapturedStoryQuality,
+  type ReviewEngine,
+} from "./code-review-analysis";
 import { checkSourceBinding } from "./verification";
 import { replaceWorkspace } from "./persistence";
 import type { ReadonlyReviewAgent } from "./review-agent";
@@ -680,6 +684,8 @@ export class CodeReviewManager {
         await this.persist(saved);
       });
     };
+    let captured: StoryReviewCapture | undefined;
+    let reviewProject: Project | undefined;
     try {
       const task = this.task(taskId);
       let project = this.project(task);
@@ -687,27 +693,38 @@ export class CodeReviewManager {
         "capture",
         "Capturing only this story's attributed checkpoints.",
       );
-      await this.graphRetirements.get(project.id);
-      assertActive();
-      if (this.hooks.prepare) {
-        project = await this.hooks.prepare(
-          task,
-          project,
-          (note) => {
-            void phase("capture", note).catch(() => {});
-          },
-          assertActive,
-        );
-        assertActive();
-      }
       const capture = await this.capture(clone(task));
       assertActive();
+      captured = capture;
+      reviewProject = project;
       saved.sourceBinding = capture.sourceBinding;
       run.snapshot = capture.snapshot;
       saved.patch = capture.patch.slice(0, 60000);
       saved.patchTruncated = saved.patch.length < capture.patch.length;
       run.implementationRunIds = capture.implementationRunIds;
       run.coverage.limitations = [...capture.limitations];
+      if (capture.patch) {
+        this.checks(saved, task, capture);
+        await phase(
+          "review",
+          "Preparing Memtrace for this story's captured changes.",
+        );
+        await this.graphRetirements.get(project.id);
+        assertActive();
+        if (this.hooks.prepare) {
+          project = await this.hooks.prepare(
+            task,
+            project,
+            (note) => {
+              void phase("review", note).catch(() => {});
+            },
+            assertActive,
+          );
+          assertActive();
+          reviewProject = project;
+        }
+      }
+
       if (!capture.patch) {
         const noSource =
           !capture.snapshot.files.length &&
@@ -763,7 +780,7 @@ export class CodeReviewManager {
           "verification",
           "Linking actual checks to this exact worker contribution and source snapshot.",
         );
-        this.checks(saved, task, capture);
+
         if (this.hooks.reviewer) {
           await this.reviewAnswer(
             saved,
@@ -825,6 +842,24 @@ export class CodeReviewManager {
         await this.persist({ ...saved, run: final });
         saved.run = final;
       });
+    } catch (error) {
+      assertActive();
+      if (captured?.patch && reviewProject?.repoId && !run.qualityComparison) {
+        try {
+          const comparison = await measureCapturedStoryQuality(
+            this.engine,
+            reviewProject,
+            captured,
+            assertActive,
+          );
+          assertActive();
+          run.metrics = comparison.metrics;
+          run.qualityComparison = comparison.coverage;
+        } catch {
+          assertActive();
+        }
+      }
+      throw error;
     } finally {
       this.active.delete(run.id);
     }

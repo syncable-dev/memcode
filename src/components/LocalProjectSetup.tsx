@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowRight,
   Check,
@@ -15,6 +15,10 @@ import {
 } from "lucide-react";
 import type { Project } from "../shared";
 import type { LocalAnalysisDiagnostics } from "../local-analysis";
+import {
+  recoverablePublicationFailure,
+  sourceChangedBeforePublication,
+} from "../local-analysis";
 import type {
   RepositoryAccess,
   RepositoryDescriptor,
@@ -29,6 +33,7 @@ interface Props {
   repository?: RepositoryDescriptor;
   notify: (message: string) => void;
   onWorkers: () => void;
+  onInsights?: () => void;
 }
 
 export function LocalProjectSetup({
@@ -36,6 +41,7 @@ export function LocalProjectSetup({
   repository,
   notify,
   onWorkers,
+  onInsights,
 }: Props) {
   const [inspection, setInspection] = useState<RepositoryInspection | null>(
     null,
@@ -55,14 +61,12 @@ export function LocalProjectSetup({
     useState<LocalAnalysisDiagnostics | null>(null);
   const diagnosticScope = `${project.id}\0${project.path ?? ""}\0${project.branch}`;
   const currentDiagnosticScope = useRef(diagnosticScope);
+  const diagnosticRequest = useRef<{
+    scope: string;
+    promise: Promise<LocalAnalysisDiagnostics>;
+  } | null>(null);
   currentDiagnosticScope.current = diagnosticScope;
   const revision = diagnostics?.indexRevision;
-  const publication = revision?.graph_revision;
-  const publicationChanged =
-    !!publication &&
-    typeof publication === "object" &&
-    !Array.isArray(publication) &&
-    publication.publication_unchanged_during_call === false;
   const sourceLabel = diagnostics?.failures.some(
     (failure) => failure.operation === "get_query_revision",
   )
@@ -70,12 +74,10 @@ export function LocalProjectSetup({
     : typeof revision?.branch === "string" &&
         revision.branch !== diagnostics?.project.branch
       ? "Branch mismatch"
-      : revision?.ready === true &&
-          revision.branch === diagnostics?.project.branch &&
-          !publicationChanged &&
-          revision.retry_query_group !== true &&
-          revision.source_unchanged_during_observation !== false
+      : diagnostics?.sourcePublication === "verified"
         ? "Aligned"
+        : diagnostics?.sourcePublication === "publishing"
+          ? "Publishing graph"
         : revision
           ? "Not yet verified"
           : "Unknown";
@@ -83,6 +85,9 @@ export function LocalProjectSetup({
   const blocked = !!busy || recovering || cloneActive;
   const connected = !!project.path || !!inspection;
   const analyzing = ["connecting", "indexing"].includes(project.analysis);
+  const publicationNeedsRetry =
+    project.analysis === "error" &&
+    recoverablePublicationFailure(project.analysisNote);
   const source = repository ?? inspection?.repository;
   const perform = async (key: string, action: () => Promise<void>) => {
     setBusy(key);
@@ -140,10 +145,14 @@ export function LocalProjectSetup({
         }
       })
       .catch(() => {
-        if (live)
-          setError(
-            "Could not check existing repository setup. Reopen local setup to retry before cloning.",
-          );
+        if (!live) return;
+        // An attached checkout can still be inspected if clone status is unavailable.
+        if (project.path) setRecovering(false);
+        setError(
+          project.path
+            ? "Could not check repository setup. You can still inspect the connected checkout."
+            : "Could not check existing repository setup. Reopen local setup to retry before cloning.",
+        );
       });
     if (project.path)
       void window.memcode
@@ -257,24 +266,63 @@ export function LocalProjectSetup({
     setInspection(await window.memcode.inspectProjectRepository(value.id));
     notify("Local code connected to this shared project");
   };
-  const checkDiagnostics = async () => {
-    const scope = diagnosticScope;
-    setBusy("diagnostics");
-    setError("");
-    try {
-      const value = await window.memcode.localAnalysisDiagnostics(project.id);
-      if (currentDiagnosticScope.current === scope) setDiagnostics(value);
-    } catch (reason) {
-      if (currentDiagnosticScope.current === scope)
-        setError(
-          reason instanceof Error
-            ? reason.message
-            : "Local engine diagnostics could not be read.",
-        );
-    } finally {
-      if (currentDiagnosticScope.current === scope) setBusy("");
-    }
-  };
+  const checkDiagnostics = useCallback(
+    async (background = false) => {
+      const scope = diagnosticScope;
+      if (!background) {
+        setBusy("diagnostics");
+        setError("");
+      }
+      let request = diagnosticRequest.current;
+      if (request?.scope !== scope) {
+        request = {
+          scope,
+          promise: window.memcode.localAnalysisDiagnostics(project.id),
+        };
+        diagnosticRequest.current = request;
+      }
+      try {
+        const value = await request.promise;
+        if (currentDiagnosticScope.current === scope) {
+          setDiagnostics(value);
+          return value;
+        }
+      } catch (reason) {
+        if (!background && currentDiagnosticScope.current === scope)
+          setError(
+            reason instanceof Error
+              ? reason.message
+              : "Local engine diagnostics could not be read.",
+          );
+      } finally {
+        if (diagnosticRequest.current === request)
+          diagnosticRequest.current = null;
+        if (!background && currentDiagnosticScope.current === scope)
+          setBusy("");
+      }
+    },
+    [diagnosticScope, project.id],
+  );
+  useEffect(() => {
+    if (!publicationNeedsRetry || !project.path) return;
+    let stopped = false,
+      timer: ReturnType<typeof setTimeout>;
+    const started = Date.now();
+    const check = async () => {
+      const report = await checkDiagnostics(true);
+      if (
+        !stopped &&
+        (report?.sourcePublication === "incomplete" || report?.sourcePublication === "publishing") &&
+        Date.now() + 5_000 <= started + (report.sourcePublication === "publishing" ? 600_000 : 120_000)
+      )
+        timer = setTimeout(check, 5_000);
+    };
+    void check();
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  }, [publicationNeedsRetry, project.path, checkDiagnostics]);
   const bind = (path: string) =>
     void perform("folder", async () =>
       finishConnection(
@@ -402,7 +450,9 @@ export function LocalProjectSetup({
             </span>
             <div>
               <strong>
-                {analyzing
+                {diagnostics?.sourcePublication === "publishing"
+                  ? "Memtrace is finishing the code graph"
+                  : analyzing
                   ? "Memtrace is understanding your local code…"
                   : project.analysis === "ready"
                     ? "Code context is ready"
@@ -411,12 +461,23 @@ export function LocalProjectSetup({
                       : "Prepare the context for your workers"}
               </strong>
               <p>
-                {project.analysisNote ??
-                  "Memtrace analyzes this checkout locally so workers can explore and route the work with context."}
+                {diagnostics?.sourcePublication === "publishing"
+                  ? "Memtrace is writing the graph for this checkout. The worker can continue once the source is verified."
+                  : publicationNeedsRetry
+                  ? sourceChangedBeforePublication(project.analysisNote)
+                    ? "The source changed during verification. Once edits settle, retry analysis to verify the current checkout."
+                    : "Memtrace still needs to verify this checkout. Retry analysis to refresh its graph."
+                  : (project.analysisNote ??
+                    "Memtrace analyzes this checkout locally so workers can explore and route the work with context.")}
               </p>
             </div>
           </div>
           <div className="repo-health-actions">
+            {project.analysis === "ready" && onInsights && (
+              <button className="button secondary" onClick={onInsights}>
+                Open Insights <ArrowRight size={13} />
+              </button>
+            )}
             <button
               className="repo-text-button"
               style={{ marginLeft: 0 }}
@@ -518,7 +579,9 @@ export function LocalProjectSetup({
               )}
               {project.analysis === "ready"
                 ? "Refresh code context"
-                : "Analyze local code"}
+                : publicationNeedsRetry
+                  ? "Retry analysis"
+                  : "Analyze local code"}
             </button>
             <button className="button primary" onClick={onWorkers}>
               Connect your worker

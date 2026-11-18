@@ -1,4 +1,6 @@
 import test from "node:test";
+import { createHash } from "node:crypto";
+import { createTwoFilesPatch } from "diff";
 import assert from "node:assert/strict";
 import {
   mkdir,
@@ -266,6 +268,72 @@ async function fixture(onSourceCheck?: () => void) {
     },
   };
 }
+
+test("a failed graph preparation preserves the verified story patch, linked checks and immutable AST comparison after reopening", async () => {
+  const f = await fixture();
+  const failure = "The epic graph could not be verified.";
+  const client = f.manager({ prepare: async () => { throw Error(failure); } });
+  const reopened = f.manager();
+  try {
+    const path = "src/main.ts";
+    const before = "export function main(value: number) {\n  return value;\n}\n";
+    const after = "export function main(value: number) {\n  if (value < 0) return 0;\n  return Math.floor(value);\n}\n";
+    const sha = (source: string) => createHash("sha256").update(source).digest("hex");
+    const patch = createTwoFilesPatch("a/" + path, "b/" + path, before, after);
+    const limitation = "An earlier edit has no verified source contents.";
+    f.capture.patch = patch;
+    f.capture.baseFiles = { [path]: before };
+    f.capture.limitations.push(limitation);
+    Object.assign(f.capture.snapshot, {
+      patchHash: sha(patch),
+      files: [{ path, beforeHash: sha(before), afterHash: sha(after), attribution: "native-edit" }],
+      additions: 2,
+      deletions: 1,
+    });
+    f.intercept((name, args) => {
+      if (name === "get_checkout_capabilities") return { source_quality_v1: true };
+      if (name !== "get_function_quality_metrics") throw Error("Unexpected graph query: " + name);
+      const src = args.source_content;
+      assert.ok(src === before || src === after);
+      return {
+        _workflow: "immutable_source_quality_v1",
+        source_sha256: sha(src), source_bytes: Buffer.byteLength(src), file_path: path,
+        metrics_version: 3, quality_metrics_version: 1, matches: 1, truncated: false,
+        functions: [{
+          name: "main", scope_path: "main", kind: "Function", file_path: path,
+          start_line: 1, end_line: src === before ? 3 : 4,
+          metrics_v: 3, quality_metrics_v: 1, complexity_source: "ast",
+          cognitive_complexity: src === before ? 0 : 1,
+          complexity: src === before ? 1 : 2, max_nesting: src === before ? 0 : 1,
+        }],
+      };
+    });
+    await client.start(f.task.id);
+    const run = await f.settled(client);
+    assert.equal(run.state, "failed");
+    assert.equal(run.outcome, "incomplete");
+    assert.equal(run.note, failure);
+    assert.equal(run.coverage.complete, false);
+    assert.ok(run.coverage.limitations.includes(limitation));
+    assert.equal(run.impact.complete, false);
+    assert.equal(run.engine.audit, undefined);
+    assert.deepEqual(run.snapshot, f.capture.snapshot);
+    assert.equal(run.checks[0].state, "passed");
+    assert.equal(run.qualityComparison?.filesMeasured, 1);
+    assert.deepEqual(f.requests.filter(r => r.name === "get_function_quality_metrics").map(r => r.args.source_content).sort(), [before, after].sort());
+    assert.equal(run.metrics[0].symbol, "main");
+    assert.equal(run.metrics[0].comparison?.status, "matched");
+    assert.equal(run.metrics[0].comparison?.beforeSourceHash, sha(before));
+    assert.equal(run.metrics[0].comparison?.afterSourceHash, sha(after));
+    assert.equal(run.metrics[0].before?.cognitive, 0);
+    assert.equal(run.metrics[0].cognitive, 1);
+    assert.deepEqual(await reopened.get(f.task.id), run);
+  } finally {
+    await reopened.close();
+    await client.close();
+    await f.close();
+  }
+});
 
 test("review uses the story patch, true AST measurements and deduplicated graph reach, with separate explicit acceptance", async () => {
   const f = await fixture();

@@ -89,7 +89,7 @@ export async function verifyPlanning(page, call, out) {
   await call("task:update", { id: parent.id, patch: { stage: "review" } });
   await call("task:update", {
     id: child.id,
-    patch: { stage: "review", estimate: 8 },
+    patch: { stage: "review", statusId: `${project.id}:review`, estimate: 8 },
   });
   state = (await call("workspace:load")).state;
   assert.deepEqual(
@@ -120,8 +120,47 @@ export async function verifyPlanning(page, call, out) {
   );
   await call("view:delete", saved.id);
 
+  await call("task:update", { id: carry.id, patch: { dependsOn: [child.id] } });
+  await page.getByRole("button", { name: /Native carryover target/ }).click();
+  const carryRow = page
+    .locator(".cycle-story-table tr")
+    .filter({ hasText: carry.title });
+  const outsideStory = carryRow.getByRole("button", {
+    name: new RegExp(child.identifier),
+  });
+  await expect(outsideStory).toContainText(child.title);
+  await expect(outsideStory).toContainText("Outside this cycle");
+  await outsideStory.click();
+  await expect(page.locator("#detail-title")).toHaveText(child.title);
+  await page.getByRole("button", { name: "Close work item" }).click();
   await page.locator("nav button").filter({ hasText: "Workspace" }).click();
   await expect(page.locator(".work-board")).toBeVisible();
+  const carryCard = page.getByRole("button", {
+    name: `${carry.identifier}: ${carry.title}`,
+    exact: true,
+  });
+  await carryCard.click();
+  const blockers = page.getByRole("region", { name: "Worker prerequisites" });
+  const dependency = blockers.getByRole("button", {
+    name: new RegExp(child.identifier),
+  });
+  await expect(dependency).toContainText(child.title);
+  await expect(dependency).toContainText("Ready for acceptance");
+  await expect(
+    page.getByRole("button", { name: "Start worker", exact: true }),
+  ).toBeDisabled();
+  await dependency.click();
+  await expect(page.locator("#detail-title")).toHaveText(child.title);
+  await page.getByRole("button", { name: "Close work item" }).click();
+  await carryCard.click();
+  await blockers.getByRole("button", { name: "Edit prerequisites" }).click();
+  const editor = page.getByRole("group", { name: "Edit story prerequisites" });
+  await expect(editor).toBeFocused();
+  await editor
+    .getByRole("button", { name: "Remove prerequisite", exact: true })
+    .click();
+  await expect(blockers).toHaveCount(0);
+  await page.getByRole("button", { name: "Close work item" }).click();
   const heading = page.locator(".work-card h4").first();
   assert.equal(
     await heading.evaluate((element) => getComputedStyle(element).fontSize),
@@ -372,6 +411,16 @@ export async function verifyPlanning(page, call, out) {
     .fill(parent.identifier);
   await expect(page.locator(".conversation-table tbody tr")).toHaveCount(1);
   await page.getByRole("textbox", { name: "Search conversations" }).fill("");
+  const tableViewport = page.locator(".conversation-table-wrap");
+  await expect
+    .poll(() =>
+      tableViewport.evaluate(
+        (element) =>
+          element.clientHeight > 0 && element.scrollHeight > element.clientHeight,
+      ),
+    )
+    .toBe(true);
+  await tableViewport.hover();
   const conversationHeader = await page
     .locator(".conversation-table th")
     .first()
@@ -379,7 +428,6 @@ export async function verifyPlanning(page, call, out) {
   const workspaceScroll = await page
     .locator(".workspace-scroll")
     .evaluate((element) => element.scrollTop);
-  await page.locator(".conversation-table-wrap").hover();
   await page.mouse.wheel(0, 600);
   await expect
     .poll(() =>

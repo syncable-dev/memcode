@@ -2,6 +2,7 @@ import type { AppState, Cycle, CreateCycle } from "../shared";
 import { cycleSnapshot, observePlanning } from "./history";
 import { dayAt, daysBetween, validDay } from "./dates";
 import { isActive } from "../domain";
+import { backlogStatusId } from "./workflow";
 
 export function validateCycle(input: CreateCycle): void {
   if (
@@ -97,6 +98,8 @@ export function finishCycle(
     for (const task of state.tasks) {
       if (task.cycleId === id && task.stage !== "done" && !task.archivedAt) {
         task.cycleId = targetCycleId;
+        if (targetCycleId === null && task.stage === "planned")
+          task.statusId = backlogStatusId(task.projectId);
         task.updatedAt = at;
         moved++;
       }

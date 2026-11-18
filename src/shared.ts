@@ -36,12 +36,17 @@ export const harnessNames: Record<Harness, string> = {
 };
 export type ModelTier = "fast" | "balanced" | "frontier" | "extreme";
 export type ReasoningEffort = "low" | "medium" | "high" | "xhigh";
+export const codexDefaultModel = "Codex default";
+export const cursorDefaultModel = "Cursor default";
 export interface ModelOption {
   id: string;
   label: string;
-  tier: ModelTier;
-  source: "cache" | "cli" | "alias";
+  /** Unranked models remain available for explicit selection. */
+  tier?: ModelTier;
+  source: "cache" | "cli" | "alias" | "acp";
   efforts?: string[];
+  isDefault?: boolean;
+  resolvedId?: string;
 }
 export interface HarnessRuntime {
   id: Harness;
@@ -53,6 +58,8 @@ export interface HarnessRuntime {
   /** Desktop application detected even when its agent CLI is not available. */
   desktopAppPath?: string;
   models: ModelOption[];
+  /** An authenticated catalog was returned and every visible model was denied. */
+  allModelsDenied?: boolean;
   note?: string;
 }
 export interface RouteDecision {
@@ -184,6 +191,7 @@ export interface WorkItem extends TaskPlanningFields {
     error?: string;
     sessionId?: string;
     changeRunId?: string;
+    nativeEditCapture?: boolean;
     measurements?: import("./measurements").WorkerMeasurements;
     checks?: import("./measurements").WorkerCheckResult;
     finishedSourceBinding?: string | null;
@@ -248,6 +256,7 @@ export interface TeamWorkspaceState {
   teamName?: string;
   connection: "online" | "syncing" | "offline" | "connecting";
   workspace: import("./team").TeamSnapshot;
+  workerActivity?: import("./team").TeamWorkerActivity[];
   memberId: string;
   deviceId: string;
   pendingCount: number;

@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { git } from "../runtime/local";
 import { EpicWorkspace } from "../runtime/epic-workspace";
 import { epicAnalysisProject } from "../runtime/epic-checkout";
-import { assertEpicDependencies } from "../runtime/epic-dependencies";
+import { assertEpicDependencies, assertPrerequisitesComplete } from "../runtime/epic-dependencies";
 import { WorkerChangeJournal } from "../runtime/changes";
 import { initialState } from "../src/seed";
 import type { Epic, WorkItem } from "../src/shared";
@@ -86,6 +86,19 @@ async function fixture() {
     workspaces: new EpicWorkspace(() => state, data),
   };
 }
+
+test("only explicit prerequisites block a story, regardless of cycle or epic", async () => {
+  const f = await fixture();
+  f.b.cycleId = "current";
+  assertPrerequisitesComplete(f.state, f.b);
+  f.a.title = "Cover routing fallbacks";
+  f.b.dependsOn = [f.a.id];
+  assert.throws(() => assertPrerequisitesComplete(f.state, f.b), /MC-a1 · Cover routing fallbacks \(In progress\)/);
+  f.a.stage = "done";
+  assertPrerequisitesComplete(f.state, f.b);
+  f.a.projectId = "different-project";
+  assert.throws(() => assertPrerequisitesComplete(f.state, f.b), /no longer available/);
+});
 
 test("parallel epics share Git storage, isolate files and graph IDs, and retain the user's checkout", async () => {
   const f = await fixture();

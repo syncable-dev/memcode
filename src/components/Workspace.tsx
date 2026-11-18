@@ -1,8 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   Archive,
+  CalendarDays,
   Check,
   CheckSquare,
+  CircleCheck,
   Columns3,
   Plus,
   Save,
@@ -14,6 +16,7 @@ import type {
   Project,
   RuntimeInfo,
   SavedView,
+  TaskPatch,
   WorkItem,
 } from "../shared";
 import { defaultView, type ViewConfig } from "../planning/types";
@@ -23,7 +26,8 @@ import {
   groupNames,
   groupWork,
 } from "../planning/groups";
-import { filterWork, workflowFor } from "../planning/workflow";
+import { backlogStatusId, filterWork, isBacklogStatus, taskStatus, workflowFor } from "../planning/workflow";
+import { storyReadiness, type StoryReadiness } from "../planning/readiness";
 import { WorkBoard } from "./Board";
 import { BoardSettings } from "./BoardSettings";
 import { WorkCalendar, WorkTimeline } from "./ScheduleViews";
@@ -43,7 +47,7 @@ interface Props {
   project: Project;
   runtime: RuntimeInfo;
   open: (task: WorkItem) => void;
-  create: () => void;
+  create: (statusId?: string) => void;
   notify: (message: string) => void;
   act: (fn: () => Promise<unknown>) => Promise<void>;
   addProject: () => void;
@@ -75,7 +79,14 @@ export function Workspace({
   const [selected, setSelected] = useState<Set<string>>(() => new Set()),
     [bulk, setBulk] = useState("none"),
     [busy, setBusy] = useState(false);
+  const [promotion, setPromotion] = useState<{
+    projectId: string;
+    ids: string[];
+    cycleId: string;
+    patch: TaskPatch;
+  } | null>(null);
   const controls = useRef<HTMLDivElement>(null);
+  const [readyOnly, setReadyOnly] = useState(false);
   const projectTasks = state.tasks.filter(
       (task) => task.projectId === project.id,
     ),
@@ -85,12 +96,21 @@ export function Workspace({
     cycles = state.cycles.filter((cycle) => cycle.projectId === project.id),
     views = state.savedViews.filter((view) => view.projectId === project.id),
     workflow = workflowFor(state, project.id);
-  const visible = filterWork(
+  const filtered = filterWork(
     projectTasks,
     config.filters.epicId === "none"
       ? { ...config, filters: { ...config.filters, epicId: "all" } }
       : config,
   ).filter((task) => config.filters.epicId !== "none" || !task.epicId);
+  const readiness = new Map<string, StoryReadiness>();
+  if (config.mode === "board") {
+    for (const task of filtered) {
+      const status = storyReadiness(task, projectTasks, workflow);
+      if (status) readiness.set(task.id, status);
+    }
+  }
+  const ready = filtered.filter((task) => readiness.get(task.id)?.state === "ready");
+  const visible = readyOnly && config.mode === "board" && !config.filters.archived ? ready : filtered;
   const currentView = views.find((view) => view.id === viewId),
     dirty =
       JSON.stringify(config) !==
@@ -111,10 +131,12 @@ export function Workspace({
   };
   useEffect(() => {
     setConfig(structuredClone(defaultView));
+    setReadyOnly(false);
     setViewId(null);
     setSelected(new Set());
     setPanel(null);
     setSettings(false);
+    setPromotion(null);
   }, [project.id]);
   useEffect(() => {
     const allowed = new Set(visible.map((task) => task.id));
@@ -153,13 +175,40 @@ export function Workspace({
     epics,
     cycles,
   });
+  const saveMove = async (ids: string[], patch: TaskPatch) => {
+    setBusy(true);
+    try {
+      if (ids.length === 1) await window.memcode.updateTask(ids[0], patch);
+      else await window.memcode.bulkUpdateTasks(ids, patch);
+      setPromotion(null);
+      setSelected(new Set());
+      setBulk("none");
+      if (ids.length > 1) notify(`${ids.length} stories updated.`);
+    } catch (error) {
+      notify((error as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const requestMove = (ids: string[], patch: TaskPatch) => {
+    const activeCycle = cycles.find((cycle) => cycle.state === "active");
+    if (activeCycle && patch.stage === "planned" && patch.statusId &&
+        !isBacklogStatus(patch.statusId) && projectTasks.some((task) =>
+          ids.includes(task.id) && isBacklogStatus(taskStatus(task, workflow).id))) {
+      setPromotion({ projectId: project.id, ids, cycleId: activeCycle.id, patch });
+      return;
+    }
+    void saveMove(ids, patch);
+  };
   const move = (id: string, target: string) => {
+    if (busy || promotion) return;
     const result = groupMove(config.groupBy, target, { workflow, cycles });
     if (result.kind === "blocked") notify(result.message);
     if (result.kind === "update")
-      void act(() => window.memcode.updateTask(id, result.patch));
+      requestMove(selected.has(id) ? [...selected] : [id], result.patch);
   };
   const chooseView = (view?: SavedView) => {
+    setReadyOnly(false);
     setViewId(view?.id ?? null);
     setConfig(
       structuredClone(
@@ -185,20 +234,13 @@ export function Workspace({
       new Date().toISOString(),
     );
     if (!patch) return;
-    setBusy(true);
-    try {
-      await window.memcode.bulkUpdateTasks([...selected], patch);
-      notify(
-        `${selected.size} work ${selected.size === 1 ? "item" : "items"} updated.`,
-      );
-      setSelected(new Set());
-      setBulk("none");
-    } catch (error) {
-      notify((error as Error).message);
-    } finally {
-      setBusy(false);
-    }
+    requestMove([...selected], patch);
   };
+  const targetCycle = cycles.find((cycle) => cycle.id === promotion?.cycleId);
+  const canJoin = targetCycle?.state === "active";
+  const selectionIncludesCycle = promotion?.ids.some((id) =>
+    projectTasks.some((task) => task.id === id && task.cycleId));
+  const targetStatus = workflow.find((status) => status.id === promotion?.patch.statusId);
   const allSelected =
     visible.length > 0 && visible.every((task) => selected.has(task.id));
   return (
@@ -270,7 +312,7 @@ export function Workspace({
                     Priority: {priority}
                   </option>
                 ))}
-                <option value="cycle|none">Move to backlog · no cycle</option>
+                <option value="cycle|none">Remove from cycle</option>
                 {cycles
                   .filter((cycle) => cycle.state !== "completed")
                   .map((cycle) => (
@@ -305,6 +347,13 @@ export function Workspace({
               Select work to update it together
             </span>
           )}
+          {config.mode === "board" && !config.filters.archived && (
+            <button type="button" className="workspace-ready-filter" aria-pressed={readyOnly}
+              title="Show planned stories with clear prerequisites in this view"
+              onClick={() => setReadyOnly((wasReadyOnly) => !wasReadyOnly)}>
+              <CircleCheck size={13} />Ready to start <span>{ready.length}</span>
+            </button>
+          )}
           <span className="workspace-group-label">
             {config.mode === "board"
               ? `Grouped by ${groupNames[config.groupBy].toLowerCase()}`
@@ -314,6 +363,9 @@ export function Workspace({
       )}
       {config.mode === "board" || config.mode === "list" ? (
         <WorkBoard
+          key={project.id}
+          backlogId={backlogStatusId(project.id)}
+          readiness={readiness}
           tasks={visible}
           mode={config.mode}
           groups={groups}
@@ -349,7 +401,7 @@ export function Workspace({
             </>
           )}
         </span>
-        <button onClick={create}>
+        <button onClick={() => create()}>
           <Plus size={11} />
           New work item
         </button>
@@ -361,6 +413,26 @@ export function Workspace({
           notify={notify}
           close={() => setSettings(false)}
         />
+      )}
+      {promotion && promotion.projectId === project.id && (
+        <Modal
+          kicker="CYCLE PLANNING"
+          title={`Plan ${promotion.ids.length === 1 ? "this story" : "these " + promotion.ids.length + " stories"}?`}
+          description={canJoin
+            ? `Move ${promotion.ids.length === 1 ? "this story" : "all selected stories"} to ${targetStatus?.name ?? "Planned"}. Would you also like to add ${promotion.ids.length === 1 ? "it" : "them"} to ${targetCycle.name}?`
+            : "The active cycle changed while this dialog was open. You can still plan this work."}
+          close={() => { if (!busy) setPromotion(null); }}
+        >
+          <footer className="modal-footer saved-view-footer">
+            <button className="text-button" disabled={busy} onClick={() => setPromotion(null)}>Cancel</button>
+            <button className="button secondary" disabled={busy} onClick={() => void saveMove(promotion.ids, promotion.patch)}>
+              {selectionIncludesCycle ? "Keep current cycles" : "Plan outside cycle"}
+            </button>
+            {canJoin && <button className="button primary" disabled={busy} onClick={() => void saveMove(promotion.ids, { ...promotion.patch, cycleId: targetCycle.id })}>
+              {busy ? <Spinner size={14} /> : <CalendarDays size={14} />}Add to cycle
+            </button>}
+          </footer>
+        </Modal>
       )}
       {saveOpen && (
         <SaveWorkspaceView

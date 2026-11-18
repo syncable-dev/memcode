@@ -10,6 +10,7 @@ export interface WorkerActivity {
   label: string;
   at: string;
   toolId?: string;
+  lastTool?: { label: string; durationMs: number; failed: boolean };
   relatedTaskId?: string;
 }
 

@@ -22,13 +22,16 @@ const absent = (reason: string): CodeReviewMetric["comparison"] => ({
   status: "unavailable",
   reason,
 });
-const measured = (row: Json) => ({
-  cognitive: number(row.cognitive_complexity),
-  cyclomatic: number(row.complexity),
-  nesting: number(row.max_nesting),
-  maintainabilityIndex: number(row.maintainability_index),
-  halsteadVolume: number(row.halstead_volume),
-});
+function measured(row?: Json) {
+  const native = row?.complexity_source === "ast" ? row : undefined;
+  return {
+    cognitive: number(native?.cognitive_complexity),
+    cyclomatic: number(native?.complexity),
+    nesting: number(native?.max_nesting),
+    maintainabilityIndex: number(native?.maintainability_index),
+    halsteadVolume: number(native?.halstead_volume),
+  };
+}
 function rows(value: Json, content: string, path: string): Json[] {
   if (value._workflow !== "immutable_source_quality_v1")
     throw Error(
@@ -41,6 +44,10 @@ function rows(value: Json, content: string, path: string): Json[] {
   )
     throw Error(
       "The source measurement did not match the captured bytes and path.",
+    );
+  if (value.truncated === true)
+    throw Error(
+      "The engine truncated the source declarations. Complete function coverage could not be verified.",
     );
   if (
     !Number.isInteger(value.metrics_version) ||
@@ -93,8 +100,11 @@ function changedLines(patch: ReturnType<typeof parsePatch>[number]) {
   }
   return { before, after };
 }
-const touched = (row: Json, lines: Set<number>) =>
-  [...lines].some((line) => line >= row.start_line && line <= row.end_line);
+function touched(row: Json, lines: Set<number>) {
+  for (const line of lines)
+    if (line >= row.start_line && line <= row.end_line) return true;
+  return false;
+}
 const grouped = (values: Json[]) => {
   const groups = new Map<string, Json[]>();
   for (const row of values)
@@ -113,42 +123,45 @@ export async function compareCapturedQuality(
   metrics: CodeReviewMetric[];
   coverage: CodeReviewComparisonCoverage;
 }> {
-  const result = metrics.map((metric) => ({
+  let fallback = metrics.map((metric) => ({
     ...metric,
     comparison: absent(
       "No immutable baseline measurement is available for this function.",
     ),
   }));
+  const captured: CodeReviewMetric[] = [];
   const allFiles = capture.snapshot.files.filter((file) =>
     Object.hasOwn(capture.baseFiles, file.path),
   );
+  const missingSources = capture.snapshot.files.length - allFiles.length;
   const files = allFiles.slice(0, 24);
   const coverage: CodeReviewComparisonCoverage = {
     filesMeasured: 0,
-    filesUnavailable: 0,
+    filesUnavailable: missingSources,
     omittedFiles: allFiles.length - files.length,
     omittedFunctions: 0,
     notes: [],
   };
   const notes = new Set<string>();
   const finish = () => {
+    const summary: string[] = [];
+    if (missingSources)
+      summary.push(
+        `Captured source was unavailable for ${missingSources} changed ${missingSources === 1 ? "file" : "files"}.`,
+      );
     if (coverage.omittedFiles)
-      notes.add(
+      summary.push(
         `${coverage.omittedFiles} additional files were outside the 24-file comparison budget.`,
       );
-    if (coverage.omittedFunctions)
-      notes.add(
-        `${coverage.omittedFunctions} additional changed declarations were outside the 24-function comparison budget.`,
-      );
-    coverage.notes = [...notes].slice(0, 16);
-    return { metrics: result, coverage };
+    coverage.notes = [...summary, ...notes].slice(0, 16);
+    return { metrics: [...captured, ...fallback], coverage };
   };
   if (!supported) {
-    coverage.filesUnavailable = files.length;
+    coverage.filesUnavailable += files.length;
     notes.add("This engine does not support immutable source comparisons yet.");
     return {
       ...finish(),
-      metrics: result.map((metric) => ({
+      metrics: fallback.map((metric) => ({
         ...metric,
         comparison: absent(
           "This engine does not support immutable source comparisons yet.",
@@ -160,13 +173,13 @@ export async function compareCapturedQuality(
   try {
     patches = parsePatch(capture.patch);
   } catch {
-    coverage.filesUnavailable = files.length;
+    coverage.filesUnavailable += files.length;
     notes.add("The captured patch could not be decoded for comparison.");
     return finish();
   }
   let unsupported = false;
   for (const file of files) {
-    const existing = result.filter(
+    const existing = fallback.filter(
       (metric) => pathKey(metric.path) === pathKey(file.path),
     );
     if (unsupported) {
@@ -241,116 +254,103 @@ export async function compareCapturedQuality(
       const oldGroups = grouped(oldRows),
         newGroups = grouped(newRows),
         changes = changedLines(patch);
-      const ids = new Set([
-        ...oldRows.filter((row) => touched(row, changes.before)).map(identity),
-        ...newRows.filter((row) => touched(row, changes.after)).map(identity),
-      ]);
-      // Graph change detection may include callers or neighbouring declarations
-      // in a diff hunk's context. They remain in the impact graph, but a uniquely
-      // verified untouched declaration is not part of this story's quality set.
-      // Remove those rows before enforcing the changed-declaration row budget.
-      for (let index = existing.length - 1; index >= 0; index--) {
-        const metric = existing[index];
-        const declarations = newRows.filter(
-          (row) => (row.scope_path || row.name) === metric.symbol,
-        );
-        if (declarations.length === 1 && !ids.has(identity(declarations[0]))) {
-          result.splice(result.indexOf(metric), 1);
-          existing.splice(index, 1);
-        }
-      }
-      const hasAdded = [...ids].some(
-        (id) => !oldGroups.has(id) && newGroups.has(id),
+      const changedOld = oldRows.filter((row) => touched(row, changes.before));
+      const changedNew = newRows.filter((row) => touched(row, changes.after));
+      const ids = new Set([...changedNew, ...changedOld].map(identity));
+      const hasAdded = changedNew.some((row) => !oldGroups.has(identity(row)));
+      const hasRemoved = changedOld.some(
+        (row) => !newGroups.has(identity(row)),
       );
-      const hasRemoved = [...ids].some(
-        (id) => oldGroups.has(id) && !newGroups.has(id),
+
+      // Immutable declarations supersede graph rows for this file, including
+      // unchanged context. Preserve unresolved graph lookups as fallbacks.
+      const names = new Set(
+        [...oldRows, ...newRows].map((row) => row.scope_path || row.name),
       );
-      for (const id of ids) {
-        const oldGroup = oldGroups.get(id) ?? [],
-          newGroup = newGroups.get(id) ?? [];
-        const oldRow = oldGroup.length === 1 ? oldGroup[0] : undefined;
-        const newRow = newGroup.length === 1 ? newGroup[0] : undefined;
-        const symbol = String(
-          newRow?.scope_path ||
-            newRow?.name ||
-            oldRow?.scope_path ||
-            oldRow?.name ||
-            id.slice(id.indexOf(":") + 1),
-        );
-        let metric = existing.find((row) => row.symbol === symbol);
-        if (!metric && result.length >= 24) {
-          coverage.omittedFunctions++;
-          continue;
-        }
-        const duplicate = oldGroup.length > 1 || newGroup.length > 1;
-        const renamed =
-          !duplicate && (!oldRow || !newRow) && hasAdded && hasRemoved;
-        const comparison: NonNullable<CodeReviewMetric["comparison"]> = {
-          status:
-            duplicate || renamed
-              ? "ambiguous"
-              : oldRow && newRow
-                ? "matched"
-                : oldRow
-                  ? "removed"
-                  : "added",
-          beforeSourceHash: beforeHash,
-          afterSourceHash: afterHash,
-          metricsVersion: oldAnswer.metrics_version,
-          qualityMetricsVersion: oldAnswer.quality_metrics_version,
-          ...(duplicate
-            ? {
-                reason:
-                  "More than one declaration has this exact scope and kind; no baseline was guessed.",
-              }
-            : renamed
-              ? {
-                  reason:
-                    "Declarations were added and removed in this file. A rename or replacement cannot be paired safely.",
-                }
-              : {}),
-        };
-        if (!metric) {
-          metric = {
-            symbol,
-            path: file.path,
-            cognitive: null,
-            cyclomatic: null,
-            nesting: null,
-            source: "unavailable",
-            comparison,
-          };
-          result.push(metric);
-        }
-        metric.comparison = comparison;
-        if (duplicate) continue;
-        if (newRow) {
-          Object.assign(metric, measured(newRow), {
-            line: newRow.start_line,
-            source: newRow.complexity_source === "ast" ? "ast" : "unavailable",
-          });
-        } else {
-          Object.assign(metric, {
-            cognitive: null,
-            cyclomatic: null,
-            nesting: null,
-            maintainabilityIndex: null,
-            halsteadVolume: null,
-            source: oldRow?.complexity_source === "ast" ? "ast" : "unavailable",
-          });
-        }
-        if (oldRow)
-          metric.before = { ...measured(oldRow), line: oldRow.start_line };
+      fallback = fallback.filter(
+        (row) =>
+          pathKey(row.path) !== pathKey(file.path) || !names.has(row.symbol),
+      );
+      const evidence = {
+        beforeSourceHash: beforeHash,
+        afterSourceHash: afterHash,
+        metricsVersion: oldAnswer.metrics_version,
+        qualityMetricsVersion: oldAnswer.quality_metrics_version,
+      };
+      function addMeasurement(
+        oldRow: Json | undefined,
+        newRow: Json | undefined,
+        status: NonNullable<CodeReviewMetric["comparison"]>["status"],
+        reason?: string,
+      ) {
+        const row = newRow ?? oldRow!;
+        const symbol = row.scope_path || row.name;
+        const source = row.complexity_source === "ast" ? "ast" : "unavailable";
+        const baselineSource =
+          oldRow?.complexity_source === "ast" ? "ast" : "unavailable";
+        const graphRow =
+          newRow &&
+          existing.find(
+            (item) => item.symbol === symbol && item.line === newRow.start_line,
+          );
         if (
-          (oldRow && oldRow.complexity_source !== "ast") ||
-          (newRow && newRow.complexity_source !== "ast")
+          status === "matched" &&
+          (source !== "ast" || baselineSource !== "ast")
         ) {
-          metric.comparison = {
-            ...comparison,
-            status: "unavailable",
-            reason:
-              "The native parser did not report AST metrics for both declarations.",
-          };
+          status = "unavailable";
+          reason =
+            "The native parser did not report AST metrics for both declarations.";
+        }
+        captured.push({
+          symbol,
+          path: file.path,
+          source,
+          ...measured(newRow),
+          ...(newRow ? { line: newRow.start_line } : {}),
+          ...(graphRow?.riskLevel ? { riskLevel: graphRow.riskLevel } : {}),
+          ...(oldRow
+            ? {
+                before: {
+                  ...measured(oldRow),
+                  source: baselineSource,
+                  line: oldRow.start_line,
+                },
+              }
+            : {}),
+          comparison: { ...evidence, status, ...(reason ? { reason } : {}) },
+        });
+      }
+      for (const id of ids) {
+        const oldGroup = oldGroups.get(id) ?? [];
+        const newGroup = newGroups.get(id) ?? [];
+        if (oldGroup.length > 1 || newGroup.length > 1) {
+          // Even when overloads share a scope, each changed occurrence has
+          // its own measurements. Keep the sides independent.
+          const reason =
+            "Multiple declarations share this scope and kind. The changed occurrences are shown separately.";
+          for (const row of newGroup.filter((row) =>
+            touched(row, changes.after),
+          ))
+            addMeasurement(undefined, row, "ambiguous", reason);
+          for (const row of oldGroup.filter((row) =>
+            touched(row, changes.before),
+          ))
+            addMeasurement(row, undefined, "ambiguous", reason);
+        } else if (oldGroup.length && newGroup.length) {
+          addMeasurement(oldGroup[0], newGroup[0], "matched");
+        } else if (hasAdded && hasRemoved) {
+          addMeasurement(
+            oldGroup[0],
+            newGroup[0],
+            "ambiguous",
+            "Declarations were added and removed in this file. A rename or replacement cannot be paired safely.",
+          );
+        } else {
+          addMeasurement(
+            oldGroup[0],
+            newGroup[0],
+            newGroup.length ? "added" : "removed",
+          );
         }
       }
     } catch (error) {

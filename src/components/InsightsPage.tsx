@@ -8,6 +8,7 @@ export function InsightsPage(props: {
   project: Project;
   open: (task: WorkItem) => void;
   notify: (message: string) => void;
+  onAnalyze?: () => Promise<void>;
 }) {
   const [tab, setTab] = useState<"code" | "delivery">("code");
   const root = useRef<HTMLDivElement>(null);
@@ -71,7 +72,14 @@ export function InsightsPage(props: {
         aria-labelledby={`insights-${tab}-tab`}
       >
         {tab === "code" ? (
-          <CodeInsights {...props} />
+          <CodeInsights
+            key={JSON.stringify([
+              props.project.id,
+              props.project.path,
+              props.project.branch,
+            ])}
+            {...props}
+          />
         ) : (
           <DeliveryInsights {...props} />
         )}

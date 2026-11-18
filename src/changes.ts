@@ -29,12 +29,14 @@ export interface ChangeCheckpoint {
   branch: string;
   startedAt: string;
   at: string;
-  basis: "fleet-reservation" | "scoped-baseline";
+  basis: "fleet-reservation" | "scoped-baseline" | "native-edit" | "native-receipt";
   files: ChangeFile[];
 }
 export interface WorkerChanges {
   taskId: string;
   checkpoints: ChangeCheckpoint[];
+  unverifiedEdits?: number;
+  unverifiedRevision?: string;
   additions: number;
   deletions: number;
   files: number;

@@ -2,7 +2,8 @@ import { z } from "zod";
 import type { AppState, TaskPatch, WorkItem } from "../src/shared";
 import { isActive, canMoveTask, validateDependencies } from "../src/domain";
 import {
-  taskStatus,
+  backlogStatusId,
+  storedTaskStatus,
   workflowFor,
   validateHierarchy,
 } from "../src/planning/workflow";
@@ -37,12 +38,19 @@ export function applyTaskPatch(
 ): void {
   const patch = { ...input };
   const statuses = workflowFor(state, item.projectId);
+  if (patch.cycleId === null && item.cycleId && !patch.statusId && (patch.stage ?? item.stage) === "planned")
+    patch.statusId = backlogStatusId(item.projectId);
   if (patch.statusId) {
     const status = statuses.find((status) => status.id === patch.statusId);
     if (!status) throw new Error("Choose a workflow state from this project.");
     if (patch.stage && patch.stage !== status.stage)
       throw new Error("Workflow state and stage must agree.");
     patch.stage = status.stage;
+    if (status.id === backlogStatusId(item.projectId)) {
+      if (patch.cycleId)
+        throw Error("Move this story to Planned to assign it to a cycle.");
+      patch.cycleId = null;
+    }
   }
   if (patch.stage && !canMoveTask(item, patch.stage))
     throw new Error(
@@ -166,5 +174,5 @@ export function applyTaskPatch(
   )
     item.route = undefined;
   Object.assign(item, patch, { updatedAt: at });
-  item.statusId = taskStatus(item, statuses).id;
+  item.statusId = storedTaskStatus(item, statuses, patch);
 }

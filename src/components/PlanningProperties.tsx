@@ -65,7 +65,7 @@ export function PlanningProperties({
             update({ cycleId: value === "none" ? null : value })
           }
         >
-          <option value="none">Backlog · no cycle</option>
+          <option value="none">No cycle</option>
           {cycles.map((cycle) => (
             <option key={cycle.id} value={cycle.id}>
               {cycle.name}

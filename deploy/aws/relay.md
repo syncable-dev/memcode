@@ -62,7 +62,8 @@ There is no npm install, arbitrary repository checkout or project build on the
 host. Never feed credentials or user-supplied commands into this process.
 
 Before publishing discovery, check HTTPS `GET /v1/service`: it must report
-`version:1`, `selfServiceTeams:true`, `accountTeamLimit:3`. Confirm a protected
+`version:1`, `selfServiceTeams:true`, `accountTeamLimit:3`, `workflowRoles:1`
+and `workerActivity:1`. Confirm a protected
 operation rejects missing/invalid identity, and run the authenticated desktop
 acceptance flow. The relay verifier uses the official Memtrace JWKS and
 requires the exact advertised HTTPS origin as the token audience.

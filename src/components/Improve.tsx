@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import {
   ArrowDownRight,
   ArrowRight,
@@ -20,15 +20,16 @@ import {
   qualityMetricLabels,
   qualityValue,
 } from "../intelligence";
-import { Empty, Spinner } from "./UI";
+import { Spinner } from "./UI";
 import { Select } from "./Select";
 import {
+  AnalysisError,
   CaptureButtons,
   checkpointLabel,
   countLabel,
   FindingList,
   MetricTile,
-  projectCheckpoints,
+  scopedCheckpoints,
   SnapshotEvidence,
   useCapture,
   type IntelligenceProps,
@@ -215,15 +216,39 @@ function QualityTrend({
 }
 
 export function Improve(props: IntelligenceProps) {
-  const { state, project, open, notify } = props,
-    snapshots = projectCheckpoints(state, project),
-    latest = snapshots.at(-1);
+  const { state, project, open, notify, onAnalyze } = props;
+  const {
+    busy,
+    capture,
+    latest: captured,
+    error,
+  } = useCapture(project, notify);
+  const snapshots = scopedCheckpoints(state, project, captured);
+  const latest = snapshots.at(-1);
   const [metric, setMetric] = useState<QualityMetric>("elevated"),
     [baselineId, setBaselineId] = useState("auto");
-  const { busy, capture } = useCapture(project, notify);
-  const points = useMemo(
-    () => (latest ? comparableSnapshots(snapshots, latest, metric) : []),
-    [state.qualitySnapshots, project.id, metric, latest?.id],
+  const [setupPending, setSetupPending] = useState(false);
+  const [setupError, setSetupError] = useState("");
+  const indexing = ["connecting", "indexing"].includes(project.analysis);
+  const points = latest ? comparableSnapshots(snapshots, latest, metric) : [];
+  const startBaseline = async () => {
+    setSetupError("");
+    if (project.path || !onAnalyze) {
+      await capture(false);
+      return;
+    }
+    setSetupPending(true);
+    try {
+      await onAnalyze();
+    } catch (reason) {
+      setSetupError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setSetupPending(false);
+    }
+  };
+  const feedback = error || setupError;
+  const feedbackLine = feedback && (
+    <AnalysisError message={feedback} savedCheckpoint={!!latest} />
   );
   const current =
     latest && points.some((point) => point.id === latest.id)
@@ -258,17 +283,33 @@ export function Improve(props: IntelligenceProps) {
             <em>a measurable one.</em>
           </h2>
           <p>
-            Capture today’s source quality, plan a focused improvement, then
-            compare another checkpoint. Progress starts with an honest baseline.
+            A checkpoint saves the quality measurements for this branch. After a
+            change, record another to see what improved.
           </p>
           <button
             className="button primary"
-            disabled={busy || project.example}
-            onClick={() => void capture(true)}
+            disabled={busy || setupPending || indexing || project.example}
+            onClick={() => void startBaseline()}
           >
-            {busy ? <Spinner size={14} /> : <Plus size={14} />}Capture the first
-            checkpoint
+            {busy || indexing || setupPending ? (
+              <Spinner size={14} />
+            ) : (
+              <Plus size={14} />
+            )}
+            {busy
+              ? "Recording checkpoint…"
+              : indexing || setupPending
+                ? "Preparing code analysis…"
+                : !project.path && !project.example
+                  ? "Connect local code"
+                  : "Capture the first checkpoint"}
           </button>
+          {feedbackLine}
+          {!feedback && indexing && (
+            <p role="status">
+              {project.analysisNote || "Memtrace is analyzing this checkout."}
+            </p>
+          )}
         </section>
         {project.example && (
           <p className="intelligence-context-note">
@@ -315,6 +356,7 @@ export function Improve(props: IntelligenceProps) {
         </span>
         <CaptureButtons project={project} busy={busy} capture={capture} />
       </div>
+      {feedbackLine}
       <section className="improvement-summary">
         <div>
           <span>SMALL CHANGES. VISIBLE PROGRESS.</span>

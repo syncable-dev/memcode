@@ -1,6 +1,9 @@
 import { spawn } from "node:child_process";
 import { appVersion } from "../../src/version";
 import { createInterface } from "node:readline";
+import { tmpdir } from "node:os";
+import { childEnv, type Command } from "../commands";
+import { readCodexCatalog, recordCodexModelFailure, selectCodexModel, type CodexCatalog } from "./codex-models";
 import type { AgentSession, AgentSessionOptions } from "./types";
 import type { ReasoningEffort } from "../../src/shared";
 import type { ReportedTokenUsage } from "../../src/measurements";
@@ -16,6 +19,22 @@ type Id = string | number;
 
 /** One native Codex turn, with the app-server transport kept open for human replies. */
 export function startCodexSession(options: AgentSessionOptions): AgentSession {
+  return runCodexSession(options);
+}
+
+/** Same app-server as the worker. Probe only the authenticated catalog; no thread or turn. */
+export async function probeCodexCatalog(command: Command): Promise<CodexCatalog> {
+  let catalog: CodexCatalog = { models: [] };
+  const probe = runCodexSession({
+    command, cwd: tmpdir(), env: childEnv(), model: "", effort: "low", prompt: "", briefPath: "", toolArgs: [],
+    onEvent: () => {}, requestInput: async () => ({ cancelled: true }),
+  }, (result) => { catalog = result; });
+  const timer = setTimeout(() => { void probe.stop(); }, 10_000);
+  try { await probe.completion; } finally { clearTimeout(timer); }
+  return catalog;
+}
+
+function runCodexSession(options: AgentSessionOptions, inspect?: (result: CodexCatalog) => void): AgentSession {
   const mode = options.permissionMode ?? "review";
   const policy = mode === "full-access" ? "never" : "on-request";
   const reviewer = mode === "auto" ? "auto_review" : "user";
@@ -25,8 +44,6 @@ export function startCodexSession(options: AgentSessionOptions): AgentSession {
       ...options.command.prefix,
       "app-server",
       "--stdio",
-      "-c",
-      `model_reasoning_effort=${JSON.stringify(options.effort)}`,
       "-c",
       "features.default_mode_request_user_input=true",
       ...withoutPermissionArgs("codex", options.toolArgs),
@@ -48,6 +65,7 @@ export function startCodexSession(options: AgentSessionOptions): AgentSession {
   const pending = new Map<
     number,
     {
+      method: string;
       resolve(value: Json): void;
       reject(error: Error): void;
       timer: ReturnType<typeof setTimeout>;
@@ -68,6 +86,13 @@ export function startCodexSession(options: AgentSessionOptions): AgentSession {
     },
   );
   const emit = options.onEvent;
+  let catalog: CodexCatalog = { models: [] };
+  let selected = options.model;
+  let selectedEffort: string | undefined = options.effort;
+  let attemptedModel = "";
+  const modelFailure = (error: unknown) => {
+    if (attemptedModel) recordCodexModelFailure(catalog, attemptedModel, error);
+  };
   const modelMeasurement = (
     id: unknown,
     source: "codex-thread" | "codex-rerouted",
@@ -114,7 +139,7 @@ export function startCodexSession(options: AgentSessionOptions): AgentSession {
     }
     settle(result);
   };
-  const request = (method: string, params: Json): Promise<Json> =>
+  const request = (method: string, params: Json, timeoutMs = 45_000): Promise<Json> =>
     new Promise((resolve, reject) => {
       if (finished) {
         reject(new Error("Codex session has ended."));
@@ -124,9 +149,9 @@ export function startCodexSession(options: AgentSessionOptions): AgentSession {
       const timer = setTimeout(() => {
         pending.delete(id);
         reject(new Error(`Codex did not respond to ${method}.`));
-      }, 45_000);
+      }, timeoutMs);
       timer.unref();
-      pending.set(id, { resolve, reject, timer });
+      pending.set(id, { method, resolve, reject, timer });
       write({ id, method, params });
     });
   const input = async (id: Id, prompt: WorkerInputPrompt) => {
@@ -536,16 +561,27 @@ export function startCodexSession(options: AgentSessionOptions): AgentSession {
           delta: true,
           messageId: item.id,
         });
-    } else if (method === "item/started" && params.item) {
+    } else if (["item/started", "item/completed"].includes(method) && params.item) {
       const item = params.item;
-      if (!["reasoning", "agentMessage", "userMessage"].includes(item.type))
+      if (item.id && !["reasoning", "agentMessage", "userMessage", "plan"].includes(item.type)) {
+        const label = item.type === "commandExecution" ? "Running a command"
+          : item.type === "fileChange" ? "Editing files" : item.tool || item.type;
         emit({
           type: "activity",
           toolId: item.id,
           phase: "tool",
-          label: item.command || item.tool || item.type,
+          label,
+          ...(method === "item/completed" ? {
+            toolResult: item.error || ["failed", "declined", "cancelled"].includes(item.status) ||
+              (typeof item.exitCode === "number" && item.exitCode !== 0) ? "failed" : "completed",
+          } : {}),
         });
+      }
     } else if (method === "turn/plan/updated") {
+      const current = Array.isArray(params.plan)
+        ? params.plan.find((step: Json) => step.status === "inProgress" && typeof step.step === "string")
+        : undefined;
+      if (current) emit({ type: "activity", phase: "working", label: current.step.slice(0, 160) });
       const text = (params.plan || [])
         .map(
           (step: Json) =>
@@ -555,6 +591,7 @@ export function startCodexSession(options: AgentSessionOptions): AgentSession {
       if (text)
         emit({ type: "message", role: "system", text: `Plan\n${text}` });
     } else if (method === "error") {
+      if (params.willRetry === false) modelFailure(params.error);
       const message =
         params.error?.message || params.message || "Codex reported an error.";
       emit({ type: "error", message, fatal: params.willRetry === false });
@@ -564,6 +601,7 @@ export function startCodexSession(options: AgentSessionOptions): AgentSession {
     ) {
       const turn = params.turn || {},
         error = turn.error?.message;
+      if (turn.status === "failed") modelFailure(turn.error);
       finish(
         turn.status === "completed"
           ? { exitCode: 0 }
@@ -594,6 +632,7 @@ export function startCodexSession(options: AgentSessionOptions): AgentSession {
       if (item) {
         pending.delete(packet.id);
         clearTimeout(item.timer);
+        if (packet.error && (item.method === "thread/start" || item.method === "turn/start")) modelFailure(packet.error);
         packet.error
           ? item.reject(
               new Error(packet.error.message || "Codex request failed."),
@@ -637,9 +676,20 @@ export function startCodexSession(options: AgentSessionOptions): AgentSession {
         },
       });
       write({ method: "initialized", params: {} });
+      if (!options.localModel) {
+        catalog = await readCodexCatalog(options.command, { ...options.env, ...options.command.env }, (method, params) => request(method, params, 4500));
+        if (inspect) { inspect(catalog); finish({ exitCode: 0 }); return; }
+        selected = selectCodexModel(catalog, options.model, !!options.automaticModelTier, options.automaticModelTier);
+        const efforts = catalog.models.find(m => m.id === selected)?.efforts;
+        if (!selected || (efforts?.length && !efforts.includes(options.effort))) selectedEffort = undefined;
+        if (selected !== options.model && options.automaticModelTier)
+          emit({ type: "message", role: "system", text: selected ? `Codex selected ${selected} from this account’s available models.` : "Codex will use this account’s default model." });
+      }
+      attemptedModel = selected;
       const thread = await request("thread/start", {
         cwd: options.cwd,
-        ...(options.model ? { model: options.model } : {}),
+        ...(selected ? { model: selected } : {}),
+        ...(selectedEffort ? { config: { model_reasoning_effort: selectedEffort } } : {}),
         ...(options.localModel ? { modelProvider: "ollama" } : {}),
         sandbox:
           mode === "full-access" ? "danger-full-access" : "workspace-write",
@@ -658,6 +708,7 @@ export function startCodexSession(options: AgentSessionOptions): AgentSession {
           `Codex did not activate the selected ${mode} permission mode. The worker was not prompted; choose a supported mode or check administrator policy.`,
         );
       threadId = thread.thread?.id;
+      attemptedModel = selected || thread.model;
       if (!threadId) throw new Error("Codex did not return a thread ID.");
       if (["low", "medium", "high", "xhigh"].includes(thread.reasoningEffort))
         reportedEffort = thread.reasoningEffort;
@@ -667,8 +718,8 @@ export function startCodexSession(options: AgentSessionOptions): AgentSession {
       const turn = await request("turn/start", {
         threadId,
         input: [{ type: "text", text: options.prompt }],
-        ...(options.model ? { model: options.model } : {}),
-        effort: options.effort,
+        ...(selected ? { model: selected } : {}),
+        ...(selectedEffort ? { effort: selectedEffort } : {}),
         approvalPolicy: policy,
         approvalsReviewer: reviewer,
         cwd: options.cwd,

@@ -105,14 +105,14 @@ export function Empty({
 }: {
   icon: React.ReactNode;
   title: string;
-  description: string;
+  description: React.ReactNode;
   action?: React.ReactNode;
 }) {
   return (
     <div className="empty-state">
       <div className="empty-icon">{icon}</div>
       <h3>{title}</h3>
-      <p>{description}</p>
+      {typeof description === "string" ? <p>{description}</p> : description}
       {action}
     </div>
   );

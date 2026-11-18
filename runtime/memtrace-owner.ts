@@ -242,6 +242,7 @@ interface OwnerOptions {
 /** Only owns children it spawned; an already reachable owner is always borrowed. */
 export class ManagedMemtraceOwners {
   private readonly owned = new Map<string, OwnedProcess>();
+  private readonly draining = new Map<string, Promise<void>>();
   private readonly abort = new AbortController();
   constructor(private readonly options: OwnerOptions = {}) {}
 
@@ -269,15 +270,28 @@ export class ManagedMemtraceOwners {
   ): Promise<void> {
     if (this.abort.signal.aborted)
       throw Error("The Memtrace connection is closing.");
+    const directory = scope.dataDirectory;
+    if (this.draining.has(directory)) {
+      await this.draining.get(directory);
+      return this.ready(scope, command, env, probe, onProgress);
+    }
+    const previous = this.owned.get(directory);
+    let reachable = false;
     try {
       await probe();
-      return; // Reuse the live owner without spawning or taking ownership.
+      reachable = true;
     } catch (error) {
       if (!pendingMemtraceOwner(error) && !disconnectedMemtraceClient(error))
         throw error;
     }
     if (this.abort.signal.aborted)
       throw Error("The Memtrace connection is closing.");
+    if (
+      this.draining.has(directory) ||
+      (previous && previous !== this.owned.get(directory))
+    )
+      return this.ready(scope, command, env, probe, onProgress);
+    if (reachable) return; // Borrow a live owner without taking ownership.
     let owned = this.owned.get(scope.dataDirectory);
     if (!owned) {
       const child = (this.options.spawn ?? spawn)(
@@ -370,8 +384,17 @@ export class ManagedMemtraceOwners {
           throw Error(
             `Memtrace could not start this project's local engine (exit ${owned.exited ?? "signal"}).${diagnosticSuffix(owned)}`,
           );
+        if (this.draining.has(directory))
+          return this.ready(scope, command, env, probe, onProgress);
         try {
           await probe();
+          if (
+            this.draining.has(directory) ||
+            this.owned.get(directory) !== owned
+          )
+            return this.ready(scope, command, env, probe, onProgress);
+          if (this.abort.signal.aborted)
+            throw Error("The Memtrace connection is closing.");
           report("The local Memtrace engine is ready.");
           return;
         } catch (error) {
@@ -392,10 +415,8 @@ export class ManagedMemtraceOwners {
       }
       throw Error("The Memtrace connection is closing.");
     } catch (error) {
-      if (this.owned.get(scope.dataDirectory) === owned) {
-        this.owned.delete(scope.dataDirectory);
-        await this.stop(owned);
-      }
+      if (this.owned.get(scope.dataDirectory) === owned)
+        await this.release(scope.dataDirectory);
       if (this.abort.signal.aborted)
         throw Error("The Memtrace connection is closing.");
       throw error;
@@ -403,17 +424,32 @@ export class ManagedMemtraceOwners {
   }
 
   async release(dataDirectory: string): Promise<void> {
+    const pending = this.draining.get(dataDirectory);
+    if (pending) return pending;
     const record = this.owned.get(dataDirectory);
     if (!record) return;
-    this.owned.delete(dataDirectory);
-    await this.stop(record);
+    // The native store lock can outlive its query endpoint. Reserve the
+    // directory until the exact owner finishes its durable shutdown.
+    const retirement = Promise.resolve()
+      .then(() => this.stop(record))
+      .then(() => {
+        if (this.owned.get(dataDirectory) === record)
+          this.owned.delete(dataDirectory);
+      })
+      .finally(() => this.draining.delete(dataDirectory));
+    this.draining.set(dataDirectory, retirement);
+    return retirement;
   }
 
   async close(): Promise<void> {
     this.abort.abort();
-    const owned = [...this.owned.values()];
-    this.owned.clear();
-    await Promise.allSettled(owned.map((record) => this.stop(record)));
+    const directories = new Set([
+      ...this.owned.keys(),
+      ...this.draining.keys(),
+    ]);
+    await Promise.allSettled(
+      [...directories].map((directory) => this.release(directory)),
+    );
   }
   private stop(record: OwnedProcess): Promise<void> {
     return this.options.stop

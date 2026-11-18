@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { planRoute, qualifyTier, routingInputs } from "../runtime/router.ts";
+import { cursorCatalog } from "../src/cursor-models.ts";
 import { initialState } from "../src/seed.ts";
 import type { Evidence, HarnessRuntime } from "../src/shared.ts";
 
@@ -115,6 +116,17 @@ test("unavailable catalogs produce an actionable failure rather than a fabricate
     /No eligible installed harness/,
   );
 });
+test("Cursor routing uses live session variants for automatic routes and validates saved overrides", () => {
+  const state = initialState();
+  const task = { ...state.tasks[0], assignment: "manual" as const, harness: "cursor" as const };
+  const grok = "grok-4.7[context=256k,reasoning_effort=high,fast=true]";
+  const offered = cursorCatalog({models:{availableModels:[{modelId:"other",name:"Other"},{modelId:grok,name:"Grok 4.7"}]}});
+  const runtimes = [{...catalog[2], models: offered}];
+  assert.equal(planRoute(task, undefined, runtimes, state.settings).model, grok);
+  assert.equal(planRoute({...task,modelOverride:"grok-4.7-high"}, measured, runtimes, state.settings).model, grok);
+  assert.throws(() => planRoute({...task,modelOverride:"grok-4.7-xhigh"}, measured, runtimes, state.settings), /Worker assignment/);
+  assert.equal(planRoute({...task,modelOverride:"other"}, measured, runtimes, state.settings).model, "other");
+});
 test("local inference requires an explicit installed model name", () => {
   const state = initialState();
   assert.throws(
@@ -126,6 +138,19 @@ test("local inference requires an explicit installed model name", () => {
       }),
     /Ollama model name/,
   );
+});
+
+test("empty remote catalogs use the provider default while explicit pins must be available", () => {
+  const state = initialState();
+  for (const id of ["claude", "codex", "cursor"] as const) {
+    const runtime = { ...catalog.find(runtime => runtime.id === id)!, models: [] };
+    const task = { ...state.tasks[0], harness: id, assignment: "manual" as const };
+    const defaults = { claude: "default", codex: "Codex default", cursor: "Cursor default" };
+    assert.equal(planRoute(task, measured, [runtime], state.settings).model, defaults[id]);
+    assert.throws(() => planRoute({ ...task, modelOverride: "old-id" }, measured, [runtime], state.settings), /cannot confirm|no longer offers/);
+  }
+  const local = planRoute(state.tasks[0], measured, [catalog[0]], { ...state.settings, model: "local-ollama", localModel: true });
+  assert.equal(local.model, "local-ollama");
 });
 
 test("Smart auto routes only to a connected harness with native automatic review", () => {

@@ -32,7 +32,10 @@ interface Props {
   open: (task: WorkItem) => void;
   openArtifact: (artifact: Artifact) => void;
   onWorkers: () => void;
+  onInsights?: () => void;
   joinRequested?: number;
+  localSetupRequested?: boolean;
+  onLocalSetupHandled?: () => void;
   onJoinHandled?: () => void;
 }
 
@@ -43,7 +46,10 @@ export function TeamOnboarding({
   open,
   openArtifact,
   onWorkers,
+  onInsights,
   joinRequested = 0,
+  localSetupRequested,
+  onLocalSetupHandled,
   onJoinHandled,
 }: Props) {
   const [directory, setDirectory] = useState<TeamDirectory | null>(null);
@@ -104,6 +110,12 @@ export function TeamOnboarding({
     setSourceOpen(false);
     setRepository(undefined);
   }, [project.id]);
+  useEffect(() => {
+    if (localSetupRequested) {
+      setSourceOpen(true);
+      onLocalSetupHandled?.();
+    }
+  }, [project.id, localSetupRequested, onLocalSetupHandled]);
   const perform = async (key: string, action: () => Promise<void>) => {
     setBusy(key);
     setError("");
@@ -887,6 +899,7 @@ export function TeamOnboarding({
           repository={linked?.project.repository}
           notify={notify}
           onWorkers={onWorkers}
+          onInsights={onInsights}
         />
       )}
       {room && (

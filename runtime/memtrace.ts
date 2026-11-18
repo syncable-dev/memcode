@@ -24,10 +24,19 @@ import {
   disconnectedMemtraceClient,
 } from "./memtrace-owner";
 import {
+  certifiedPublication,
+  pathKey,
+  exactRevisionSource,
+  incompletePublication,
   verifiedIndexRevision,
   waitForIndexPublication,
   waitForPeerIndex,
+  writingSourceRevision,
 } from "./memtrace-peer-index";
+import {
+  recoverablePublicationFailure,
+  sourceChangedBeforePublication,
+} from "../src/local-analysis";
 import { appVersion } from "../src/version";
 
 type Json = Record<string, any>;
@@ -49,13 +58,6 @@ function unwrap(value: unknown): any {
   }
   return result;
 }
-const pathKey = (value: string) =>
-  value
-    .replace(/^\\\\\?\\/, "")
-    .replaceAll("\\", "/")
-    .replace(/\/$/, "")
-    .toLowerCase();
-
 /** MemCode's record of the engine's live watch on one project folder. */
 export interface MemtraceWatch {
   /** watching: the engine lists a watch on this folder. unavailable: see reason. */
@@ -109,6 +111,15 @@ export class MemtraceEngine {
   scopeFor(projectId: string): MemtraceScopeBinding | null {
     const scope = this.scopes.get(projectId);
     return scope ? { ...scope } : null;
+  }
+  /** Guard a multi-call observation against owner replacement or retirement. */
+  bindingStillCurrent(projectId: string): () => boolean {
+    const owner = this.clients.get(projectId);
+    return () =>
+      !!owner &&
+      !this.closing &&
+      !this.retiring.has(projectId) &&
+      this.clients.get(projectId) === owner;
   }
   /** Version advertised by the connected engine, never inferred from an install pin. */
   versionFor(projectId: string): string | undefined {
@@ -600,29 +611,31 @@ export class MemtraceEngine {
     };
     try {
       let discovered: any;
-      try {
+      const probe = async () => {
         await attach();
         discovered = await discover();
-      } catch (error) {
-        if (!pendingMemtraceOwner(error) && !disconnectedMemtraceClient(error))
-          throw error;
-        if (!local) {
+      };
+      if (local) {
+        // Guard the initial attachment too: an endpoint can still answer while
+        // a preceding project binding is shutting down this store.
+        await this.owners.ready(
+          { ...local, directory: launchDirectory },
+          command,
+          env,
+          probe,
+          reportProgress,
+        );
+      } else {
+        try {
+          await probe();
+        } catch (error) {
+          if (!pendingMemtraceOwner(error) && !disconnectedMemtraceClient(error))
+            throw error;
           // ClientPending is not a wrong store. Bootstrap only the selected
           // project, never the broad Folder Group or an unmarked parent.
           await disconnect();
           return this.open(project, true);
         }
-        await this.owners.ready(
-          { ...local, directory: launchDirectory },
-          command,
-          env,
-          async () => {
-            // Pending clients can retain a stale attachment during owner election.
-            await attach();
-            discovered = await discover();
-          },
-          reportProgress,
-        );
       }
       discovered = await waitForPrivateRepositoryDiscovery(
         discovered,
@@ -713,12 +726,13 @@ export class MemtraceEngine {
     this.clients.set(project.id, { ...connection, projectPath: project.path });
     return connection.client;
   }
-  async call(project: Project, name: string, args: Json): Promise<any> {
+  async call(project: Project, name: string, args: Json, signal?: AbortSignal): Promise<any> {
+    signal?.throwIfAborted();
     const generation = this.bindingGenerations.get(project.id) ?? 0;
     const client = await this.connect(project);
     const query = (connection: Client) =>
       connection
-        .callTool({ name, arguments: args }, undefined, { timeout: 120_000 })
+        .callTool({ name, arguments: args }, undefined, { timeout: 120_000, signal })
         .then((result) => {
           if (generation !== (this.bindingGenerations.get(project.id) ?? 0))
             throw Error(
@@ -727,8 +741,10 @@ export class MemtraceEngine {
           return unwrap(result);
         });
     try {
+      signal?.throwIfAborted();
       return await query(client);
     } catch (error) {
+      signal?.throwIfAborted();
       if (generation !== (this.bindingGenerations.get(project.id) ?? 0))
         throw Error(
           "This epic graph was retired; its earlier query was not retried.",
@@ -757,8 +773,20 @@ export class MemtraceEngine {
     project: Project,
     update: (note: string) => void,
     force = false,
+    previousFailure = project.analysis === "error"
+      ? project.analysisNote
+      : undefined,
+    signal?: AbortSignal,
   ): Promise<string> {
-    const repoId = await this.index(project, update, force);
+    signal?.throwIfAborted();
+    const repoId = await this.index(
+      project,
+      update,
+      force,
+      recoverablePublicationFailure(previousFailure),
+      signal,
+    );
+    signal?.throwIfAborted();
     // Watcher lifecycle step 1. Analysis is complete without waiting for it.
     void this.watch(project, repoId).catch(() => {});
     return repoId;
@@ -767,9 +795,13 @@ export class MemtraceEngine {
     project: Project,
     update: (note: string) => void,
     force: boolean,
+    retryPublication: boolean,
+    signal?: AbortSignal,
   ): Promise<string> {
+    const selectedPath = project.path, selectedBranch = project.branch;
     update("Connecting to the local Memtrace engine…");
     await this.connect(project, update);
+    signal?.throwIfAborted();
     const result = await this.call(project, "list_indexed_repositories", {});
     const repos: Json[] = Array.isArray(result)
       ? result
@@ -781,7 +813,10 @@ export class MemtraceEngine {
     const connection = this.clients.get(project.id),
       scope = this.scopes.get(project.id);
     const isCancelled = () =>
+      signal?.aborted ||
       this.closing ||
+      project.path !== selectedPath ||
+      project.branch !== selectedBranch ||
       this.clients.get(project.id) !== connection ||
       this.scopes.get(project.id) !== scope;
     const assertActive = () => {
@@ -790,23 +825,43 @@ export class MemtraceEngine {
           "Memtrace analysis was cancelled or its engine binding changed. Its result was not adopted.",
         );
     };
-    if (!force && match?.index_state === "current") {
+    assertActive();
+    const wait = { isCancelled, signal, requireCertificate: retryPublication };
+    if (
+      match?.repo_id &&
+      (!force || retryPublication) &&
+      (match.index_state === "current" || match.index_state === "catching_up" || retryPublication)
+    ) {
       const revision = await this.call(project, "get_query_revision", {
         repo_id: match.repo_id,
+        branch: project.branch,
       });
       assertActive();
-      if (verifiedIndexRevision(revision, project, match.repo_id))
+      if (retryPublication) {
+        if (
+          (project.repoId && project.repoId !== match.repo_id) ||
+          !exactRevisionSource(revision, project, match.repo_id)
+        )
+          throw Error(
+            "Memtrace could not verify the repository, branch and checkout for this retry.",
+          );
+        if (certifiedPublication(revision, project, match.repo_id))
+          return match.repo_id;
+      } else if (verifiedIndexRevision(revision, project, match.repo_id))
         return match.repo_id;
+      if (writingSourceRevision(revision, project, match.repo_id))
+        return waitForIndexPublication(this, project, match.repo_id, update, wait, revision);
       // Native startup can publish the repository summary before its independent
       // source certificate. Follow that publication without enqueueing a duplicate.
-      return waitForPeerIndex(
-        this,
-        project,
-        { repo_id: match.repo_id, branch: project.branch },
-        match.repo_id,
-        update,
-        { isCancelled },
-      );
+      if (!retryPublication || !incompletePublication(revision))
+        return waitForPeerIndex(
+          this,
+          project,
+          { repo_id: match.repo_id, branch: project.branch },
+          match.repo_id,
+          update,
+          wait,
+        );
     }
     update("Reading the project structure and building its code graph…");
     const queueIndex = () =>
@@ -830,7 +885,7 @@ export class MemtraceEngine {
         job,
         match?.repo_id ?? project.repoId,
         update,
-        { isCancelled },
+        wait,
       );
     if (job.skipped)
       throw new Error(
@@ -848,8 +903,26 @@ export class MemtraceEngine {
       });
       assertActive();
       update(`Analyzing code · ${status.stage ?? status.status ?? "working"}`);
-      if (status.status === "failed")
+      if (status.status === "failed") {
+        // A later replay can already have certified the same checkout. The
+        // original failed job remains available in engine diagnostics.
+        const repoId = match?.repo_id ?? status.repo_id ?? project.repoId;
+        if (
+          sourceChangedBeforePublication(status.error) &&
+          typeof repoId === "string" &&
+          (!project.repoId || project.repoId === repoId)
+        ) {
+          const revision = await this.call(project, "get_query_revision", {
+            repo_id: repoId,
+            branch: project.branch,
+          }).catch(() => null);
+          assertActive();
+          if (certifiedPublication(revision, project, repoId)) return repoId;
+          if (writingSourceRevision(revision, project, repoId))
+            return waitForIndexPublication(this, project, repoId, update, wait, revision);
+        }
         throw new Error(status.error ?? "Project analysis failed");
+      }
       if (status.status === "completed") {
         const indexed = await this.call(
           project,
@@ -873,9 +946,7 @@ export class MemtraceEngine {
           throw new Error(
             "The index completed without a verified repository identity. Reconnect before planning workers.",
           );
-        return waitForIndexPublication(this, project, repoId, update, {
-          isCancelled,
-        });
+        return waitForIndexPublication(this, project, repoId, update, wait);
       }
     }
     throw new Error(

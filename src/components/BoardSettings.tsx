@@ -15,7 +15,7 @@ import type {
   Stage,
 } from "../shared";
 import { stages } from "../shared";
-import { workflowFor } from "../planning/workflow";
+import { isBacklogStatus, workflowFor } from "../planning/workflow";
 import { stageLabel } from "../domain";
 import { Modal } from "./Dialogs";
 import { Select } from "./Select";
@@ -49,6 +49,8 @@ export function BoardSettings({
     ),
   );
   const [busy, setBusy] = useState(false);
+  const needsStage = (status: WorkflowState) => isBacklogStatus(status.id) ||
+    !workflow.some((other) => other.id !== status.id && other.stage === status.stage && !isBacklogStatus(other.id));
   const update = (id: string, patch: Partial<WorkflowState>) =>
     setWorkflow((list) =>
       list.map((status) =>
@@ -168,6 +170,7 @@ export function BoardSettings({
                 <Select
                   aria-label={`Stage for ${status.name}`}
                   value={status.stage}
+                  disabled={isBacklogStatus(status.id)}
                   onValueChange={(value) =>
                     update(status.id, { stage: value as Stage })
                   }
@@ -178,8 +181,7 @@ export function BoardSettings({
                       value={stage}
                       disabled={
                         stage !== status.stage &&
-                        workflow.filter((item) => item.stage === status.stage)
-                          .length === 1
+                        needsStage(status)
                       }
                     >
                       {stageLabel(stage)}
@@ -205,7 +207,7 @@ export function BoardSettings({
                   <button
                     className="icon-button"
                     aria-label={`Move ${status.name} earlier`}
-                    disabled={index === 0}
+                    disabled={index <= 1}
                     onClick={() => reorder(index, -1)}
                   >
                     <ArrowUp size={12} />
@@ -213,7 +215,7 @@ export function BoardSettings({
                   <button
                     className="icon-button"
                     aria-label={`Move ${status.name} later`}
-                    disabled={index === workflow.length - 1}
+                    disabled={index === 0 || index === workflow.length - 1}
                     onClick={() => reorder(index, 1)}
                   >
                     <ArrowDown size={12} />
@@ -222,15 +224,11 @@ export function BoardSettings({
                     className="icon-button"
                     aria-label={`Remove ${status.name}`}
                     title={
-                      workflow.filter((item) => item.stage === status.stage)
-                        .length === 1
+                      needsStage(status)
                         ? "Keep at least one lane for each execution stage"
                         : `Remove ${status.name}`
                     }
-                    disabled={
-                      workflow.filter((item) => item.stage === status.stage)
-                        .length === 1
-                    }
+                    disabled={needsStage(status)}
                     onClick={() =>
                       setWorkflow((list) =>
                         list.filter((item) => item.id !== status.id),

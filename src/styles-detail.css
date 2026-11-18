@@ -863,14 +863,6 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.worker-thinking {
-  display: flex;
-  gap: 9px;
-  align-items: center;
-  font-size: 12px;
-  color: #87958b;
-  padding: 13px 0;
-}
 .thinking-dots {
   display: flex;
   gap: 3px;
@@ -1062,6 +1054,56 @@
   margin: 13px 0;
   gap: 10px;
 }
+.remote-worker dl > div,
+.remote-worker li,
+.remote-conversation-note {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+.remote-worker dl,
+.remote-worker details,
+.remote-worker p,
+.remote-conversation-note {
+  font-size: 11px;
+  line-height: 1.55;
+  color: #5b7062;
+}
+.remote-worker dd {
+  margin: 0;
+  color: #294635;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+.remote-worker-activity {
+  display: flex;
+  gap: 8px;
+  padding: 11px;
+  margin-top: 16px;
+  border: 1px solid #dce7df;
+  border-radius: 7px;
+  color: #40674e;
+  background: #f5faf5;
+}
+.remote-worker-activity strong,
+.remote-worker-activity small {
+  display: block;
+  font-size: 11px;
+}
+.remote-worker-activity small,
+.remote-worker li time {
+  font-size: 10px;
+  color: #657b6c;
+}
+.remote-worker details { margin-top: 10px; }
+.remote-worker ol { padding: 0; }
+.remote-conversation-note {
+  flex-wrap: wrap;
+  padding: 14px 22px;
+  border-top: 1px solid #e3ecd7;
+  background: #f9fcf7;
+}
 .inspector-field > span:last-child {
   display: flex;
   align-items: center;
@@ -1078,6 +1120,59 @@
   border-radius: 5px;
   padding: 5px 7px;
   max-width: 120px;
+}
+.worker-prerequisites {
+  margin: 14px 0 6px;
+  padding: 11px 12px;
+  border: 1px solid #dfdfc9;
+  border-radius: 7px;
+  background: #fbfbf2;
+  color: #3d4d40;
+  font-size: 11px;
+}
+.worker-prerequisites header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 8px;
+}
+.worker-prerequisites header button {
+  color: var(--mint-ink);
+  font-size: 10px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.worker-prerequisites ul {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.worker-prerequisites li + li {
+  border-top: 1px solid #e3e8d9;
+}
+.worker-prerequisites li > button,
+.worker-prerequisites li > span {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 9px;
+  padding: 6px 0;
+  text-align: left;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.worker-prerequisites li > button:hover {
+  color: var(--mint-ink);
+}
+.worker-prerequisites li svg {
+  flex-shrink: 0;
+}
+.worker-prerequisites small {
+  display: block;
+  color: #536756;
+  font-size: 10px;
 }
 .start-worker {
   width: 100%;
@@ -1671,4 +1766,10 @@
   .conversation-scroll {
     padding: 25px 26px 18px;
   }
+}
+.prerequisites-hint {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+  margin: 0;
 }

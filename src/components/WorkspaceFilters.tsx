@@ -86,7 +86,7 @@ export function WorkspaceFilters({
             onValueChange={(cycleId) => change({ cycleId })}
           >
             <option value="all">All cycles</option>
-            <option value="none">Backlog · no cycle</option>
+            <option value="none">No cycle</option>
             {cycles.map((cycle) => (
               <option key={cycle.id} value={cycle.id}>
                 {cycle.name}

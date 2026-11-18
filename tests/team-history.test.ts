@@ -18,6 +18,8 @@ import { teamSnapshotSchema, teamSyncReplySchema, teamEvent } from "../runtime/t
 import { projectPlanningHistory, applyPlanningHistory, advancePlanningHistory, planningMetadata, planningHistorySeed, planningSeedSchema, planningValueHash, type TeamPlanningHistory, type TeamPlanningSeed } from "../runtime/team/history";
 import { projectSharedState } from "../runtime/team/projection";
 import { emptyTeamLocalIds, localTeamId } from "../runtime/team/identity";
+import { applyTaskPatch } from "../runtime/task-planning";
+import { backlogStatusId, defaultWorkflow, isBacklogStatus, taskStatus, workflowFor } from "../src/planning/workflow";
 
 const START = "2026-11-01T09:00:00.000Z";
 const date = (minute: number) => new Date(Date.parse(START) + minute * 60_000).toISOString();
@@ -140,6 +142,45 @@ async function fixture(options: { oldServer?: boolean; loseHistoryAck?: boolean 
     async close() { await b.close(); await a.close(); await relay.close(); await rm(root, { recursive: true, force: true }); },
   };
 }
+
+test("Backlog and intentional Planned outside a cycle roundtrip across two private project IDs and a relay restart", async () => {
+  const f = await fixture();
+  try {
+    const ownerId = "dogfood-owner";
+    const states = defaultWorkflow(ownerId).filter((state) => !isBacklogStatus(state.id));
+    f.aState.workflowStates = states;
+    f.aState.tasks.forEach((task) => { task.statusId = states.find((state) => state.stage === task.stage)!.id; });
+    const original = f.aState.tasks.find((task) => task.identifier === "MC-042")!;
+    original.cycleId = null;
+    observePlanning(f.aState, date(6500));
+    const originalDate = original.updatedAt;
+    const shared = await f.share(), accepted = await f.join(shared.workspace.workspaceId);
+    const memberId = accepted.project!.projectId;
+    const remote = () => f.bState.tasks.find((task) => task.projectId === memberId && task.identifier === original.identifier)!;
+    const lane = (state: AppState, task: WorkItem) => taskStatus(task, workflowFor(state, task.projectId)).name;
+    const fromMember = async () => { await f.b.capture(); await f.b.synchronize(memberId); await f.a.synchronize(ownerId); };
+    const fromOwner = async () => { await f.a.capture(); await f.a.synchronize(ownerId); await f.b.synchronize(memberId); };
+    assert.equal(lane(f.bState, remote()), "Backlog");
+    assert.equal(remote().updatedAt, originalDate);
+    applyTaskPatch(f.bState, remote(), { statusId: memberId + ":planned", cycleId: null });
+    await fromMember();
+    assert.equal(lane(f.aState, original), "Planned");
+    assert.equal(original.cycleId, null);
+    applyTaskPatch(f.aState, original, { cycleId: "cycle-active" });
+    await fromOwner();
+    assert.equal(lane(f.bState, remote()), "Planned");
+    assert.ok(remote().cycleId);
+    applyTaskPatch(f.bState, remote(), { statusId: backlogStatusId(memberId) });
+    await fromMember();
+    await f.restart();
+    await f.a.synchronize(ownerId); await f.b.synchronize(memberId);
+    assert.equal(lane(f.aState, original), "Backlog");
+    assert.equal(lane(f.bState, remote()), "Backlog");
+    assert.equal(original.cycleId, null);
+    assert.equal(remote().cycleId, null);
+    assert.equal(f.aState.cycles.find((cycle) => cycle.id === "cycle-complete")!.snapshots.length, 34);
+  } finally { await f.close(); }
+});
 
 test("history projection keeps original planning chronology and excludes execution, source and credentials", () => {
   const state = board(), seed = projectPlanningHistory(state, "dogfood-owner");

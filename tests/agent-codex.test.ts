@@ -34,17 +34,21 @@ rl.on('line',line=>{const p=JSON.parse(line);
   if(p.params.capabilities.requiredHumanApproval!==true)process.exit(11);
   send({id:p.id,result:{userAgent:'fixture'}});
  }else if(p.method==='initialized')initialized=true;
+ else if(p.method==='account/read')send({id:p.id,result:{account:{type:'chatgpt',id:'fixture'}}});
+ else if(p.method==='model/list')send({id:p.id,result:{data:process.env.NO_CATALOG==='yes'?[]:[{model:'chosen-model',isDefault:true}]}});
  else if(p.method==='thread/start'){
   threadSettings=p.params;
+  if(process.env.MODEL_DENIED==='yes'){send({id:p.id,error:{code:-32603,message:'The requested model is not supported when using Codex with a ChatGPT account.',data:{code:'model_not_found'}}});return;}
   const full=process.env.MODE==='full-access';
-  if(!initialized||p.params.approvalPolicy!==(full?'never':'on-request')||p.params.sandbox!==(full?'danger-full-access':'workspace-write')||p.params.approvalsReviewer!==(process.env.MODE==='auto'?'auto_review':'user')||p.params.allowProviderModelFallback!==false||p.params.model!=='chosen-model')process.exit(12);
+  if(!initialized||p.params.approvalPolicy!==(full?'never':'on-request')||p.params.sandbox!==(full?'danger-full-access':'workspace-write')||p.params.approvalsReviewer!==(process.env.MODE==='auto'?'auto_review':'user')||p.params.allowProviderModelFallback!==false||p.params.model!==(process.env.NO_CATALOG==='yes'?undefined:'chosen-model'))process.exit(12);
   send({id:p.id,result:{thread:{id:'thread-native'},...(process.env.NO_MODEL_METADATA==='yes'?{}:{model:'resolved-model',reasoningEffort:'medium'}),approvalPolicy:p.params.approvalPolicy,approvalsReviewer:process.env.DOWNGRADE==='yes'?'user':p.params.approvalsReviewer,sandbox:{type:full?'dangerFullAccess':'workspaceWrite'}}});
  }else if(p.method==='turn/start'){
   turnSettings=p.params;
-  if(p.params.effort!=='high'||p.params.input[0].text!=='The exact prompt')process.exit(13);
+  if(p.params.effort!==(process.env.NO_CATALOG==='yes'?undefined:'high')||p.params.input[0].text!=='The exact prompt')process.exit(13);
   send({id:p.id,result:{turn:{id:'turn-native',status:'inProgress'}}});
   for(const event of notifications)notify(event.method,event.params);
   notify('item/started',{threadId:'thread-native',item:{id:'tool-1',type:'commandExecution',command:'npm test'}});
+  notify('item/completed',{threadId:'thread-native',item:{id:'tool-1',type:'commandExecution',command:'npm test',status:'completed',exitCode:0}});
   notify('turn/plan/updated',{threadId:'thread-native',plan:[{step:'Check the code',status:'inProgress'}]});
   if(process.env.MALFORMED==='yes')process.stdout.write('{bad json\\n'); else next();
  }else if(p.method==='turn/interrupt')send({id:p.id,result:{}});
@@ -65,10 +69,11 @@ async function runFixture(
   const events: AgentEvent[] = [],
     prompts: WorkerInputPrompt[] = [];
   const options: AgentSessionOptions = {
-    command: { command: process.execPath, prefix: [script] },
+    command: { command: process.execPath, prefix: [script], identity: env.COMMAND_IDENTITY },
     cwd: dir,
     env: { ...process.env, ...env },
-    model: "chosen-model",
+    model: env.REQUESTED ?? "chosen-model",
+    automaticModelTier: env.AUTO_TIER === "yes" ? "balanced" : undefined,
     effort: "high",
     prompt: "The exact prompt",
     briefPath: "brief.md",
@@ -109,6 +114,41 @@ const evidence = (events: AgentEvent[]) => {
   return JSON.parse(item.text);
 };
 
+test("Codex refuses an unavailable pinned model before the brief is sent", async () => {
+  const fixture = await runFixture({ REQUESTED:"old-model" });
+  try {
+    assert.match((await fixture.session.completion).error ?? "", /cannot confirm access/);
+    assert.equal(fixture.events.some(e => e.type === "prompted"), false);
+  } finally { await fixture.cleanup(); }
+});
+
+test("Codex remembers a provider model rejection for the same account and runtime", async () => {
+  const identity = "model-rejection-fixture";
+  const first = await runFixture({ COMMAND_IDENTITY: identity, MODEL_DENIED: "yes" });
+  try {
+    assert.match((await first.session.completion).error ?? "", /not supported/);
+    assert.equal(first.events.some(event => event.type === "prompted"), false);
+  } finally { await first.cleanup(); }
+  const second = await runFixture({ COMMAND_IDENTITY: identity });
+  try {
+    assert.match((await second.session.completion).error ?? "", /rejected every/);
+    assert.equal(second.events.some(event => event.type === "prompted"), false);
+  } finally { await second.cleanup(); }
+  const other = await runFixture({ COMMAND_IDENTITY: "other-fixture" });
+  try {
+    assert.equal((await other.session.completion).exitCode, 0);
+  } finally { await other.cleanup(); }
+});
+
+test("Codex with no advertised models sends an automatic turn without a model or effort override", async () => {
+  const fixture = await runFixture({ REQUESTED:"old-model", AUTO_TIER:"yes", NO_CATALOG:"yes" });
+  try {
+    assert.equal((await fixture.session.completion).exitCode, 0);
+    assert.equal(evidence(fixture.events).threadSettings.model, undefined);
+    assert.equal(evidence(fixture.events).turnSettings.effort, undefined);
+  } finally { await fixture.cleanup(); }
+});
+
 test("Codex native turn preserves model, policy, effort, MCP config and finishes before server exit", async () => {
   const f = await runFixture();
   try {
@@ -138,9 +178,11 @@ test("Codex native turn preserves model, policy, effort, MCP config and finishes
     );
     assert.ok(
       f.events.some(
-        (event) => event.type === "activity" && event.label === "npm test",
+        (event) => event.type === "activity" && event.toolId === "tool-1" &&
+          event.label === "Running a command" && !event.toolResult,
       ),
     );
+    assert.ok(f.events.some((event) => event.type === "activity" && event.toolId === "tool-1" && event.toolResult === "completed"));
     assert.ok(
       f.events.some(
         (event) =>

@@ -29,6 +29,7 @@ for (const variant of [
   "mismatch",
   "unstable",
   "unknown",
+  "replaying",
 ]) {
   const project = {
     id: "personal",
@@ -110,13 +111,24 @@ for (const variant of [
           return {
             repo_id: "fixture",
             ready: ["aligned", "mismatch", "unstable"].includes(variant),
+            worktree: project.path,
+            status: variant === "aligned" ? "complete" : "partial",
+            publication: { status: "published" },
+            _meta: {
+              graph_revision: { publication_unchanged_during_call: true },
+            },
+            source_unchanged_during_observation: true,
+            requested_source_matches: true,
+            requested_revision_matches: true,
             branch: variant === "mismatch" ? "epic/different" : "main",
             source_revision: "synthetic-source-revision",
             mismatched_files: variant === "aligned" ? 0 : 2,
             reason:
-              variant === "blocked" || variant === "unknown"
-                ? "source_index_not_qualified"
-                : undefined,
+              variant === "replaying"
+                ? "branch_publication_incomplete"
+                : variant === "blocked" || variant === "unknown"
+                  ? "source_index_not_qualified"
+                  : undefined,
             ...(variant === "unstable"
               ? {
                   retry_query_group: true,
@@ -136,6 +148,7 @@ for (const variant of [
         mode: "project",
         dataDirectory: "C:/Synthetic/observatory/.memcode/memtrace/.memdb",
       }),
+      bindingStillCurrent: () => () => true,
       certificateDiagnosticsFor: () => [
         "full owned source could not qualify its independently verified input certificate",
       ],
@@ -153,8 +166,11 @@ import React,{useState} from 'react';
 import {createRoot} from 'react-dom/client';
 import {TeamOnboarding} from './src/components/TeamOnboarding';
 import {LocalProjectSetup} from './src/components/LocalProjectSetup';
+import {InsightsPage} from './src/components/InsightsPage';
+import {Improve} from './src/components/Improve';
 import {initialState} from './src/seed';
 import './src/styles.css';import './src/styles-team.css';import './src/styles-collaboration.css';
+import './src/styles-intelligence.css';
 const mode=new URLSearchParams(location.search).get('mode')??'owner';
 const repository={url:'https://github.com/synthetic-fixture/observatory.git',identity:'github.com/synthetic-fixture/observatory',provider:'github',name:'observatory'};
 const personal={id:'personal',name:'Personal Observatory',description:'Synthetic fixture',path:'C:/Synthetic/observatory',branch:'main',analysis:'ready',createdAt:'2026-11-15',example:false};
@@ -192,10 +208,46 @@ window.memcode={
  analyzeProject:async(id)=>{window.calls.push(['analyze',id]);source.projects.find(p=>p.id===id).analysis='ready';publish()},
  startWorker:async()=>{window.calls.push(['UNEXPECTED-WORKER-START'])},
  teamStatus:async()=>null,
- localAnalysisDiagnostics:async(id)=>{window.calls.push(['diagnostics',id]);const value=structuredClone(window.diagnosticReports[window.diagnosticVariant]);const project=source.projects.find(p=>p.id===id);value.project={...value.project,name:project.name,path:project.path,branch:project.branch};if(window.holdDiagnostics)return await new Promise(resolve=>{window.releaseDiagnostics=()=>resolve(value)});return value;},
+ localAnalysisDiagnostics:async(id)=>{window.calls.push(['diagnostics',id]);const value=structuredClone(window.diagnosticReports[window.diagnosticVariant]);const project=source.projects.find(p=>p.id===id);value.project={...value.project,name:project.name,path:project.path,branch:project.branch};if(window.holdDiagnostics)return await new Promise(resolve=>{window.releaseDiagnostics=()=>resolve(value)});if(value.sourcePublication==='verified' && project.analysis==='error' && project.analysisNote==='owned source changed after verification; refusing publication') window.setLocalAnalysis('ready','Verified on this checkout.');return value;},
 };
 function Fixture(){const[state,setState]=useState(source),[selected,setSelected]=useState(mode==='owner'||mode==='diagnostics'?'personal':'shared');update=setState;window.selectProject=setSelected;const project=state.projects.find(p=>p.id===selected);window.setLocalAnalysis=(analysis,note)=>{Object.assign(project,{analysis,analysisNote:note});publish();};window.changeLocalPath=(path)=>{project.path=path;publish();};return <main style={{maxWidth:1170,padding:30,margin:'0 auto'}}><div style={{fontSize:10,color:'#87968c',marginBottom:20,letterSpacing:1}}>SYNTHETIC ONBOARDING FIXTURE · NO LIVE ACCOUNTS</div>{mode==='diagnostics'?<LocalProjectSetup project={project} repository={repository} notify={text=>window.calls.push(['notify',text])} onWorkers={()=>window.calls.push(['workers-page'])}/>:<TeamOnboarding state={state} project={project} notify={text=>window.calls.push(['notify',text])} open={()=>{}} openArtifact={()=>{}} onWorkers={()=>window.calls.push(['workers-page'])}/>}<aside data-testid="current-project" style={{fontSize:11,color:'#7e9183',padding:'20px 0',borderTop:'1px solid #dfe7dd'}}>Current project: {project.name}<div>{state.tasks.filter(t=>t.projectId===selected).map(t=><p key={t.id}>{t.title}</p>)}</div></aside></main>};
-createRoot(document.getElementById('root')).render(<Fixture/>);
+function QualityFixture() {
+  const [view, setView] = useState('team');
+  const [branch, setBranch] = useState('main');
+  const project = {...personal, branch, repoId:'fixture'};
+  const state = {...source, projects:[project], qualitySnapshots:JSON.parse(sessionStorage.getItem('quality-history') || '[]')};
+  const notify = text => window.calls.push(['notify', text]);
+  window.changeBranch = setBranch;
+  window.diagnosticVariant = 'aligned';
+  window.memcode.refreshIntelligence = async (projectId, refreshIndex) => {
+    window.calls.push(['report', projectId, branch, refreshIndex]);
+    await new Promise((resolve, reject) => {
+      window.resolveReport = resolve;
+      window.rejectReport = () => reject(Error('Fixture report timed out.'));
+    });
+    const result = {
+      id:crypto.randomUUID(), projectId, repoId:'fixture', branch, basis:'memtrace-ast-distribution-v1', status:'current',
+      capturedAt:new Date().toISOString(),measurementVersion:'fixture',
+      source:{revision:'fixture-source', commit:'abcdef',dirty:false,indexReady:true,files:17,mismatchedFiles:0},
+      graph:{revision:'fixture-graph',stable:true,indexedAt:new Date().toISOString(),scope:'project',dataDirectory:null},
+      metrics:{nodes:123,edges:321,symbols:branch==='main'?37:49,files:17,communities:3,processes:4,measuredFunctions:23,
+        estimatedFunctions:0,distribution:{simple:20,moderate:2,high:1,critical:0},deadCodeCandidates:0,importCycles:0},
+      hotspots:[],deadCode:[],tools:[],limitations:[]
+    };
+    // Deliberately delay the bridge broadcast. Components still get the actual IPC reply.
+    const history = JSON.parse(sessionStorage.getItem('quality-history') || '[]');
+    sessionStorage.setItem('quality-history', JSON.stringify([...history, result]));
+    return result;
+  };
+  const props = {state, project, notify, open:()=>{}, onAnalyze:async()=>{window.calls.push(['unexpected-reindex'])}};
+  return <main>
+    <nav>{['team','insights','improve'].map(item=><button key={item} onClick={()=>setView(item)}>{item}</button>)}</nav>
+    {view==='team' && <LocalProjectSetup project={project} repository={repository} notify={notify} onWorkers={()=>{}} onInsights={()=>setView('insights')}/>}
+    {view==='insights' && <InsightsPage {...props}/>}
+    {view==='improve' && <Improve key={branch} {...props}/>}
+  </main>;
+}
+createRoot(document.getElementById('root')).render(mode==='quality'?<React.StrictMode><QualityFixture/></React.StrictMode>:<Fixture/>);
 `,
   },
   absWorkingDir: root,
@@ -720,6 +772,34 @@ try {
     "watch/job failures remain Unknown rather than absent",
     "diagnostics clear after local path changes and stale responses cannot cross projects",
   );
+  await page.goto(url + "/?mode=diagnostics");
+  await page.evaluate(() => {
+    window.diagnosticVariant = "replaying";
+    window.setLocalAnalysis(
+      "error",
+      "owned source changed after verification; refusing publication",
+    );
+  });
+  await expect(
+    page.getByText("Not yet verified", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Retry analysis" }),
+  ).toBeVisible();
+  await page.evaluate(() => {
+    window.diagnosticVariant = "aligned";
+  });
+  await expect(
+    page.getByText("Code context is ready", { exact: true }),
+  ).toBeVisible({ timeout: 12_000 });
+  expect(
+    await page.evaluate(
+      () => window.calls.filter((call) => call[0] === "analyze").length,
+    ),
+  ).toBe(0);
+  flows.push(
+    "a later certified replay automatically clears a saved refusal without submitting an index",
+  );
   await page.setViewportSize({ width: 640, height: 900 });
   await page.goto(url + "/?mode=reuse");
   await page
@@ -734,6 +814,108 @@ try {
     path: join(output, "07-compact-onboarding.png"),
     fullPage: true,
   });
+  await page.setViewportSize({ width: 1240, height: 1000 });
+  await page.goto(url + "/?mode=quality");
+  await page
+    .getByRole("button", { name: "Check local engine", exact: true })
+    .click();
+  await expect(page.getByText("Aligned", { exact: true })).toBeVisible();
+  await page
+    .getByRole("button", { name: "Open Insights", exact: true })
+    .click();
+  const reportRequests = () =>
+    page.evaluate(() => window.calls.filter(([op]) => op === "report"));
+  await expect(
+    page.getByRole("heading", { name: "Loading your code report…" }),
+  ).toBeVisible();
+  await expect
+    .poll(reportRequests)
+    .toEqual([["report", "personal", "main", false]]);
+  await page.getByRole("button", { name: "improve", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Recording checkpoint…" }),
+  ).toBeDisabled();
+  await page.getByRole("button", { name: "insights", exact: true }).click();
+  await page.evaluate(() => window.rejectReport());
+  await expect(
+    page.getByText("Fixture report timed out.", { exact: true }),
+  ).toBeVisible();
+  await page.screenshot({ path: join(output, "11-insights-retry.png") });
+  await page.getByRole("button", { name: "Retry report" }).click();
+  await expect.poll(reportRequests).toHaveLength(2);
+  await page.evaluate(() => window.resolveReport());
+  await expect(
+    page.getByText(
+      "37 source symbols connected by 321 structural relationships.",
+    ),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "improve", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: /Better code/ }),
+  ).toBeVisible();
+  await page.screenshot({
+    path: join(output, "12-improve-first-checkpoint.png"),
+  });
+  await page.evaluate(() => window.changeBranch("epic/parallel"));
+  await page
+    .getByRole("button", { name: "Capture the first checkpoint" })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Recording checkpoint…" }),
+  ).toBeDisabled();
+  await page.getByRole("button", { name: "insights", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Loading your code report…" }),
+  ).toBeVisible();
+  await expect(page.getByText(/37 source symbols/)).toHaveCount(0);
+  await expect.poll(reportRequests).toHaveLength(3);
+  await page.getByRole("button", { name: "improve", exact: true }).click();
+  await page.evaluate(() => window.rejectReport());
+  await expect(page.getByRole("alert")).toContainText(
+    "Fixture report timed out.",
+  );
+  await page
+    .getByRole("button", { name: "Capture the first checkpoint" })
+    .click();
+  await expect.poll(reportRequests).toHaveLength(4);
+  await page.evaluate(() => window.resolveReport());
+  await expect(
+    page.getByRole("heading", { name: /Better code/ }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "insights", exact: true }).click();
+  await expect(
+    page.getByText(
+      "49 source symbols connected by 321 structural relationships.",
+    ),
+  ).toBeVisible();
+  expect(await reportRequests()).toEqual([
+    ["report", "personal", "main", false],
+    ["report", "personal", "main", false],
+    ["report", "personal", "epic/parallel", false],
+    ["report", "personal", "epic/parallel", false],
+  ]);
+  expect(
+    await page.evaluate(() =>
+      window.calls.some(
+        ([op]) => op === "analyze" || op === "unexpected-reindex",
+      ),
+    ),
+  ).toBe(false);
+  await page.reload();
+  await page
+    .getByRole("button", { name: "Open Insights", exact: true })
+    .click();
+  await expect(
+    page.getByText(
+      "37 source symbols connected by 321 structural relationships.",
+    ),
+  ).toBeVisible();
+  expect(await reportRequests()).toEqual([]);
+  flows.push(
+    "Team verified graph opens Insights, shares one read with Improve, recovers from a report failure without reindexing",
+    "Improve recovers and renders its first checkpoint on a separate branch, then Insights consumes it without a second read",
+    "reopening the app selects the persisted checkpoint for the current branch",
+  );
   expect(errors).toEqual([]);
   const evidence = {
     passed: true,

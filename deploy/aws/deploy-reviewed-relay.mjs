@@ -22,7 +22,7 @@ const instance = JSON.parse(aws(['ec2', 'describe-instances', '--region', region
 if (!instance?.Tags?.some(tag => tag.Key === 'aws:cloudformation:stack-id' && tag.Value === stack.StackId)) throw Error('Instance is not owned by the reviewed dedicated stack');
 aws(['s3', 'cp', archive, `s3://${outputs.PrivateArtifactBucket}/bundles/${expectedDigest}.tar.gz`, '--region', region, '--only-show-errors']);
 const installer = await readFile(resolve(root, 'deploy/aws/install-relay.py'), 'utf8');
-const commands = ["set -eu", "cloud-init status --wait >/dev/null", `python3 - '${expectedDigest}' <<'MEMCODE_REVIEWED_INSTALLER'\n${installer}\nMEMCODE_REVIEWED_INSTALLER`, "curl --fail --silent http://127.0.0.1:8787/v1/service"];
+const commands = ["set -eu", "cloud-init status --wait >/dev/null", `python3 - '${expectedDigest}' <<'MEMCODE_REVIEWED_INSTALLER'\n${installer}\nMEMCODE_REVIEWED_INSTALLER`, "curl --retry 10 --retry-connrefused --retry-delay 1 --max-time 5 --fail --silent --show-error http://127.0.0.1:8787/v1/service"];
 const parameters = resolve(root, 'tmp/relay-deploy/install-ssm.json');
 await writeFile(parameters, JSON.stringify({ commands }, null, 2));
 const response = JSON.parse(aws(['ssm', 'send-command', '--region', region, '--instance-ids', outputs.InstanceId, '--document-name', 'AWS-RunShellScript', '--comment', 'Install reviewed private MemCode beta Team relay bundle', '--timeout-seconds', '600', '--parameters', `file://${parameters}`, '--output', 'json']));

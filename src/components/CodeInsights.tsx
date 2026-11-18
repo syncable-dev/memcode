@@ -16,13 +16,14 @@ import { qualityValue } from "../intelligence";
 import { Empty, Spinner } from "./UI";
 import { StyleProfile } from "./StyleProfile";
 import {
+  AnalysisError,
   CaptureButtons,
   countLabel,
   DetailResults,
   Distribution,
   FindingList,
   MetricTile,
-  projectCheckpoints,
+  scopedCheckpoints,
   SnapshotEvidence,
   useCapture,
   type IntelligenceProps,
@@ -40,14 +41,38 @@ const tabs = [
 type Tab = (typeof tabs)[number]["id"];
 
 export function CodeInsights(props: IntelligenceProps) {
-  const { state, project, notify } = props,
-    snapshots = projectCheckpoints(state, project),
-    snapshot = snapshots.at(-1);
+  const { state, project, notify, onAnalyze } = props;
+  const report = useCapture(project, notify);
+  const snapshot = scopedCheckpoints(state, project, report.latest).at(-1);
+  const ready =
+    project.analysis === "ready" &&
+    !!project.repoId &&
+    !!project.path &&
+    !project.example;
+  const indexing = ["connecting", "indexing"].includes(project.analysis);
+  const [setupPending, setSetupPending] = useState(false);
+  const [setupError, setSetupError] = useState("");
+  useEffect(() => {
+    if (!snapshot && ready) void report.load();
+  }, [snapshot?.id, ready, project.repoId]);
+  const startAnalysis = async () => {
+    setSetupPending(true);
+    setSetupError("");
+    try {
+      if (onAnalyze) await onAnalyze();
+      else await report.capture(false);
+    } catch (reason) {
+      setSetupError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setSetupPending(false);
+    }
+  };
   const [tab, setTab] = useState<Tab>("quality"),
     [detail, setDetail] = useState<IntelligenceDetail | null>(null),
+    [detailError, setDetailError] = useState(""),
     [loading, setLoading] = useState(false),
     [file, setFile] = useState("src/shared.ts");
-  const { busy, capture } = useCapture(project, notify);
+  const { busy, capture } = report;
   const request = useRef(0);
   const root = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
@@ -65,6 +90,7 @@ export function CodeInsights(props: IntelligenceProps) {
     const currentRequest = ++request.current;
     setLoading(true);
     setDetail(null);
+    setDetailError("");
     try {
       const result = (await window.memcode.queryIntelligence(
         project.id,
@@ -73,7 +99,8 @@ export function CodeInsights(props: IntelligenceProps) {
       )) as IntelligenceDetail;
       if (currentRequest === request.current) setDetail(result);
     } catch (error) {
-      if (currentRequest === request.current) notify((error as Error).message);
+      if (currentRequest === request.current)
+        setDetailError(error instanceof Error ? error.message : String(error));
     } finally {
       if (currentRequest === request.current) setLoading(false);
     }
@@ -91,7 +118,34 @@ export function CodeInsights(props: IntelligenceProps) {
     if (tab !== "quality" && project.analysis === "ready" && !project.example)
       void load(tab, tab === "governance" ? { file } : undefined);
   }, [tab, project.id, project.analysis]);
-  if (!snapshot)
+  if (!snapshot) {
+    const problem = report.error || setupError;
+    const waiting = busy || setupPending || indexing || (ready && !problem);
+    const title = project.example
+      ? "Your code deserves real evidence."
+      : problem
+        ? "The code report couldn’t load."
+        : indexing || setupPending
+          ? "Preparing code analysis…"
+          : ready || busy
+            ? "Loading your code report…"
+            : !project.path
+              ? "Connect your local code."
+              : "Analyze this checkout.";
+    const description = problem ? (
+      <AnalysisError message={problem} />
+    ) : project.example ? (
+      "Choose a local project to see measurements from its source."
+    ) : indexing ? (
+      project.analysisNote ||
+      "Your report will open when the local graph is ready."
+    ) : ready || busy ? (
+      "Reading quality and complexity from this branch’s existing graph."
+    ) : !project.path ? (
+      "Choose the project folder on this computer to see its code quality."
+    ) : (
+      "Memtrace measures the source for this branch and prepares a quality report."
+    );
     return (
       <div className="code-insights-view">
         <section className="intelligence-intro">
@@ -109,33 +163,33 @@ export function CodeInsights(props: IntelligenceProps) {
             </p>
           </div>
         </section>
-        <Empty
-          icon={<Sparkles size={29} />}
-          title={
-            project.example
-              ? "Your code deserves real evidence."
-              : "Start with a measured checkpoint."
-          }
-          description={
-            project.example
-              ? "Choose a local project from the project selector to inspect its actual source. Example work items are not measured code."
-              : "Connect Memtrace, read the source graph, and capture the first quality checkpoint. Future checkpoints will make change visible."
-          }
-          action={
-            !project.example ? (
-              <button
-                className="button primary"
-                disabled={busy}
-                onClick={() => void capture(true)}
-              >
-                {busy ? <Spinner size={14} /> : <RefreshCw size={14} />}Analyze
-                codebase
-              </button>
-            ) : undefined
-          }
-        />
+        <div aria-live="polite" aria-busy={waiting}>
+          <Empty
+            icon={waiting ? <Spinner size={26} /> : <Sparkles size={29} />}
+            title={title}
+            description={description}
+            action={
+              !project.example && !waiting ? (
+                <button
+                  className="button primary"
+                  onClick={() =>
+                    void (ready ? capture(false) : startAnalysis())
+                  }
+                >
+                  <RefreshCw size={14} />
+                  {ready
+                    ? "Retry report"
+                    : !project.path
+                      ? "Connect local code"
+                      : "Analyze local code"}
+                </button>
+              ) : undefined
+            }
+          />
+        </div>
       </div>
     );
+  }
   const elevated = qualityValue(snapshot, "elevated");
   return (
     <div className="code-insights-view" ref={root} data-view={tab}>
@@ -146,6 +200,7 @@ export function CodeInsights(props: IntelligenceProps) {
         </span>
         <CaptureButtons project={project} busy={busy} capture={capture} />
       </div>
+      {report.error && <AnalysisError message={report.error} savedCheckpoint />}
       <div
         className="intelligence-tabs"
         role="tablist"
@@ -349,7 +404,11 @@ export function CodeInsights(props: IntelligenceProps) {
           ) : (
             <div className="intelligence-small-empty">
               <Network size={20} />
-              <p>Use refresh to read this part of the graph.</p>
+              {detailError ? (
+                <AnalysisError message={detailError} />
+              ) : (
+                <p>Use refresh to read this part of the graph.</p>
+              )}
             </div>
           )}
         </section>

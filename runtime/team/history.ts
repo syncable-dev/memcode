@@ -4,6 +4,7 @@ import type { AppState } from "../../src/shared";
 import type { CycleSnapshot, TaskObservation } from "../../src/planning/types";
 import type { TeamEvent, TeamSnapshot, TeamStory } from "../../src/team";
 import { localTeamId, remoteTeamId, type TeamIdentityBinding } from "./identity";
+import { backlogStatusId, isBacklogStatus, plannedOutsideCycleId } from "../../src/planning/workflow";
 
 // Kept outside the strict v1 board protocol: old clients can continue syncing.
 const id = z.string().min(1).max(200);
@@ -112,7 +113,13 @@ export function remotePlanningMetadata(binding: TeamIdentityBinding, metadata: T
 }
 
 export function remotePlanningSeed(binding: TeamIdentityBinding, seed: TeamPlanningSeed): TeamPlanningSeed {
-  const translate = (kind: Parameters<typeof remoteTeamId>[1], id: string) => remoteTeamId(binding, kind, id);
+  const translate = (kind: Parameters<typeof remoteTeamId>[1], id: string) => {
+    if (kind === "workflow") {
+      if (isBacklogStatus(id)) return backlogStatusId("memcode");
+      if (id.endsWith(":planned-without-cycle")) return plannedOutsideCycleId("memcode");
+    }
+    return remoteTeamId(binding, kind, id);
+  };
   const observation = (value: TeamPlanningSeed["events"][number]["after"]) => ({ ...value, cycleId: value.cycleId ? translate("cycle", value.cycleId) : null });
   return {
     ...seed,
@@ -226,7 +233,21 @@ export function originalTimestampRepairs(history: TeamPlanningHistory, imported:
 /** Replace this shared project's canonical history only; all other projects and local execution survive. */
 export function applyPlanningHistory(state: AppState, projectId: string, history: TeamPlanningHistory, binding: TeamIdentityBinding): void {
   if (history.import) state.planning.authoritativeProjects = [...new Set([...(state.planning.authoritativeProjects ?? []), projectId])];
-  const local = (kind: Parameters<typeof localTeamId>[1], id: string) => localTeamId(binding, kind, id);
+  const local = (kind: Parameters<typeof localTeamId>[1], id: string) => {
+    if (kind === "workflow") {
+      if (id === backlogStatusId("memcode")) return backlogStatusId(projectId);
+      if (id === plannedOutsideCycleId("memcode")) return plannedOutsideCycleId(projectId);
+      if (binding.localIds && id.endsWith(":planned")) {
+        // Joined projects have private IDs. Preserve the built-in Planned
+        // role across older boards and map it back to its original wire ID.
+        const standard = `${projectId}:planned`;
+        binding.localIds.toLocal[`workflow:${id}`] = standard;
+        binding.localIds.toRemote[`workflow:${standard}`] = id;
+        return standard;
+      }
+    }
+    return localTeamId(binding, kind, id);
+  };
   for (const meta of history.stories) {
     const task = state.tasks.find((item) => item.projectId === projectId && item.id === local("story", meta.id));
     if (task) Object.assign(task, { createdAt: meta.createdAt, updatedAt: meta.updatedAt, archivedAt: meta.archivedAt, category: meta.category, checklist: structuredClone(meta.checklist), relatedIds: meta.relatedIds?.map((id) => local("story", id)), duplicateOf: meta.duplicateOf ? local("story", meta.duplicateOf) : meta.duplicateOf, statusId: meta.statusId ? local("workflow", meta.statusId) : undefined, customFields: meta.customFields ? Object.fromEntries(Object.entries(meta.customFields).map(([id, value]) => [local("field", id), value])) : undefined });

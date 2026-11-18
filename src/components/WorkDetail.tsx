@@ -1,6 +1,10 @@
 import { harnessNames } from "../shared";
 import { Select } from "./Select";
-import { StoryMetadata, WorkerAssignment } from "./WorkerAssignment";
+import {
+  StoryMetadata,
+  WorkerAssignment,
+  WorkerPrerequisites,
+} from "./WorkerAssignment";
 import { PlanningProperties } from "./PlanningProperties";
 import { WorkerBrowser } from "./WorkerBrowser";
 import { ArtifactPreview } from "./ArtifactPreview";
@@ -16,13 +20,15 @@ import { StoryComments } from "./StoryComments";
 import { WorkerInputPanel, WorkerActivityView } from "./WorkerInputPanel";
 import { DeleteAction } from "./DeleteAction";
 import { workerReadiness } from "../worker-availability";
-import { teamStartBlocked } from "../team-presentation";
+import { teamClaimForStory, teamStartBlocked } from "../team-presentation";
+import { RemoteWorker, remoteActivityLabel } from "./RemoteWorker";
 import { useRuntimeHealth } from "../useRuntimeHealth";
 import { ConversationMessages } from "./ConversationMessage";
 import { followsConversationTail } from "../conversation-performance";
 import { useConversationDraft } from "../useConversationDraft";
 import { modifierLabel, primaryModifier, shortcutLabel } from "../platform";
 import "../styles-review.css";
+import "../styles-worker-input.css";
 import "../styles-annotations.css";
 import "../styles-card-comments.css";
 import { WorkerChanges } from "./WorkerChanges";
@@ -73,7 +79,7 @@ import type {
   FleetConflict,
   AppState,
 } from "../shared";
-import { isActive, progress } from "../domain";
+import { isActive, pendingPrerequisites, progress } from "../domain";
 import { useDictation } from "../useDictation";
 import {
   Empty,
@@ -142,8 +148,12 @@ export function WorkDetail({
 }: Props) {
   const health = useRuntimeHealth();
   const team = state.team?.find((item) => item.projectId === task.projectId);
+  const owner = teamClaimForStory(team, task.id);
+  const remote = owner && !owner.local ? owner : undefined;
   const teamBlock = teamStartBlocked(team, task.id);
-  const pendingInputs = (state.workerInputs ?? []).filter(
+  const blockers = pendingPrerequisites(task, tasks);
+  const prerequisitesRef = useRef<HTMLDivElement>(null);
+  const pendingInputs = remote ? [] : (state.workerInputs ?? []).filter(
     (input) => input.taskId === task.id && input.status === "pending",
   );
   const [tab, setTab] = useState<StoryTab>(
@@ -177,6 +187,12 @@ export function WorkDetail({
     [references, setReferences] = useState<ReviewReference[]>([]);
   const [check, setCheck] = useState("");
   const [busy, setBusy] = useState(false);
+  const [startRequest, setStartRequest] = useState<{
+    taskId: string;
+    at: string;
+    previousStart?: string;
+    error?: string;
+  }>();
   const [planning, setPlanning] = useState(false);
   const measuredStory = useRef<string>("");
   const plan = () =>
@@ -194,6 +210,7 @@ export function WorkDetail({
     // Reviewing saved evidence must not start implementation qualification or
     // indexing. Check the lane too: an in-place card switch updates tab later.
     if (
+      remote ||
       reviewing ||
       tab === "review" ||
       !health.available ||
@@ -206,6 +223,7 @@ export function WorkDetail({
     measuredStory.current = task.id;
     plan();
   }, [
+    remote?.claim.attemptId,
     reviewing,
     tab,
     health.available,
@@ -264,7 +282,14 @@ export function WorkDetail({
       followConversation.current = true;
       el.scrollTop = el.scrollHeight;
     }
-  }, [task.messages.length, task.messages.at(-1)?.text, task.id, tab]);
+  }, [
+    task.messages.length,
+    task.messages.at(-1)?.text,
+    task.run.state,
+    startRequest?.error,
+    task.id,
+    tab,
+  ]);
   const run = async () => {
     if (teamBlock) {
       notify(teamBlock);
@@ -272,7 +297,12 @@ export function WorkDetail({
     }
     const submitted = { draft, comments: [...attachedComments] };
     followConversation.current = true;
-    setBusy(true);
+    const request = {
+      taskId: task.id,
+      at: new Date().toISOString(),
+      previousStart: task.run.startedAt,
+    };
+    setStartRequest(request);
     try {
       if (draft.trim()) {
         if (attachedComments.length)
@@ -286,13 +316,19 @@ export function WorkDetail({
       }
       await window.memcode.startWorker(task.id);
     } catch (error) {
-      notify((error as Error).message);
+      const message = error instanceof Error ? error.message : String(error);
+      setStartRequest((previous) =>
+        previous === request ? { ...request, error: message } : previous,
+      );
+      if (tab !== "conversation") notify(message);
     } finally {
-      setBusy(false);
+      setStartRequest((previous) =>
+        previous === request ? undefined : previous,
+      );
     }
   };
   const send = async () => {
-    if (!isActive(task) && teamBlock) {
+    if (teamBlock && (remote || !isActive(task))) {
       notify(teamBlock);
       return;
     }
@@ -409,11 +445,38 @@ export function WorkDetail({
     (h) => h.id === task.harness,
   )?.available;
   const active = isActive(task);
+  useEffect(() => {
+    if (active) setStartRequest(undefined);
+  }, [active, task.id]);
+  const currentRequest =
+    startRequest?.taskId === task.id &&
+    !active &&
+    task.run.startedAt === startRequest.previousStart
+      ? startRequest
+      : undefined;
+  const requestedAt = currentRequest?.error ? undefined : currentRequest?.at;
+  const launchError = currentRequest?.error || (!requestedAt && task.run.error);
+  const starting = !!requestedAt || task.run.state === "preparing";
+  const startupProgress = health.available && starting && (
+    <WorkerActivityView task={task} requestedAt={requestedAt} />
+  );
   const connection = workerReadiness(
     task,
     runtime.harnesses,
     state.workerConnections,
   );
+  const sessionLabel = starting
+    ? "Preparing worker"
+    : {
+        stopping: "Stopping worker…",
+        stopped: "Worker stopped",
+        blocked: "Worker needs attention",
+        failed: "Worker needs attention",
+        finished: "Worker finished",
+        idle: undefined,
+        running: undefined,
+        preparing: undefined,
+      }[task.run.state];
   const openConnections = () => {
     try {
       sessionStorage.setItem(
@@ -489,7 +552,7 @@ export function WorkDetail({
             <button
               className="icon-button"
               title="Open epic workspace"
-              disabled={!task.run.workspace && !task.run.worktree}
+              disabled={!!remote || (!task.run.workspace && !task.run.worktree)}
               onClick={() =>
                 void act(() => window.memcode.openWorkerWorkspace(task.id))
               }
@@ -501,7 +564,7 @@ export function WorkDetail({
               kind="story"
               id={task.id}
               name={task.title}
-              disabled={isActive(task)}
+              disabled={!!remote || isActive(task)}
               withChildren={tasks.some((item) => item.parentId === task.id)}
               onDeleted={onClose}
             />
@@ -568,7 +631,7 @@ export function WorkDetail({
             <span className="property-divider" />
             <span className="detail-local">
               <span />
-              Local execution
+              {remote ? `On ${remote.device}` : "Local execution"}
             </span>
           </div>
         </div>
@@ -595,7 +658,7 @@ export function WorkDetail({
                 <CodeReview
                   key={task.id}
                   task={task}
-                  canStartReview={reviewing}
+                  canStartReview={reviewing && !remote}
                   notify={notify}
                   onOpenSource={(path, line) =>
                     void openLink(path + (line ? `:${line}` : ""))
@@ -607,7 +670,7 @@ export function WorkDetail({
                 />
               </Suspense>
             )}
-            {tab === "queue" && (
+            {tab === "queue" && !remote && (
               <FollowupQueue
                 key={task.id}
                 task={task}
@@ -622,7 +685,7 @@ export function WorkDetail({
                 comments={discussion}
                 notify={notify}
                 onOpenLink={(href) => void openLink(href)}
-                onFollowup={(text) => {
+                onFollowup={remote ? undefined : (text) => {
                   setDraft((value) =>
                     [value, text].filter(Boolean).join("\n\n"),
                   );
@@ -630,7 +693,15 @@ export function WorkDetail({
                 }}
               />
             )}
-            {tab === "terminal" && (
+            {remote && (tab === "queue" || tab === "terminal" || tab === "browser") && (
+              <Empty
+                icon={<ExternalLink size={23} />}
+                title={`Open the ${tab} on ${remote.device}.`}
+                description={`${remote.name} holds this story there. You can leave a comment for the team here.`}
+                action={<button className="secondary-button" onClick={() => setTab("comments")}>Story comments</button>}
+              />
+            )}
+            {tab === "terminal" && !remote && (
               <Suspense fallback={<Spinner />}>
                 <WorkerTerminal
                   task={task}
@@ -652,7 +723,7 @@ export function WorkDetail({
             )}
             {tab === "conversation" && (
               <>
-                {pending.length > 0 && (
+                {!remote && pending.length > 0 && (
                   <button
                     className="followup-queue-summary"
                     onClick={() => setTab("queue")}
@@ -692,25 +763,19 @@ export function WorkDetail({
                       else if (reference.path) void openLink(reference.path);
                     }}
                   />
-                  {health.available && task.run.state === "preparing" && (
-                    <div className="worker-thinking">
-                      <Spinner />
-                      <span>Connecting source context and the epic Fleet…</span>
-                    </div>
-                  )}
-                  {health.available && task.run.state === "running" && (
+                  {!remote && health.available && task.run.state === "running" && (
                     <WorkerActivityView task={task} />
                   )}
-                  {task.run.error && (
-                    <div className="run-error">
+                  {!remote && launchError && (
+                    <div className="run-error" role="alert">
                       <Terminal size={14} />
                       <div>
                         <strong>The worker needs attention.</strong>
-                        <p>{task.run.error}</p>
+                        <p>{launchError}</p>
                       </div>
                     </div>
                   )}
-                  {!health.available && active && (
+                  {!remote && !health.available && active && (
                     <div className="run-error" role="status">
                       <Terminal size={14} />
                       <div>
@@ -723,12 +788,18 @@ export function WorkDetail({
                     </div>
                   )}
                 </div>
-                <div
+                {remote ? (
+                  <div className="remote-conversation-note">
+                    <span role="status"><strong>{remoteActivityLabel(remote)}</strong> · {remote.device}</span>
+                    <button className="text-button" onClick={() => setTab("comments")}>Open team comments <ArrowUpRight size={12} /></button>
+                  </div>
+                ) : <div
                   className={
                     "conversation-composer" +
                     (pendingInputs.length ? " has-worker-input" : "")
                   }
                 >
+                  {startupProgress}
                   {pendingInputs.length > 0 && (
                     <div className="worker-input-stack">
                       {pendingInputs.map((request) => (
@@ -863,7 +934,7 @@ export function WorkDetail({
                       <kbd>↵</kbd> to send
                     </span>
                   </div>
-                </div>
+                </div>}
               </>
             )}
             {tab === "runbook" && (
@@ -995,7 +1066,7 @@ export function WorkDetail({
                   description="Reports, images and HTML files saved by the worker under .memcode/workers/<story-id>/artifacts/ will appear here."
                 />
               ))}
-            {tab === "browser" && (
+            {tab === "browser" && !remote && (
               <WorkerBrowser
                 key={task.id}
                 task={task}
@@ -1086,7 +1157,9 @@ export function WorkDetail({
                 </button>
               </div>
             )}
-            <section className="inspector-section">
+            {remote ? (
+              <RemoteWorker owner={remote} offline={team?.connection === "offline" || team?.connection === "connecting"} />
+            ) : <section className="inspector-section">
               <div className="inspector-label">
                 WORKER ASSIGNMENT
                 <span>
@@ -1114,27 +1187,29 @@ export function WorkDetail({
                       ? "Example conversation"
                       : !health.available
                         ? "Runtime disconnected · live status unavailable"
-                        : active
-                          ? pendingInputs.length
-                            ? "Waiting for your answer"
-                            : task.run.activity?.phase === "waiting_for_worker"
-                              ? "Waiting for a Fleet handoff"
-                              : task.run.activity?.phase === "finishing"
-                                ? "Finishing the worker turn"
-                                : "Working on the shared epic branch"
-                          : task.route
-                            ? connection.routeConnected
-                              ? `${task.route.model} · assigned, not started`
-                              : `${task.route.model} · connect before starting`
-                            : task.assignment === "auto"
-                              ? planning
-                                ? "Measuring who picks this up"
-                                : "Waiting for a measured assignment"
-                              : connection.selectedConnected
-                                ? "Connection approved"
-                                : available
-                                  ? "Installed · approval needed"
-                                  : "Runtime not detected"}
+                        : (sessionLabel ??
+                          (active
+                            ? pendingInputs.length
+                              ? "Waiting for your answer"
+                              : task.run.activity?.phase ===
+                                  "waiting_for_worker"
+                                ? "Waiting for a Fleet handoff"
+                                : task.run.activity?.phase === "finishing"
+                                  ? "Finishing the worker turn"
+                                  : "Working on the shared epic branch"
+                            : task.route
+                              ? connection.routeConnected
+                                ? `${task.route.model} · assigned, not started`
+                                : `${task.route.model} · connect before starting`
+                              : task.assignment === "auto"
+                                ? planning
+                                  ? "Measuring who picks this up"
+                                  : "Waiting for a measured assignment"
+                                : connection.selectedConnected
+                                  ? "Connection approved"
+                                  : available
+                                    ? "Installed · approval needed"
+                                    : "Runtime not detected"))}
                   </span>
                 </div>
                 <span
@@ -1167,6 +1242,20 @@ export function WorkDetail({
                   <ArrowRight size={13} />
                 </button>
               )}
+              {!active && blockers.length > 0 && (
+                <WorkerPrerequisites
+                  blockers={blockers}
+                  workflow={workflow}
+                  open={onOpenTask}
+                  edit={() => {
+                    const details =
+                      prerequisitesRef.current?.closest("details");
+                    if (details) details.open = true;
+                    prerequisitesRef.current?.focus();
+                  }}
+                />
+              )}
+              {tab !== "conversation" && startupProgress}
               {active ? (
                 <button
                   className="button stop-worker"
@@ -1180,16 +1269,23 @@ export function WorkDetail({
                   ) : (
                     <Square size={11} />
                   )}
-                  Stop worker
+                  {task.run.state === "stopping"
+                    ? "Stopping worker…"
+                    : "Stop worker"}
                 </button>
               ) : (
                 <button
                   className="button start-worker"
+                  aria-describedby={
+                    blockers.length ? "worker-prerequisites" : undefined
+                  }
                   onClick={() => void run()}
                   disabled={
                     !health.available ||
                     busy ||
+                    !!requestedAt ||
                     conflicts.length > 0 ||
+                    blockers.length > 0 ||
                     !!teamBlock ||
                     !connection.canStart
                   }
@@ -1202,8 +1298,12 @@ export function WorkDetail({
                       : undefined)
                   }
                 >
-                  {busy ? <Spinner /> : <Play size={12} />}{" "}
-                  {task.run.workspace ? "Resume story" : "Start worker"}
+                  {requestedAt ? <Spinner /> : <Play size={12} />}{" "}
+                  {requestedAt
+                    ? "Starting worker…"
+                    : task.run.workspace
+                      ? "Resume story"
+                      : "Start worker"}
                   <ArrowUpRight size={12} />
                 </button>
               )}
@@ -1212,11 +1312,12 @@ export function WorkDetail({
                   Connect a local project to run real work.
                 </p>
               )}
-            </section>
+            </section>}
             <StoryMetadata
               task={task}
               epics={epics}
               tasks={tasks}
+              prerequisitesRef={prerequisitesRef}
               update={(patch) =>
                 void act(() => window.memcode.updateTask(task.id, patch))
               }
@@ -1230,7 +1331,7 @@ export function WorkDetail({
               open={onOpenTask}
               createChild={onCreateChild}
             />
-            <section className="inspector-section context-section">
+            {!remote && <section className="inspector-section context-section">
               <div className="inspector-label">
                 CODE CONTEXT
                 <GitBranch size={12} />
@@ -1303,6 +1404,7 @@ export function WorkDetail({
               <button
                 className="context-action"
                 disabled={
+                  starting ||
                   busy ||
                   project.example ||
                   ["connecting", "indexing"].includes(project.analysis)
@@ -1331,7 +1433,7 @@ export function WorkDetail({
                   : "Connect Memtrace"}
                 <ArrowRight size={12} />
               </button>
-            </section>
+            </section>}
             <section className="inspector-section">
               <div className="inspector-label">
                 WORKING AGREEMENT
@@ -1349,7 +1451,7 @@ export function WorkDetail({
                 <Check size={12} />
                 <span>Review before marking done</span>
               </div>
-              {task.run.branch && (
+              {!remote && task.run.branch && (
                 <div className="branch-card">
                   <GitBranch size={12} />
                   <span>{task.run.branch}</span>

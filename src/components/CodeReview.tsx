@@ -316,9 +316,13 @@ export function CodeReview({
             <div className="code-review-provenance">
               <span>
                 <FileCode2 size={12} />
-                {run
+                {run?.snapshot.id
                   ? `${run.snapshot.files.length} changed files`
-                  : "Story-scoped changes"}
+                  : run
+                    ? working
+                      ? "Capturing story changes"
+                      : "Story patch unavailable"
+                    : "Story-scoped changes"}
               </span>
               <span>
                 <GitBranch size={12} />
@@ -545,10 +549,14 @@ export function CodeReview({
                   ? "Recorded coverage complete"
                   : "Partial evidence"}
               </span>
-              <span>Snapshot {run.snapshot.id.slice(0, 12)}</span>
-              <span>
-                +{run.snapshot.additions} −{run.snapshot.deletions}
-              </span>
+              {run.snapshot.id && (
+                <>
+                  <span>Snapshot {run.snapshot.id.slice(0, 12)}</span>
+                  <span>
+                    +{run.snapshot.additions} −{run.snapshot.deletions}
+                  </span>
+                </>
+              )}
             </div>
             <section className="code-review-panel">
               <header>
@@ -861,7 +869,8 @@ export function CodeReview({
                   <p className="code-review-unavailable">
                     {working
                       ? "Measuring the changed source…"
-                      : "Function measurements are not available for this review."}
+                      : run.qualityComparison?.notes[0] ||
+                        "Function measurements are not available for this review."}
                   </p>
                 )}
               </section>

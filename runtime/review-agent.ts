@@ -20,6 +20,10 @@ import {
 } from "./commands";
 import { assertWorkerConnected } from "./worker-connections";
 import { within } from "./local";
+import { selectCursorModel } from "./agents/cursor";
+import { readCodexCatalog, recordCodexModelFailure, selectCodexModel, type CodexCatalog } from "./agents/codex-models";
+import { probeClaudeCatalog } from "./agents/claude";
+import { selectClaudeModel } from "./agents/claude-models";
 
 type Json = Record<string, any>;
 export interface ReadonlyReviewQuestion {
@@ -41,6 +45,8 @@ export interface ReadonlyReviewAgent {
   ask(input: ReadonlyReviewQuestion): Promise<ReadonlyReviewAnswer>;
 }
 interface ReviewAgentOptions {
+  modelPinned?: boolean;
+  localModel?: boolean;
   commandFor?: typeof findCommand;
   /** Test transport injection; product callers use the installed approved CLI. */
   spawn?: typeof spawn;
@@ -358,6 +364,11 @@ async function codexQuestion(
     throw error;
   }
   let evidenceRead: ReadonlyReviewAnswer["evidenceRead"];
+  let catalog: CodexCatalog = { models: [] };
+  let attemptedModel = "";
+  const modelFailure = (error: unknown) => {
+    if (attemptedModel) recordCodexModelFailure(catalog, attemptedModel, error);
+  };
   let answer = "",
     model = "",
     threadId = "";
@@ -405,7 +416,8 @@ async function codexQuestion(
       model = text(params.toModel) || model;
       if (model) input.onModel?.(model);
     }
-    if (method === "turn/completed")
+    if (method === "turn/completed") {
+      if (params.turn?.status === "failed") modelFailure(params.turn.error);
       params.turn?.status === "completed"
         ? completed()
         : failed(
@@ -414,13 +426,16 @@ async function codexQuestion(
                 "The review turn did not complete.",
             ),
           );
-    if (method === "error" && params.willRetry === false)
+    }
+    if (method === "error" && params.willRetry === false) {
+      modelFailure(params.error);
       failed(
         Error(
           text(params.error?.message) ||
             "Codex could not complete the review answer.",
         ),
       );
+    }
     if (
       [...messages.values()].reduce((sum, value) => sum + value.length, 0) >
       50000
@@ -428,9 +443,15 @@ async function codexQuestion(
       failed(Error("The reviewer exceeded its answer limit."));
   };
   try {
+    if (!options.localModel) {
+      catalog = await readCodexCatalog(command, reviewEnvironment(command), (method, params) => rpc.request(method, params, 4500));
+      requested = selectCodexModel(catalog, requested, !options.modelPinned, input.task.route?.tier);
+    }
+    attemptedModel = requested;
     const started = await rpc.request("thread/start", {
       cwd,
       ...(requested ? { model: requested } : {}),
+      ...(options.localModel ? { modelProvider: "ollama" } : {}),
       sandbox: "read-only",
       approvalPolicy: "never",
       ephemeral: true,
@@ -466,6 +487,7 @@ async function codexQuestion(
       );
     threadId = text(started.thread?.id);
     model = text(started.model);
+    attemptedModel = requested || model;
     if (!threadId || !model)
       throw Error("Codex did not report its review thread and actual model.");
     const servers = await rpc.request("mcpServerStatus/list", {});
@@ -503,6 +525,9 @@ async function codexQuestion(
         "Codex did not read the captured Memtrace evidence; its answer was not adopted.",
       );
     return { harness: "codex", model, text: answer, evidenceRead };
+  } catch (error) {
+    modelFailure(error);
+    throw error;
   } finally {
     clearTimeout(deadline);
     input.signal?.removeEventListener("abort", abort);
@@ -530,7 +555,6 @@ async function cursorQuestion(
       "enabled",
       "--workspace",
       cwd,
-      ...(requested ? ["--model", requested] : []),
       "acp",
     ],
     cwd,
@@ -632,10 +656,10 @@ async function cursorQuestion(
           "Cursor did not acknowledge read-only Ask mode. No review prompt was sent.",
         );
     }
-    const selection = rows(session.configOptions).find(
-      (item) => item.category === "model" || item.id === "model",
-    );
-    model = text(selection?.currentValue ?? session.models?.currentModelId);
+    const selected = await selectCursorModel(session, requested, (method, params) => rpc.request(method, params),
+      options.modelPinned ? undefined : input.task.route?.tier);
+    const selection = selected.config.find((item) => item.category === "model" || item.id === "model");
+    model = text(selection?.currentValue ?? selected.legacyModel);
     if (!model || /^(auto|default)(\[.*\])?$/.test(model))
       throw Error(
         "Cursor did not report a concrete reviewer model. Select a specific model before starting review conversation.",
@@ -674,6 +698,10 @@ async function claudeQuestion(
   input: ReadonlyReviewQuestion,
   options: ReviewAgentOptions,
 ): Promise<ReadonlyReviewAnswer> {
+  if (requested) {
+    requested = selectClaudeModel(await probeClaudeCatalog(command), requested, !!options.modelPinned);
+    if (input.signal?.aborted) throw Error("Review conversation was cancelled.");
+  }
   const evidenceHash = digest(await readReviewFile(cwd, "review-context.json"));
   const readCalls = new Set<string>();
   let evidenceRead: ReadonlyReviewAnswer["evidenceRead"];
@@ -708,7 +736,7 @@ async function claudeQuestion(
       "--no-session-persistence",
       "--system-prompt",
       policy,
-      ...(requested ? ["--model", requested] : []),
+      ...(requested && requested !== "default" ? ["--model", requested] : []),
     ],
     {
       cwd,
@@ -895,10 +923,16 @@ export function createReadonlyReviewAgent(
           "The review context must stay inside MemCode's private profile.",
         );
       await mkdir(directory, { recursive: true, mode: 0o700 });
+      const measured = input.task.run.measurements?.modelId;
+      // Cursor reports the family in telemetry, but routes keep the selected variant.
+      const cursorVariant = harness === "cursor" && input.task.route?.model.split("[")[0] === measured
+        ? input.task.route?.model : undefined;
+      const settings = state().settings;
+      const globalOverride = settings?.defaultHarness === harness || (harness === "codex" && settings?.localModel) ? settings.model : undefined;
+      const explicit = input.task.modelOverride || globalOverride;
       const requested =
-        input.task.run.measurements?.modelId ??
-        input.task.modelOverride ??
-        input.task.route?.model ??
+        explicit || cursorVariant || measured ||
+        input.task.route?.model ||
         "";
       const evidence = {
         ...input.review,
@@ -964,7 +998,9 @@ export function createReadonlyReviewAgent(
           codex: codexQuestion,
           claude: claudeQuestion,
           cursor: cursorQuestion,
-        }[harness](command, directory, prompt, requested, input, options);
+        }[harness](command, directory, prompt, requested, input, {
+          ...options, modelPinned: !!explicit, localModel: harness === "codex" && !!settings?.localModel,
+        });
       } finally {
         if (within(dataDir, directory))
           await rm(directory, {

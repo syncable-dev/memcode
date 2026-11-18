@@ -18,14 +18,17 @@ import type {
   QualitySnapshot,
 } from "../intelligence";
 import { Spinner } from "./UI";
+import { analysisErrorMessage } from "../errors";
 import { ResultPager } from "./ResultPager";
 import { ImpactPanel } from "./ImpactPanel";
+export { scopedCheckpoints, useCapture } from "./quality-capture";
 
 export interface IntelligenceProps {
   state: AppState;
   project: Project;
   open: (task: WorkItem) => void;
   notify: (message: string) => void;
+  onAnalyze?: () => Promise<void>;
 }
 export const countLabel = (value: number | null) =>
   value === null ? "—" : value.toLocaleString();
@@ -36,38 +39,28 @@ export const checkpointLabel = (value: string) =>
     hour: "2-digit",
     minute: "2-digit",
   });
-export function projectCheckpoints(
-  state: AppState,
-  project: Project,
-): QualitySnapshot[] {
-  return (state.qualitySnapshots ?? [])
-    .filter((snapshot) => snapshot.projectId === project.id)
-    .sort((a, b) => a.capturedAt.localeCompare(b.capturedAt));
-}
-export function useCapture(
-  project: Project,
-  notify: (message: string) => void,
-) {
-  const [busy, setBusy] = useState(false);
-  const capture = async (refreshIndex = false) => {
-    setBusy(true);
-    try {
-      const snapshot = await window.memcode.refreshIntelligence(
-        project.id,
-        refreshIndex,
-      );
-      notify(
-        snapshot.status === "current"
-          ? "Measured checkpoint recorded."
-          : `Checkpoint recorded with ${snapshot.status} coverage. Review its evidence notes.`,
-      );
-    } catch (error) {
-      notify((error as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
-  return { busy, capture };
+export function AnalysisError({
+  message,
+  savedCheckpoint = false,
+}: {
+  message: string;
+  savedCheckpoint?: boolean;
+}) {
+  const { summary, details } = analysisErrorMessage(message);
+  return (
+    <div className="analysis-error">
+      <p role="alert">
+        {summary}
+        {savedCheckpoint && " Showing the last saved checkpoint."}
+      </p>
+      {details && (
+        <details>
+          <summary>Technical details</summary>
+          <pre tabIndex={0}>{details}</pre>
+        </details>
+      )}
+    </div>
+  );
 }
 export function CaptureButtons({
   project,

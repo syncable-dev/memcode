@@ -143,6 +143,7 @@ export function WorkerChanges({
       .workerChanges(task.id)
       .then((value) => {
         if (alive) {
+          setError("");
           setChanges(value);
           setSelected((path) =>
             value.checkpoints.some((c) => c.files.some((f) => f.path === path))
@@ -157,14 +158,14 @@ export function WorkerChanges({
     return () => {
       alive = false;
     };
-  }, [task.id, task.changesRevision, task.run.state]);
+  }, [task.id, task.changesRevision, task.run.state, task.run.sessionId]);
   if (error)
     return (
       <div className="changes-error" role="alert">
         {error}
       </div>
     );
-  if (!changes)
+  if (!changes || changes.taskId !== task.id)
     return (
       <div className="changes-loading">
         <Spinner />
@@ -178,7 +179,7 @@ export function WorkerChanges({
       <Empty
         icon={<Code2 size={27} />}
         title="Changes, connected to their worker."
-        description="Source edits appear here at Fleet checkpoints, with file and line changes for this card."
+        description="Files and line changes appear here as this worker records edits."
       />
     );
   const groups = changes.checkpoints.flatMap((checkpoint) =>
@@ -251,7 +252,9 @@ export function WorkerChanges({
         <ShieldCheck size={11} />
         {changes.checkpoints.some((c) => c.basis === "scoped-baseline")
           ? "Earlier run · scoped source snapshot"
-          : "Recorded at this worker’s Fleet checkpoints"}
+          : changes.checkpoints.some((c) => c.basis.startsWith("native-"))
+            ? "Includes confirmed Claude Code edits"
+            : "Recorded at this worker’s Fleet checkpoints"}
         <span>Review candidate</span>
       </footer>
       <ReviewHighlights
@@ -322,7 +325,7 @@ function FilePatches({
             <div key={checkpoint.id} data-checkpoint={checkpoint.id}>
               {groups.length > 1 && (
                 <div className="change-checkpoint-label">
-                  Checkpoint ·{" "}
+                  {checkpoint.basis.startsWith("native-") ? "Edit" : "Checkpoint"} ·{" "}
                   {new Date(checkpoint.at).toLocaleTimeString([], {
                     hour: "2-digit",
                     minute: "2-digit",

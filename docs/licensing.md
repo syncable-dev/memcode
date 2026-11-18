@@ -33,4 +33,4 @@ commercial-use or source-access rights those licenses grant. See
 Their original notices, MPL source links and corresponding source for the
 separately licensed PDF-viewer fonts are supplied with the app. See
 [third-party source access](../third_party/SOURCE_ACCESS.md). These component
-rights are preserved even when MemCode's own repository is private.
+rights are independent of MemCode's repository visibility and source license.

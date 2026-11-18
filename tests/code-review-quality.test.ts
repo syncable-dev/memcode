@@ -193,7 +193,7 @@ test("quality excludes verified untouched graph callers while keeping unresolved
   assert.equal(values[1].comparison?.status, "unavailable");
 });
 
-test("verified untouched context rows release the budget before changed-only rows are added", async () => {
+test("verified untouched context rows stay out of the changed declaration list", async () => {
   const unchanged = Array.from(
     { length: 24 },
     (_, i) => `function context${i}(){return ${i};}\n`,
@@ -259,8 +259,20 @@ test("duplicate exact scopes and possible renames never become matched pairs", a
     native.call,
     {},
   );
-  assert.equal(duplicate[0].comparison?.status, "ambiguous");
-  assert.equal(duplicate[0].before, undefined);
+  assert.equal(duplicate.length, 2);
+  assert(duplicate.every((row) => row.comparison?.status === "ambiguous"));
+  assert.deepEqual(
+    duplicate.map((row) => [
+      row.line,
+      row.before?.line,
+      row.cognitive,
+      row.before?.cognitive,
+    ]),
+    [
+      [1, undefined, 0, undefined],
+      [undefined, 1, null, 0],
+    ],
+  );
   const old = "function oldName() { return 1; }\n",
     renamed = "function newName() { return 2; }\n";
   const renameEngine = engine(
@@ -276,6 +288,15 @@ test("duplicate exact scopes and possible renames never become matched pairs", a
   );
   assert.equal(values.length, 2);
   assert(values.every((value) => value.comparison?.status === "ambiguous"));
+  assert.equal(
+    values.find((value) => value.symbol === "oldName")?.before
+      ?.maintainabilityIndex,
+    100,
+  );
+  assert.equal(
+    values.find((value) => value.symbol === "newName")?.maintainabilityIndex,
+    100,
+  );
 });
 test("mismatched hashes, definitions and incomplete native output remain unavailable", async () => {
   const before = "function main(){return 1;}\n",
@@ -352,9 +373,12 @@ test("missing AST measurements stay unknown even when the declaration matches", 
   );
   assert.equal(value.comparison?.status, "unavailable");
   assert.equal(value.before?.cyclomatic, null);
+  assert.equal(value.before?.cognitive, null);
+  assert.equal(value.before?.source, "unavailable");
+  assert.equal(value.cognitive, 0);
 });
 
-test("comparison budgets report omitted files and removed functions explicitly", async () => {
+test("source comparisons report omitted files and retain changed functions beyond the graph lookup budget", async () => {
   const before = "function main(){return 1;}\n",
     after = "function main(){return 2;}\n";
   const many = capture(before, after);
@@ -377,6 +401,14 @@ test("comparison budgets report omitted files and removed functions explicitly",
   assert.equal(files.coverage.omittedFiles, 1);
   assert.equal(files.coverage.filesMeasured, 24);
   assert.match(files.coverage.notes.join(" "), /24-file comparison budget/);
+  delete many.baseFiles["src/file0.ts"];
+  const missing = await captureQuality(many, [], fileEngine.call, {});
+  assert.equal(missing.coverage.filesUnavailable, 1);
+  assert.equal(missing.coverage.omittedFiles, 0);
+  assert.match(
+    missing.coverage.notes.join(" "),
+    /source was unavailable for 1 changed file/,
+  );
   const oldSource = Array.from(
     { length: 25 },
     (_, i) => `function f${i}(){return 1;}\n`,
@@ -396,12 +428,44 @@ test("comparison budgets report omitted files and removed functions explicitly",
     native.call,
     {},
   );
-  assert.equal(functions.coverage.omittedFunctions, 1);
-  assert.match(
-    functions.coverage.notes.join(" "),
-    /24-function comparison budget/,
+  assert.equal(functions.coverage.omittedFunctions, 0);
+  assert.equal(functions.metrics.length, 25);
+  const removed = functions.metrics.find((row) => row.symbol === "f24");
+  assert.equal(removed?.comparison?.status, "removed");
+  assert.equal(removed?.before?.cognitive, 0);
+});
+
+test("a refactor retains both one-sided populations and the matched parent past 24 rows", async () => {
+  const declarations = (prefix: string) =>
+    Array.from(
+      { length: 25 },
+      (_, i) => `function ${prefix}${i}() { return ${i}; }\n`,
+    ).join("");
+  const before = "function parent() { return 1; }\n" + declarations("old");
+  const after = "function parent() { return 2; }\n" + declarations("new");
+  const nativeRows = (prefix: string) => [
+    row("parent", 1, 1),
+    ...Array.from({ length: 25 }, (_, i) => row(prefix + i, i + 2, i + 2)),
+  ];
+  const native = engine(before, nativeRows("old"), nativeRows("new"));
+  const result = await captureQuality(
+    capture(before, after),
+    [],
+    native.call,
+    {},
   );
-  assert.equal(functions.metrics.length, 24);
+  assert.equal(native.calls.length, 2);
+  assert.equal(result.coverage.omittedFunctions, 0);
+  assert.equal(result.metrics.length, 51);
+  assert.equal(
+    result.metrics.filter((m) => m.before?.source === "ast").length,
+    26,
+  );
+  assert.equal(result.metrics.filter((m) => m.cognitive === 0).length, 26);
+  assert.equal(
+    result.metrics.filter((m) => m.comparison?.status === "matched").length,
+    1,
+  );
 });
 
 test("missing source capability never issues expensive wildcard graph queries", async () => {

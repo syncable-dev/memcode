@@ -144,6 +144,151 @@ const nativeOwnedRevision = {
   worktree: project.path,
 };
 
+const writingRevision = {
+  ...nativeOwnedRevision,
+  ready: false,
+  status: "partial",
+  reason: "index_write_in_progress",
+  publication: { status: "partial" },
+  _meta: { graph_revision: { publication_unchanged_during_call: false } },
+};
+
+test("a completed index waits through a prolonged owned write and resumes on the same published source", async () => {
+  let elapsed = 0;
+  const progress: string[] = [];
+  const reads: Array<Record<string, unknown>> = [];
+  const result = await waitForIndexPublication(
+    {
+      async call(_, name, args) {
+        assert.equal(name, "get_query_revision");
+        reads.push(args);
+        return elapsed >= 75_000 ? nativeOwnedRevision : writingRevision;
+      },
+    },
+    nativeOwnedProject,
+    "fixture",
+    (note) => progress.push(note),
+    {
+      now: () => elapsed,
+      sleep: async (ms) => {
+        elapsed += ms;
+      },
+    },
+  );
+  assert.equal(result, "fixture");
+  assert.equal(reads[0].expected_source_revision, undefined);
+  assert.ok(
+    reads
+      .slice(1)
+      .every(
+        (read) =>
+          read.expected_source_revision === nativeOwnedRevision.source_revision,
+      ),
+  );
+  assert.ok(progress.every((note) => note.includes("automatically")));
+  assert.ok(elapsed >= 75_000 && elapsed < 80_000);
+});
+
+test("an owned write refuses a changed source, ambiguous scope, or a mismatched graph", async () => {
+  for (const patch of [
+    { source_revision: "new-revision" },
+    { source_revision: undefined },
+    { graph_scope: "canonical_graph" },
+    { checkout_mode: undefined },
+    { branch: "epic/b" },
+    { repo_id: "unrelated" },
+    { requested_source_matches: false },
+    { worktree: nativeOwnedProject.path + "-other" },
+  ]) {
+    await assert.rejects(
+      waitForIndexPublication(
+        {
+          call: async () => ({ ...nativeOwnedRevision, ...patch }),
+        },
+        nativeOwnedProject,
+        "fixture",
+        () => {},
+        { sleep: async () => {} },
+        writingRevision,
+      ),
+      /same source|another repository/,
+    );
+  }
+  await assert.rejects(
+    waitForIndexPublication(
+      {
+        call: async () => ({ ...writingRevision, source_revision: undefined }),
+      },
+      nativeOwnedProject,
+      "fixture",
+      () => {},
+    ),
+    /same source/,
+  );
+});
+
+test("a stuck writer is bounded and a cancelled in-flight read is never polled again", async () => {
+  let elapsed = 0;
+  await assert.rejects(
+    waitForIndexPublication(
+      {
+        call: async () => writingRevision,
+      },
+      nativeOwnedProject,
+      "fixture",
+      () => {},
+      {
+        now: () => elapsed,
+        sleep: async (ms) => {
+          elapsed += ms;
+        },
+        timeoutMs: 2000,
+      },
+    ),
+    /still verifying.*Retry/,
+  );
+  assert.equal(elapsed, 2000);
+  const controller = new AbortController();
+  let reads = 0;
+  await assert.rejects(
+    waitForIndexPublication(
+      {
+        call: () => {
+          reads++;
+          queueMicrotask(() => controller.abort());
+          return new Promise(() => {});
+        },
+      },
+      nativeOwnedProject,
+      "fixture",
+      () => {},
+      { signal: controller.signal },
+    ),
+    /cancelled/,
+  );
+  assert.equal(reads, 1);
+});
+
+test("canonical and owned readers cannot reuse each other's graph certificates", () => {
+  const canonical = { ...nativeOwnedProject, analysisCheckout: undefined };
+  assert.equal(
+    verifiedIndexRevision(nativeOwnedRevision, canonical, "fixture"),
+    false,
+  );
+  assert.equal(
+    verifiedIndexRevision(
+      {
+        ...nativeOwnedRevision,
+        checkout_mode: undefined,
+        graph_scope: undefined,
+      },
+      canonical,
+      "fixture",
+    ),
+    true,
+  );
+});
+
 test("a native owned certificate uses the MCP publication envelope and keeps exact checkout guards", () => {
   assert.equal(
     verifiedIndexRevision(nativeOwnedRevision, nativeOwnedProject, "fixture"),

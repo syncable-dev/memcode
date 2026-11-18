@@ -6,6 +6,8 @@ import type { AppState, Artifact, Project, TeamWorkspaceState, WorkItem } from "
 import type { TeamClaim, TeamCommand, TeamCommandReply, TeamCredential, TeamInvite, TeamResult, TeamSessionReply, TeamSnapshot } from "../../src/team";
 import { applyTeamEvent, teamSessionReplySchema, teamSyncReplySchema } from "./protocol";
 import { startTeamRelay } from "./relay";
+import type { TeamWorkerActivity } from "../../src/team";
+import { reportWorker, workerReports } from "./worker-activity";
 import { applySharedSnapshot, emptySharedProjection, projectSharedState, sharedCommands, type SharedProjection } from "./projection";
 import { replaceWorkspace } from "../persistence";
 import { canonicalArtifactRoots } from "../files";
@@ -55,6 +57,11 @@ interface SavedConnection {
   rejectedWorkflowRoles?: Array<PendingWorkflowRoles & { message: string; at: string }>;
 }
 interface Connection extends SavedConnection {
+  workerActivity?: TeamWorkerActivity[];
+  activityRetryAt?: number;
+  sendingActivity?: Promise<void>;
+  readingActivity?: Promise<boolean>;
+  lastActivity?: Map<string, { key: string; at: number }>;
   status: TeamWorkspaceState["connection"]; error?: string; lastSyncedAt?: string;
   flushing?: Promise<void>; leases: Map<string, TeamClaim>;
   preparingDeletionId?: string;
@@ -66,6 +73,7 @@ interface Connection extends SavedConnection {
 interface SavedTeam { endpoint: string; credential: TeamSpaceCredential; snapshot: WorkspaceTeam; locked?: boolean }
 interface PrivateProfile { version: 1; deviceId: string; host?: { port: number; bind?: string; advertisedEndpoint?: string }; connections: SavedConnection[]; teams?: SavedTeam[]; projectShares?: Record<string, string>; teamCreates?: Array<{name:string;opId:string}> }
 export interface TeamClientOptions {
+  onWorkerActivity?: () => void;
   fetch?: typeof fetch;
   /** Tests can synchronize explicitly without a background long poll. */
   background?: boolean;
@@ -197,6 +205,7 @@ export class TeamSyncClient implements TeamWorkerClaims {
   private publishState(): void {
     this.state().team = [...this.unavailable.values(), ...[...this.connections.values()].map((connection) => ({
       projectId: connection.projectId, connection: connection.status, workspace: structuredClone(localTeamSnapshot(connection, connection.snapshot)),
+      workerActivity: connection.workerActivity?.map(row => ({ ...row, storyId: localTeamId(connection, "story", row.storyId) })),
       ...(connection.teamId ? {teamId:connection.teamId,teamName:this.profile.teams?.find((item)=>item.credential.teamId===connection.teamId)?.snapshot.name} : {}),
       memberId: connection.credential.memberId, deviceId: connection.credential.deviceId,
       pendingCount: connection.outbox.length + (connection.historyOutbox?.length ?? 0) + (connection.pendingHistoryImport ? 1 : 0) + (connection.workflowRoleOutbox?.length ?? 0),
@@ -224,6 +233,7 @@ export class TeamSyncClient implements TeamWorkerClaims {
   async capture(): Promise<void> {
     let dirty = false;
     for (const connection of this.connections.values()) {
+      if (this.options.background !== false && connection.leases.size) void this.sendWorkerActivity(connection);
       const nextPlanning = remotePlanningMetadata(connection, projectPlanningMetadata(this.state(), connection.projectId));
       const previousPlanning = connection.planningBaseline;
       if (previousPlanning) {
@@ -412,6 +422,53 @@ export class TeamSyncClient implements TeamWorkerClaims {
     }
     this.apply(connection);
   }
+  private activityUnavailable(connection: Connection, failure: unknown) {
+    const status = (failure as { status?: number }).status;
+    connection.activityRetryAt = Date.now() + ([404, 405, 501].includes(status ?? 0) ? 60000 : 3000);
+  }
+  private sendWorkerActivity(connection: Connection): Promise<void> {
+    if (connection.sendingActivity) return connection.sendingActivity;
+    if (this.closed || !connection.leases.size || Date.now() < (connection.activityRetryAt ?? 0)) return Promise.resolve();
+    const sent = (connection.lastActivity ??= new Map());
+    connection.sendingActivity = (async () => {
+      for (const [taskId, claim] of connection.leases) {
+        const task = this.state().tasks.find(t => t.id === taskId && t.projectId === connection.projectId);
+        const report = task && reportWorker(task, claim, connection.credential.workspaceId);
+        if (!report) continue;
+        const key = JSON.stringify(report), previous = sent.get(taskId);
+        if (previous?.key === key && Date.now() - previous.at < 15000) continue;
+        try {
+          await this.request(connection.endpoint, "/v1/worker-activity", connection.credential.capability, report);
+        } catch (failure) {
+          // A released claim must not block reports for other active stories.
+          if ((failure as { status?: number }).status === 409) continue;
+          throw failure;
+        }
+        if (connection.leases.get(taskId) === claim) sent.set(taskId, { key, at: Date.now() });
+      }
+    })().catch(error => this.activityUnavailable(connection, error)).finally(() => { connection.sendingActivity = undefined; });
+    return connection.sendingActivity;
+  }
+  private readWorkerActivity(connection: Connection): Promise<boolean> {
+    if (connection.readingActivity) return connection.readingActivity;
+    if (!connection.snapshot.claims.some(c => c.deviceId !== connection.credential.deviceId)) {
+      const changed = !!connection.workerActivity?.length;
+      connection.workerActivity = undefined;
+      return Promise.resolve(changed);
+    }
+    if (Date.now() < (connection.activityRetryAt ?? 0)) return Promise.resolve(false);
+    connection.readingActivity = (async () => {
+      const path = "/v1/worker-activity?workspaceId=" + encodeURIComponent(connection.credential.workspaceId);
+      const raw = await this.request(connection.endpoint, path, connection.credential.capability);
+      const { workers } = workerReports.parse(raw);
+      if (this.closed || this.connections.get(connection.projectId) !== connection) return false;
+      const visible = workers.filter(row => connection.snapshot.claims.some(claim => claim.storyId === row.storyId && claim.attemptId === row.attemptId && claim.epoch === row.epoch && claim.deviceId !== connection.credential.deviceId));
+      if (JSON.stringify(visible) === JSON.stringify(connection.workerActivity ?? [])) return false;
+      connection.workerActivity = visible;
+      return true;
+    })().catch(error => { this.activityUnavailable(connection, error); return false; }).finally(() => { connection.readingActivity = undefined; });
+    return connection.readingActivity;
+  }
   private async pull(connection: Connection, waitMs = 0): Promise<void> {
     const query = new URLSearchParams({ workspaceId: connection.credential.workspaceId, after: String(connection.cursor), waitMs: String(waitMs) });
     const reply = teamSyncReplySchema.parse(await this.request(connection.endpoint, `/v1/sync?${query}`, connection.credential.capability, undefined, waitMs));
@@ -428,12 +485,19 @@ export class TeamSyncClient implements TeamWorkerClaims {
     await this.pullHistory(connection);
     await this.pullWorkflowRoles(connection);
     connection.status = "online"; connection.error = connection.rejected?.length ? `A change was rejected: ${connection.rejected.at(-1)!.message}. Other changes continue syncing.` : undefined; connection.lastSyncedAt = new Date().toISOString();
+    const activityChanged = await this.readWorkerActivity(connection);
     if (reply.snapshot || connection.cursor !== previous || connection.history?.through !== previousHistory || connection.workflowRoles?.revision !== previousRoles) {
       this.apply(connection);
       await this.persist();
       this.publishState();
       await this.changed();
-    } else this.publishState();
+    } else {
+      this.publishState();
+      if (activityChanged) {
+        if (this.options.onWorkerActivity) this.options.onWorkerActivity();
+        else await this.changed();
+      }
+    }
     if (reply.hasMore) await this.pull(connection);
   }
   private flush(connection: Connection): Promise<void> {
@@ -530,12 +594,22 @@ export class TeamSyncClient implements TeamWorkerClaims {
   private startLoop(connection: Connection) {
     if (this.options.background === false) return;
     void (async () => {
+      let lastFlush = 0;
       while (!this.closed && this.connections.get(connection.projectId) === connection) {
         if (connection.teamId && this.profile.teams?.some((team) => team.credential.teamId === connection.teamId && team.locked)) {
           await new Promise<void>((resolve) => { const timer = setTimeout(resolve, 1500); timer.unref(); });
           continue;
         }
-        try { await this.flush(connection); await this.pull(connection, 10000); }
+        try {
+          const pendingEdits = connection.outbox.length || connection.historyOutbox?.length ||
+            connection.workflowRoleOutbox?.length || connection.pendingHistoryImport;
+          if (pendingEdits || Date.now() - lastFlush >= 10000) {
+            await this.flush(connection);
+            lastFlush = Date.now();
+          }
+          if (connection.leases.size) void this.sendWorkerActivity(connection);
+          await this.pull(connection, connection.snapshot.claims.length ? 3500 : 10000);
+        }
         catch (error) {
           if (this.closed) break;
           await this.fail(connection, error).catch(() => {});
@@ -550,7 +624,8 @@ export class TeamSyncClient implements TeamWorkerClaims {
     // open. Background long polls keep their inexpensive negative cache.
     if (connection.historySupported === false) connection.historySupported = undefined;
     if (connection.workflowRolesSupported === false) connection.workflowRolesSupported = undefined;
-    await this.capture(); await this.flush(connection); await this.pull(connection);
+    connection.activityRetryAt = undefined;
+    await this.capture(); await this.flush(connection); await this.sendWorkerActivity(connection); await this.pull(connection);
   }
   /** Explicit upgrade path for a project shared by a pre-history client. */
   async importPlanningHistory(projectId: string): Promise<TeamWorkspaceState> {
@@ -999,8 +1074,12 @@ export class TeamSyncClient implements TeamWorkerClaims {
       if (!claim || claim.attemptId !== attemptId) throw Error("The relay did not confirm this worker’s story claim.");
       connection.leases.set(taskId, claim);
       attempt.state = "owned";
-      await this.persist();
-      await this.pull(connection);
+      try {
+        await this.persist();
+      } catch (error) {
+        await this.release(taskId, projectId).catch(() => {});
+        throw error;
+      }
     } catch (error) {
       const details = (error as Error & { code?: string; details?: { claim?: TeamClaim } }).details;
       const claim = details?.claim;
@@ -1011,6 +1090,17 @@ export class TeamSyncClient implements TeamWorkerClaims {
       }
       await this.fail(connection, error);
       throw Error(`A team worker requires a confirmed online story claim. ${message(error)}`);
+    }
+    // A transient board read cannot undo the relay's confirmed, durably saved grant.
+    try {
+      await this.pull(connection);
+    } catch (error) {
+      const status = (error as { status?: number }).status;
+      if (status === 401 || status === 403 || status === 404) {
+        await this.release(taskId, projectId);
+        throw error;
+      }
+      await this.fail(connection, error);
     }
   }
   async release(taskId: string, projectId: string): Promise<void> {
@@ -1024,6 +1114,7 @@ export class TeamSyncClient implements TeamWorkerClaims {
     if (!claim) return;
     connection.outbox.push({ opId: randomUUID(), command: { type: "claim.release", storyId: remoteTaskId, attemptId: claim.attemptId, epoch: claim.epoch } });
     connection.leases.delete(taskId);
+    connection.lastActivity?.delete(taskId);
     if (connection.claimAttempts) delete connection.claimAttempts[taskId];
     await this.persist(); this.publishState();
     // A dropped transport does not release ownership. This durable command is

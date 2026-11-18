@@ -1,4 +1,5 @@
 import { Select } from "./Select";
+import { ModelSelect } from "./ModelSelect";
 import { useEffect, useRef, useState } from "react";
 import {
   ArrowRight,
@@ -34,6 +35,7 @@ import { useDictation } from "../useDictation";
 import { taskDraftTitle } from "../task-draft";
 import { HarnessMark, Mark, PriorityMark, Spinner, StageIcon } from "./UI";
 import { estimateOptions } from "../planning/types";
+import { isBacklogStatus } from "../planning/workflow";
 import { ContextSettings } from "./ContextSettings";
 import { DictationSettings } from "./DictationSettings";
 import { synchronizeSettingsDraft } from "../settings-draft";
@@ -133,6 +135,7 @@ export function NewTaskDialog({
   defaultHarness,
   epics,
   initialEpicId,
+  initialStatusId,
   cycles = [],
   parent,
   onClose,
@@ -143,6 +146,7 @@ export function NewTaskDialog({
   defaultHarness: Harness;
   epics: Epic[];
   initialEpicId?: string;
+  initialStatusId?: string;
   cycles?: Cycle[];
   parent?: WorkItem;
   onClose: () => void;
@@ -185,6 +189,7 @@ export function NewTaskDialog({
         await window.memcode.createTask({
           projectId: project.id,
           title: resolvedTitle,
+          ...(initialStatusId && (cycleId === "none" || !isBacklogStatus(initialStatusId)) ? { statusId: initialStatusId } : {}),
           description: description.trim(),
           harness,
           assignment: assignment === "auto" ? "auto" : "manual",
@@ -357,7 +362,7 @@ export function NewTaskDialog({
                   value={cycleId}
                   onValueChange={setCycleId}
                 >
-                  <option value="none">Backlog · no cycle</option>
+                  <option value="none">No cycle</option>
                   {cycles
                     .filter((cycle) => cycle.state !== "completed")
                     .map((cycle) => (
@@ -649,6 +654,7 @@ export function SettingsDialog({
   onAccountStatus?: (account: MemtraceAccount) => void;
 }) {
   const [draft, setDraft] = useState(settings);
+  const models = runtime.harnesses.find((harness) => harness.id === draft.defaultHarness)?.models ?? [];
   const previousSettings = useRef(settings);
   useEffect(() => {
     const previous = previousSettings.current;
@@ -747,6 +753,7 @@ export function SettingsDialog({
                     setDraft({
                       ...draft,
                       defaultHarness: e as Harness,
+                      model: e === draft.defaultHarness || draft.localModel ? draft.model : "",
                     })
                   }
                 >
@@ -773,19 +780,26 @@ export function SettingsDialog({
             </div>
             <label className="field">
               <span>Model override</span>
-              <input
+              {draft.localModel ? <input
                 aria-label="Model override"
-                placeholder="Automatic · match measured task complexity"
+                placeholder="Installed Ollama model name"
                 value={draft.model}
                 onChange={(e) => setDraft({ ...draft, model: e.target.value })}
-              />
+              /> : <ModelSelect
+                label="Model override"
+                harness={draft.defaultHarness}
+                models={models}
+                value={draft.model}
+                automaticLabel="Automatic · match task complexity"
+                onChange={model => setDraft({ ...draft, model: model ?? "" })}
+              />}
             </label>
             <label className="checkbox-label">
               <input
                 type="checkbox"
                 checked={draft.localModel}
                 onChange={(e) =>
-                  setDraft({ ...draft, localModel: e.target.checked })
+                  setDraft({ ...draft, localModel: e.target.checked, model: "" })
                 }
               />
               <span>

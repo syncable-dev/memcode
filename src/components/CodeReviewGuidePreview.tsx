@@ -23,10 +23,10 @@ const examples = [
     label: "Before & after",
     file: "review-quality",
     width: 554,
-    height: 535,
-    alt: "For two matched functions, mean maintainability rises from 76 to 87, cognitive complexity falls from 9 to 2, cyclomatic complexity falls from 5 to 2, and nesting depth falls from 1.5 to 0.5.",
+    height: 823,
+    alt: "Before and after measurements for two matched functions, one addition and one removal. The matched functions’ average maintainability rises from 76 to 87.",
     caption:
-      "Two functions could be matched before and after this change. Their average cognitive complexity fell from 9 to 2. Open Measured functions to inspect each comparison, including new or removed functions.",
+      "Two functions could be matched before and after this change. Their average cognitive complexity fell from 9 to 2. The function table also shows the measurements available for each added or removed function.",
   },
 ];
 

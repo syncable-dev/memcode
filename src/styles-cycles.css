@@ -831,6 +831,32 @@
 .cycle-story-worker > small {
   font-size: 9px;
 }
+.cycle-readiness {
+  font-size: 10px;
+  color: var(--mint-ink);
+}
+.cycle-readiness.blocked {
+  display: grid;
+  gap: 5px;
+  min-width: 150px;
+  max-width: 240px;
+  white-space: normal;
+  color: #825c30;
+}
+.cycle-readiness button {
+  display: grid;
+  gap: 2px;
+  color: var(--mint-ink);
+  text-align: left;
+  line-height: 1.5;
+}
+.cycle-readiness button:hover span {
+  text-decoration: underline;
+}
+.cycle-readiness small {
+  font-size: 9px;
+  color: var(--muted);
+}
 .cycle-story-table .unestimated {
   color: #bac8af;
 }

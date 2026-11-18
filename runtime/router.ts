@@ -1,3 +1,7 @@
+import { cursorCatalogValue } from "../src/cursor-models";
+import { codexDefaultModel, cursorDefaultModel } from "../src/shared";
+import { selectCodexModel } from "./agents/codex-models";
+import { selectClaudeModel } from "./agents/claude-models";
 import {
   supportsPermissionMode,
   effectivePermissionMode,
@@ -136,6 +140,12 @@ function preferredHarness(
   return tier === "balanced" ? "codex" : "claude";
 }
 
+export function assignedHarness(task: WorkItem, settings: Settings): Harness | undefined {
+  if (settings.localModel) return "codex";
+  if (settings.model && !task.modelOverride) return settings.defaultHarness;
+  if (task.assignment !== "auto" || task.modelOverride) return task.harness;
+}
+
 export function planRoute(
   task: WorkItem,
   evidence: Evidence | undefined,
@@ -162,16 +172,9 @@ export function planRoute(
     throw new Error(
       "Enter an installed Ollama model name in Settings before enabling local-model routing.",
     );
-  const manual =
-    task.assignment !== "auto" || !!pinnedModel || settings.localModel;
-  const requested: Harness = settings.localModel
-    ? "codex"
-    : settings.model && !task.modelOverride
-      ? settings.defaultHarness
-      : task.harness;
-  const wanted = manual
-    ? requested
-    : preferredHarness(tier, surface(task, evidence));
+  const requested = assignedHarness(task, settings);
+  const manual = requested !== undefined;
+  const wanted = requested ?? preferredHarness(tier, surface(task, evidence));
   const permissionMode = task.permissionMode;
   if (permissionMode === "auto")
     reasons.push(
@@ -200,6 +203,14 @@ export function planRoute(
     const runtime = runtimes.find((r) => r.id === id && r.available);
     if (!runtime) continue;
     if (pinnedModel) {
+      const cursorCatalog = id === "cursor";
+      const selectedId = id === "codex" && !settings.localModel
+        ? selectCodexModel(runtime, pinnedModel, false)
+        : id === "claude" ? selectClaudeModel(runtime.models, pinnedModel, true)
+        : cursorCatalog ? cursorCatalogValue(pinnedModel, runtime.models) : pinnedModel;
+      if (!selectedId)
+        throw Error(`Cursor no longer offers ${pinnedModel}. Choose Match task complexity or another model in ${task.modelOverride ? "Worker assignment" : "Settings"}.`);
+      const supportedEffort = cursorCatalog ? runtime.models.find((model) => model.id === selectedId)?.efforts?.[0] : undefined;
       reasons.push(
         settings.localModel
           ? "Explicit local-model override; capability is not inferred from its name."
@@ -209,8 +220,8 @@ export function planRoute(
         policyVersion: "memcode-envelope-v2",
         tier,
         harness: id,
-        model: pinnedModel,
-        effort: effort[tier],
+        model: selectedId,
+        effort: (["low","medium","high","xhigh"].includes(supportedEffort ?? "") ? supportedEffort : effort[tier]) as ReasoningEffort,
         mode: "manual",
         status: "provisional",
         inputs,
@@ -220,10 +231,24 @@ export function planRoute(
     }
     const candidates = runtime.models
       .filter(
-        (model) => tierOrder.indexOf(model.tier) >= tierOrder.indexOf(tier),
+        (model) => model.tier && tierOrder.indexOf(model.tier) >= tierOrder.indexOf(tier),
       )
-      .sort((a, b) => tierOrder.indexOf(a.tier) - tierOrder.indexOf(b.tier));
-    const model = candidates[0];
+      .sort((a, b) => tierOrder.indexOf(a.tier!) - tierOrder.indexOf(b.tier!));
+    let model = candidates[0];
+    if (id === "codex" && !model) {
+      if (runtime.allModelsDenied && !manual) continue;
+      const selected = selectCodexModel(runtime, "", true, tier);
+      model = runtime.models.find(m => m.id === selected) ?? { id: codexDefaultModel, label: codexDefaultModel, source: "cli" };
+      reasons.push(selected ? "The measured tier is unavailable on this account. Codex will use an available model." : "The model catalog is unavailable. Codex will use its configured account default.");
+    }
+    if (id === "claude" && !model) {
+      model = runtime.models.find(option => option.isDefault) ?? { id: "default", label: "Claude default", source: "cli" };
+      reasons.push("Claude Code will use its configured default for this account.");
+    }
+    if (id === "cursor" && !model) {
+      model = { id: cursorDefaultModel, label: cursorDefaultModel, source: "acp" };
+      reasons.push("Cursor will use the current session’s configured model.");
+    }
     if (!model) continue;
     const desired = effort[tier];
     const level =
@@ -242,7 +267,7 @@ export function planRoute(
       model: model.id,
       effort: level,
       mode: manual ? "manual" : "automatic",
-      status: inputs.incomplete ? "provisional" : "measured",
+      status: inputs.incomplete || !candidates.length ? "provisional" : "measured",
       inputs,
       reasons,
       plannedAt: new Date().toISOString(),
