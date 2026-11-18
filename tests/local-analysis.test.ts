@@ -26,6 +26,8 @@ test("only a stable certificate from the same owner recovers a saved publication
   const item = project();
   const refused =
     "owned source changed after verification; refusing publication";
+  const expired =
+    "Memtrace get_query_revision did not respond while inspecting the existing index.";
   const stable = {
     ready: true,
     status: "complete",
@@ -78,6 +80,48 @@ test("only a stable certificate from the same owner recovers a saved publication
     ["owner retired during capture", {}, false, refused, false],
     ["unrelated saved error", {}, true, "Authorization failed", false],
     ["stable verified publication", {}, true, refused, true],
+    ["stable verified publication after timeout", {}, true, expired, true],
+    [
+      "reasonless partial after timeout",
+      {
+        ready: false,
+        status: "partial",
+        mismatched_files: 0,
+        indexed_file_count: 437,
+        source_file_count: 437,
+        graph_revision: { status: "partial" },
+      },
+      true,
+      expired,
+      false,
+    ],
+    [
+      "mismatched reasonless partial",
+      {
+        ready: false,
+        status: "partial",
+        mismatched_files: 1,
+        indexed_file_count: 437,
+        source_file_count: 437,
+      },
+      true,
+      expired,
+      false,
+    ],
+    [
+      "specific different publication fault",
+      {
+        ready: false,
+        status: "partial",
+        reason: "unrelated_error",
+        mismatched_files: 0,
+        indexed_file_count: 437,
+        source_file_count: 437,
+      },
+      true,
+      expired,
+      false,
+    ],
   ] as const) {
     item.analysis = "error";
     item.analysisNote = note;
@@ -121,7 +165,8 @@ test("only a stable certificate from the same owner recovers a saved publication
       observed.sourcePublication,
       recovered || name === "unrelated saved error"
         ? "verified"
-        : name === "replay and embeddings still running"
+        : name === "replay and embeddings still running" ||
+            name === "reasonless partial after timeout"
           ? "incomplete"
           : "unverified",
       name,

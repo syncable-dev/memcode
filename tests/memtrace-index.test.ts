@@ -163,6 +163,53 @@ test("a failed native job can be superseded by a later exact certificate before 
   });
 });
 
+test("a sidebar retry after a verification deadline repairs a stable 437-file reasonless partial graph and waits for certification", async () => {
+  const stale = {
+    ...project,
+    analysis: "error" as const,
+    analysisNote:
+      "Memtrace get_query_revision did not respond while inspecting the existing index.",
+  };
+  const f = fixture([repository], verified);
+  const native = f.engine.call;
+  let reads = 0;
+  f.engine.call = async (p, name, args) => {
+    if (name !== "get_query_revision") return native(p, name, args);
+    if (++reads === 1)
+      return {
+        ...verified,
+        ready: false,
+        status: "partial",
+        source_file_count: 437,
+        indexed_file_count: 437,
+        mismatched_files: 0,
+        ambiguous_indexed_files: false,
+        _meta: {
+          graph_revision: {
+            status: "partial",
+            publication_unchanged_during_call: false,
+          },
+        },
+      };
+    await new Promise((resolve) => setTimeout(resolve, 5200));
+    return verified;
+  };
+  assert.equal(await f.engine.analyze(stale, () => {}), project.repoId);
+  assert.equal(reads, 2);
+  assert.deepEqual(
+    f.calls.filter((c) => c.name === "index_directory").map((c) => c.args),
+    [
+      {
+        path: project.path,
+        branch: project.branch,
+        repo_id: project.repoId,
+        incremental: true,
+        skip_embed: false,
+      },
+    ],
+  );
+});
+
 test("a saved refusal cannot authorize a repair on a different branch", async () => {
   const f = fixture([repository], { ...verified, branch: "other" });
   await assert.rejects(

@@ -649,28 +649,50 @@ export function App() {
           ))}
         </nav>
         <div className="sidebar-bottom">
-          <div className="engine-card">
+          <button
+            type="button"
+            className="engine-card"
+            disabled={
+              project.analysis === "connecting" ||
+              project.analysis === "indexing"
+            }
+            onClick={() => {
+              if (project.analysis === "ready") setView("insights");
+              else if (project.path && !project.example)
+                void act(() => window.memcode.analyzeProject(project.id));
+              else if (
+                state.team?.some((team) => team.projectId === project.id)
+              )
+                setView("team");
+              else setDialog("project");
+            }}
+          >
             <span
               className={`engine-orb ${project.analysis === "ready" ? "connected" : ""}`}
             >
               <GitBranch size={15} />
             </span>
-            <div>
+            <span className="engine-card-label">
               <strong>Powered by Memtrace</strong>
               <small>
                 {project.analysis === "ready"
                   ? "Code context connected"
-                  : project.example
-                    ? "Your code. Understood."
-                    : "Connect your code context"}
+                  : project.analysis === "error"
+                    ? "Retry code analysis"
+                    : project.analysis === "connecting" ||
+                        project.analysis === "indexing"
+                      ? "Analyzing code…"
+                      : project.example
+                        ? "Your code. Understood."
+                        : "Connect your code context"}
               </small>
-            </div>
+            </span>
             {project.analysis === "ready" ? (
               <span className="live-dot" />
             ) : (
               <ArrowUpRight size={13} />
             )}
-          </div>
+          </button>
           <div className="sidebar-footer">
             <button onClick={() => setDialog("settings")}>
               <Settings2 size={15} />

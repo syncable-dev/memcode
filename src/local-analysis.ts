@@ -5,6 +5,19 @@ export const sourceChangedBeforePublication = (message?: string) =>
     .toLowerCase()
     .includes("owned source changed after verification; refusing publication");
 
+export const recoverablePublicationFailure = (message?: string) =>
+  sourceChangedBeforePublication(message) ||
+  message ===
+    "Memtrace get_query_revision did not respond while inspecting the existing index." ||
+  message ===
+    "Memtrace source verification did not respond before its deadline." ||
+  message?.startsWith(
+    "Memtrace's startup graph has not finished verifying this checkout and branch.",
+  ) === true ||
+  /^Memtrace job completed, but current source on branch .+ is not verified(?: \(branch_publication_incomplete\))?\. Retry to follow its publication; no duplicate index was queued\.$/.test(
+    message ?? "",
+  );
+
 export type DiagnosticValue =
   | string
   | number

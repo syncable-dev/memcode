@@ -477,6 +477,9 @@ kbd {
   padding-top: 28px;
 }
 .engine-card {
+  width: 100%;
+  text-align: left;
+  color: inherit;
   border: 1px solid #dce6dc;
   background: rgba(255, 255, 255, 0.52);
   border-radius: 8px;
@@ -485,7 +488,7 @@ kbd {
   align-items: center;
   gap: 7px;
 }
-.engine-card > div {
+.engine-card-label {
   flex: 1;
   min-width: 0;
 }

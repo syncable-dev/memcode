@@ -185,6 +185,29 @@ try {
   await expect(guide).toHaveCount(0);
   assert.deepEqual(await counts("fresh"), { stories: 0, epics: 0, cycles: 0 });
   checks.push("Setup can complete without creating an epic, story or cycle");
+  await page.evaluate(() => {
+    const saved = JSON.parse(localStorage.getItem("project-guide-fixture"));
+    const selected = saved.projects.find((p) => p.id === saved.activeProjectId);
+    selected.analysis = "error";
+    selected.analysisNote =
+      "Memtrace get_query_revision did not respond while inspecting the existing index.";
+    localStorage.setItem("project-guide-fixture", JSON.stringify(saved));
+  });
+  await page.reload();
+  await page
+    .getByRole("button", { name: /Powered by Memtrace Retry code analysis/ })
+    .click();
+  await expect(
+    page.getByRole("button", {
+      name: /Powered by Memtrace Code context connected/,
+    }),
+  ).toBeVisible();
+  assert.deepEqual(await page.evaluate(() => window.fixtureCalls), [
+    "analyze-fixture",
+  ]);
+  checks.push(
+    "The sidebar retries local analysis after a saved verification deadline",
+  );
   await page.getByRole("button", { name: "Workers", exact: true }).click();
   const cursor = page.locator('[data-harness="cursor"]');
   await expect(cursor).toContainText("Desktop app installed");

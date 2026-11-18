@@ -68,6 +68,27 @@ export function certifiedPublication(
   );
 }
 
+/** The native reader can return a stable source with a partial graph and no reason code. */
+export function incompletePublication(value: Json | undefined) {
+  if (value?.ready !== false || value.status !== "partial") return false;
+  const reason =
+    value.reason ??
+    value._meta?.graph_revision?.reason ??
+    value.graph_revision?.reason;
+  if (reason) return reason === "branch_publication_incomplete";
+  return (
+    value.requested_source_matches === true &&
+    value.requested_revision_matches === true &&
+    value.source_unchanged_during_observation === true &&
+    value.default_branch_matches !== false &&
+    value.ambiguous_indexed_files !== true &&
+    value.mismatched_files === 0 &&
+    Number.isSafeInteger(value.source_file_count) &&
+    value.source_file_count >= 0 &&
+    value.indexed_file_count === value.source_file_count
+  );
+}
+
 /** Counts and a current repository summary are not a source/publication certificate. */
 export const verifiedIndexRevision = (
   value: Json | null | undefined,
@@ -129,7 +150,9 @@ export async function waitForIndexPublication(
       ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))),
     path = pathKey(project.path ?? ""),
     branch = project.branch,
-    deadline = now() + (options.timeoutMs ?? 30_000),
+    deadline =
+      now() +
+      (options.timeoutMs ?? (options.requireCertificate ? 120_000 : 30_000)),
     pollMs = Math.max(1, options.pollMs ?? 1000);
   const assertActive = () => {
     if (
@@ -159,7 +182,7 @@ export async function waitForIndexPublication(
               ),
             Math.max(
               1,
-              Math.min(options.readTimeoutMs ?? 5000, deadline - now()),
+              Math.min(options.readTimeoutMs ?? 60_000, deadline - now()),
             ),
           );
         }),
@@ -259,7 +282,14 @@ export async function waitForPeerIndex(
                   `Memtrace ${name} did not respond while inspecting the existing index.`,
                 ),
               ),
-            options.readTimeoutMs ?? 8000,
+            Math.max(
+              1,
+              Math.min(
+                options.readTimeoutMs ??
+                  (name === "get_query_revision" ? 60_000 : 8000),
+                deadline - now(),
+              ),
+            ),
           );
         }),
       ]);
@@ -430,7 +460,11 @@ export async function waitForPeerIndex(
         now,
         sleep,
         pollMs,
-        timeoutMs: Math.min(options.publicationMs ?? 30_000, deadline - now()),
+        timeoutMs: Math.min(
+          options.publicationMs ??
+            (options.requireCertificate ? 120_000 : 30_000),
+          deadline - now(),
+        ),
       });
     }
     if (!["pending", "running"].includes(followed.status))

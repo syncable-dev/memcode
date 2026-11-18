@@ -10,8 +10,9 @@ import type { MemtraceEngine } from "./memtrace";
 import {
   certifiedPublication,
   exactRevisionSource,
+  incompletePublication,
 } from "./memtrace-peer-index";
-import { sourceChangedBeforePublication } from "../src/local-analysis";
+import { recoverablePublicationFailure } from "../src/local-analysis";
 
 type Engine = Pick<MemtraceEngine, "call" | "scopeFor"> & {
   certificateDiagnosticsFor?: (projectId: string) => string[];
@@ -397,10 +398,7 @@ export async function localAnalysisDiagnostics(
       if (exactOwner) {
         if (certifiedPublication(row(revision), project, repoId))
           result.sourcePublication = "verified";
-        else if (
-          row(revision).ready === false &&
-          row(revision).reason === "branch_publication_incomplete"
-        )
+        else if (incompletePublication(row(revision)))
           result.sourcePublication = "incomplete";
       }
       result.indexRevision = metadata(revision, revisionKeys);
@@ -509,7 +507,7 @@ export async function localAnalysisDiagnostics(
     options.onRecovered &&
     project.analysis === "error" &&
     project.analysisNote === savedNote &&
-    sourceChangedBeforePublication(savedNote) &&
+    recoverablePublicationFailure(savedNote) &&
     typeof repoId === "string"
   ) {
     await options.onRecovered(repoId);

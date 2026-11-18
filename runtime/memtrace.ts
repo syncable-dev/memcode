@@ -27,11 +27,15 @@ import {
   certifiedPublication,
   pathKey,
   exactRevisionSource,
+  incompletePublication,
   verifiedIndexRevision,
   waitForIndexPublication,
   waitForPeerIndex,
 } from "./memtrace-peer-index";
-import { sourceChangedBeforePublication } from "../src/local-analysis";
+import {
+  recoverablePublicationFailure,
+  sourceChangedBeforePublication,
+} from "../src/local-analysis";
 import { appVersion } from "../src/version";
 
 type Json = Record<string, any>;
@@ -771,7 +775,7 @@ export class MemtraceEngine {
       project,
       update,
       force,
-      sourceChangedBeforePublication(previousFailure),
+      recoverablePublicationFailure(previousFailure),
     );
     // Watcher lifecycle step 1. Analysis is complete without waiting for it.
     void this.watch(project, repoId).catch(() => {});
@@ -832,10 +836,7 @@ export class MemtraceEngine {
         return match.repo_id;
       // Native startup can publish the repository summary before its independent
       // source certificate. Follow that publication without enqueueing a duplicate.
-      if (
-        !retryPublication ||
-        revision?.reason !== "branch_publication_incomplete"
-      )
+      if (!retryPublication || !incompletePublication(revision))
         return waitForPeerIndex(
           this,
           project,

@@ -15,7 +15,10 @@ import {
 } from "lucide-react";
 import type { Project } from "../shared";
 import type { LocalAnalysisDiagnostics } from "../local-analysis";
-import { sourceChangedBeforePublication } from "../local-analysis";
+import {
+  recoverablePublicationFailure,
+  sourceChangedBeforePublication,
+} from "../local-analysis";
 import type {
   RepositoryAccess,
   RepositoryDescriptor,
@@ -78,9 +81,9 @@ export function LocalProjectSetup({
   const blocked = !!busy || recovering || cloneActive;
   const connected = !!project.path || !!inspection;
   const analyzing = ["connecting", "indexing"].includes(project.analysis);
-  const publicationRefused =
+  const publicationNeedsRetry =
     project.analysis === "error" &&
-    sourceChangedBeforePublication(project.analysisNote);
+    recoverablePublicationFailure(project.analysisNote);
   const source = repository ?? inspection?.repository;
   const perform = async (key: string, action: () => Promise<void>) => {
     setBusy(key);
@@ -293,7 +296,7 @@ export function LocalProjectSetup({
     [diagnosticScope, project.id],
   );
   useEffect(() => {
-    if (!publicationRefused || !project.path) return;
+    if (!publicationNeedsRetry || !project.path) return;
     let stopped = false,
       timer: ReturnType<typeof setTimeout>;
     const deadline = Date.now() + 120_000;
@@ -311,7 +314,7 @@ export function LocalProjectSetup({
       stopped = true;
       clearTimeout(timer);
     };
-  }, [publicationRefused, project.path, checkDiagnostics]);
+  }, [publicationNeedsRetry, project.path, checkDiagnostics]);
   const bind = (path: string) =>
     void perform("folder", async () =>
       finishConnection(
@@ -448,8 +451,10 @@ export function LocalProjectSetup({
                       : "Prepare the context for your workers"}
               </strong>
               <p>
-                {publicationRefused
-                  ? "The source changed during verification. Once edits settle, retry analysis to verify the current checkout."
+                {publicationNeedsRetry
+                  ? sourceChangedBeforePublication(project.analysisNote)
+                    ? "The source changed during verification. Once edits settle, retry analysis to verify the current checkout."
+                    : "Memtrace still needs to verify this checkout. Retry analysis to refresh its graph."
                   : (project.analysisNote ??
                     "Memtrace analyzes this checkout locally so workers can explore and route the work with context.")}
               </p>
@@ -557,7 +562,7 @@ export function LocalProjectSetup({
               )}
               {project.analysis === "ready"
                 ? "Refresh code context"
-                : publicationRefused
+                : publicationNeedsRetry
                   ? "Retry analysis"
                   : "Analyze local code"}
             </button>
