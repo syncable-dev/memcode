@@ -6,7 +6,11 @@ import { initialState } from '../src/seed';
 import type { AppState, CreateTask, WorkItem, MemCodeAPI, RuntimeInfo, Harness } from '../src/shared';
 
 const at = '2026-11-16T10:00:00.000Z';
-export const demoEvent = (event: string, data: Record<string, unknown> = {}) => parent.postMessage({ type: 'memcode-demo:event', event, ...data }, location.origin);
+export function demoEvent(event: string, data: Record<string, unknown> = {}) {
+  // Returning this call lets WebKit tail-call into the parent and misidentify
+  // the sender of asynchronous guide events. Keep the call in this frame.
+  parent.postMessage({ type: 'memcode-demo:event', event, ...data }, location.origin);
+}
 const listeners = new Set<(state: AppState) => void>();
 const terminalListeners = new Set<(value: any) => void>();
 export const state = initialState();
