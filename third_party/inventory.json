@@ -1,8 +1,8 @@
 {
   "scope": "Resolved production npm dependencies and Cargo lockfile dependencies, including target-specific entries. Some Cargo entries are build-only, not shipped executable code.",
   "inputs": {
-    "packageLockSha256": "99ee156d208649dccad224a483cad7dea57ea2eb028024980e58f68a01abdffb",
-    "cargoLockSha256": "4409a60730f3c0689aae4200cf4d7b4673c7fd9b8e5cc2906b0817b73f4e2e9b"
+    "packageLockSha256": "ad6886ea475b1e7968f1fdea4ff49546e992b57ec732f5b4c7be8e4dd4b8b3ae",
+    "cargoLockSha256": "ee60b62394296b247cf37cd7c92625fa91483629ed0eac6fdfbd881c59d5881e"
   },
   "packages": [
     {
