@@ -411,6 +411,16 @@ export async function verifyPlanning(page, call, out) {
     .fill(parent.identifier);
   await expect(page.locator(".conversation-table tbody tr")).toHaveCount(1);
   await page.getByRole("textbox", { name: "Search conversations" }).fill("");
+  const tableViewport = page.locator(".conversation-table-wrap");
+  await expect
+    .poll(() =>
+      tableViewport.evaluate(
+        (element) =>
+          element.clientHeight > 0 && element.scrollHeight > element.clientHeight,
+      ),
+    )
+    .toBe(true);
+  await tableViewport.hover();
   const conversationHeader = await page
     .locator(".conversation-table th")
     .first()
@@ -418,7 +428,6 @@ export async function verifyPlanning(page, call, out) {
   const workspaceScroll = await page
     .locator(".workspace-scroll")
     .evaluate((element) => element.scrollTop);
-  await page.locator(".conversation-table-wrap").hover();
   await page.mouse.wheel(0, 600);
   await expect
     .poll(() =>
