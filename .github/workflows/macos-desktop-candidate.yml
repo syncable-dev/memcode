@@ -1,291 +1,79 @@
-name: Private macOS desktop candidate
-
+name: Native Apple Silicon beta.12 production update proof
 on:
   workflow_dispatch:
     inputs:
-      release_mode:
-        description: Apple trust requirement (public-release fails without signing and notarization)
-        type: choice
-        options:
-          - private-candidate
-          - manual-approval-beta
-          - public-release
-        default: private-candidate
-      engine_acceptance:
-        description: Run real account, fresh project graph and live watch acceptance with a dedicated approved test grant
-        type: boolean
-        default: false
-  push:
-    branches:
-      - beta/memcode-desktop-candidate
-
+      expected_sha256:
+        description: The approved beta.13 Mac updater SHA-256
+        required: true
+        type: string
 permissions:
   contents: read
-
-concurrency:
-  group: macos-desktop-candidate-${{ github.ref }}
-  cancel-in-progress: false
-
 jobs:
-  macos-arm64:
-    if: github.repository == 'syncable-dev/memcode' && github.event.repository.private == true && github.ref == 'refs/heads/beta/memcode-desktop-candidate'
+  production-proof:
+    if: github.repository == 'syncable-dev/memcode' && github.event.repository.private == true && github.ref == 'refs/heads/release/beta13-mac-upgrade-proof'
     runs-on: macos-15
-    timeout-minutes: 90
-    env:
-      CI: "true"
-      CARGO_BUILD_JOBS: "2"
-      CARGO_INCREMENTAL: "0"
-      CARGO_TERM_COLOR: never
-      RUSTUP_TOOLCHAIN: 1.97.1
-      # Pushes remain private manual-approval candidates. Public mode is an
-      # explicit dispatch and cannot silently fall back to ad-hoc signing.
-      MEMCODE_MACOS_RELEASE_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.release_mode || 'private-candidate' }}
-      TAURI_BUNDLER_DMG_IGNORE_CI: "true"
+    timeout-minutes: 10
     steps:
-      - name: Check out the reviewed private candidate
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
         with:
           persist-credentials: false
-
-      - name: Check candidate prerequisites
-        id: runtime
+          sparse-checkout: .github/scripts
+      - name: Exercise the released beta.12 executable and its normal production update path
         env:
-          UPDATER_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
-          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          EXPECTED_UPDATER_SHA: ${{ inputs.expected_sha256 }}
+        shell: bash
         run: |
-          node --input-type=module <<'NODE'
-          import { appendFileSync, readFileSync } from 'node:fs';
-          import { macReleasePolicy } from './scripts/macos-release-trust.mjs';
-          if (process.platform !== 'darwin' || process.arch !== 'arm64') throw Error('This candidate requires a native Apple Silicon runner');
-          if (!process.env.UPDATER_KEY) throw Error('Configure the protected TAURI_SIGNING_PRIVATE_KEY repository secret before building this candidate');
-          macReleasePolicy();
-          const runtime = JSON.parse(readFileSync('scripts/desktop-node.json', 'utf8'));
-          if (!/^24\.\d+\.\d+$/.test(runtime.version) || !runtime.archives['darwin-arm64']) throw Error('The reviewed Apple Silicon Node runtime manifest is missing');
-          appendFileSync(process.env.GITHUB_OUTPUT, `version=${runtime.version}\n`);
-          NODE
-
-      - name: Set up the reviewed Node version
-        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
-        with:
-          node-version: ${{ steps.runtime.outputs.version }}
-          cache: npm
-
-      - name: Set up the native Rust target
-        run: rustup toolchain install 1.97.1 --profile minimal --target aarch64-apple-darwin
-
-      - name: Install locked dependencies
-        run: npm ci
-
-      - name: Check types, behavior and license material
-        timeout-minutes: 5
-        run: |
-          npm run typecheck
-          node --import tsx --test --test-reporter=tap --test-timeout=90000 tests/*.test.ts
-          node scripts/verify-third-party-notices.mjs
-
-      - name: Verify native Mac discovery fixtures before packaging
-        timeout-minutes: 2
-        run: node --import tsx scripts/macos-harness-acceptance.mjs
-
-      - name: Build the private app, disk image and signed updater
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
-          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
-        run: node scripts/tauri-package.mjs
-
-      - name: Verify the bundled runtime, application trust and compatibility
-        run: |
-          APP=src-tauri/target/release/bundle/macos/MemCode.app
-          test -d "$APP"
-          test "$(lipo -archs "$APP/Contents/MacOS/memcode")" = arm64
+          set -euo pipefail
+          [[ "$EXPECTED_UPDATER_SHA" =~ ^[a-f0-9]{64}$ ]]
+          test "$(uname -m)" = arm64
+          mkdir "$RUNNER_TEMP/native-upgrade"
+          cd "$RUNNER_TEMP/native-upgrade"
+          curl --fail --silent --show-error --location --retry 3 'https://d12b8r6xagt10r.cloudfront.net/releases/memcode/0.4.0-beta.12/macos-aarch64/MemCode.app.tar.gz' -o previous.tar.gz
+          echo '2b46e92c497bb06d35cfbdf9b86e2ce51dc3865bb6d781a20e034497c5ba387b  previous.tar.gz' | shasum -a 256 -c -
+          mkdir "$HOME/Applications" -p
+          test ! -e "$HOME/Applications/MemCode.app"
+          tar -xzf previous.tar.gz -C "$HOME/Applications"
+          APP="$HOME/Applications/MemCode.app"
           codesign --verify --deep --strict "$APP"
-          codesign --display --verbose=4 "$APP" 2> "$RUNNER_TEMP/memcode-codesign.txt"
-          if [ "$MEMCODE_MACOS_RELEASE_MODE" != public-release ]; then
-            grep -q 'Signature=adhoc' "$RUNNER_TEMP/memcode-codesign.txt"
-          else
-            grep -q 'Authority=Developer ID Application:' "$RUNNER_TEMP/memcode-codesign.txt"
-            node --input-type=module -e "import {readFileSync} from 'node:fs'; import {assertPublicMacTrust} from './scripts/macos-release-trust.mjs'; assertPublicMacTrust(JSON.parse(readFileSync('release/macos-release-trust.json','utf8')));"
-          fi
-          env -u MEMCODE_NODE_PATH -u NODE_PATH PATH=/usr/bin:/bin "$APP/Contents/Resources/desktop-runtime/node" --version > "$RUNNER_TEMP/memcode-bundled-node.txt"
-          test "$(cat "$RUNNER_TEMP/memcode-bundled-node.txt")" = "v${{ steps.runtime.outputs.version }}"
-          node --input-type=module <<'NODE'
-          import { readFileSync, writeFileSync } from 'node:fs';
-          import { execFileSync } from 'node:child_process';
-          import { join } from 'node:path';
-          const app = 'src-tauri/target/release/bundle/macos/MemCode.app';
-          const minimum = binary => {
-            const output = execFileSync('/usr/bin/otool', ['-l', binary], { encoding: 'utf8' });
-            const value = output.match(/cmd LC_BUILD_VERSION[\s\S]*?\bminos\s+([\d.]+)/)?.[1] ?? output.match(/cmd LC_VERSION_MIN_MACOSX[\s\S]*?\bversion\s+([\d.]+)/)?.[1];
-            if (!value) throw Error('Missing Mach-O minimum macOS version: ' + binary);
-            return value;
-          };
-          const compare = (a, b) => { const l=a.split('.').map(Number), r=b.split('.').map(Number); for(let i=0;i<3;i++){const delta=(l[i]??0)-(r[i]??0);if(delta)return delta;}return 0; };
-          const native = minimum(join(app, 'Contents/MacOS/memcode'));
-          const node = minimum(join(app, 'Contents/Resources/desktop-runtime/node'));
-          const configured = JSON.parse(readFileSync('src-tauri/tauri.conf.json', 'utf8')).bundle.macOS.minimumSystemVersion;
-          const declared = execFileSync('/usr/libexec/PlistBuddy', ['-c', 'Print :LSMinimumSystemVersion', join(app, 'Contents/Info.plist')], { encoding: 'utf8' }).trim();
-          const effectiveMinimum = [native, node, configured].sort(compare).at(-1);
-          if (compare(declared,effectiveMinimum)<0 || compare(configured,effectiveMinimum)<0) throw Error('Declared macOS support is older than a bundled binary requires');
-          const compatibility={architecture:'aarch64',nativeMinimum:native,bundledNodeMinimum:node,configuredMinimum:configured,infoPlistMinimum:declared,effectiveMinimum};
-          writeFileSync(join(process.env.RUNNER_TEMP,'memcode-macos-compatibility.json'),JSON.stringify(compatibility,null,2));
-          console.log(JSON.stringify(compatibility));
-          NODE
-
-      - name: Cold-start the actual packaged app in a fresh private profile
-        timeout-minutes: 2
-        run: node scripts/macos-cold-start.mjs
-
-      - name: Verify actual renderer updater IPC permissions
-        timeout-minutes: 2
-        run: node scripts/native-updater-acceptance.mjs
-
-      - name: Verify packaged engine copies and offline preparation without any installed CLI
-        timeout-minutes: 4
-        run: node scripts/bundled-engine-acceptance.mjs --prepare-only
-
-      - name: Verify real beta account, fresh local graph and live edit indexing on native Mac
-        if: github.event_name == 'workflow_dispatch' && inputs.engine_acceptance
-        timeout-minutes: 22
-        env:
-          # Dedicated test authorization only, never a normal CLI account.
-          # Refresh grants rotate/revoke; short proofs are verified/deleted.
-          # A retained native QA session stays approved on its owning machine.
-          MEMCODE_MAC_ENGINE_ACCEPTANCE_GRANT: ${{ secrets.MEMCODE_MAC_ENGINE_ACCEPTANCE_GRANT }}
-        run: node scripts/bundled-engine-acceptance.mjs
-
-      - name: Verify native Keychain rotation preserves access without decrypt prompts
-        timeout-minutes: 10
-        env:
-          MEMCODE_MAC_KEYCHAIN_TEST: "1"
-        run: node scripts/macos-keychain-acceptance.mjs
-
-      - name: Verify installed Mac agent discovery with Finder PATH and the real Codex application
-        timeout-minutes: 12
-        run: node --import tsx scripts/macos-harness-acceptance.mjs --verify-codex-app
-
-      - name: Verify native installation guard on a real read-only disk image
-        timeout-minutes: 3
-        run: |
-          cargo test --manifest-path src-tauri/Cargo.toml install_location::tests -- --nocapture
-          node scripts/macos-installation-acceptance.mjs
-
-      - name: Verify downloaded models survive an actual resource-root move and two offline restarts
-        timeout-minutes: 25
-        run: |
-          node --input-type=module <<'NODE'
-          import {createHash} from 'node:crypto';
-          import {createReadStream,createWriteStream} from 'node:fs';
-          import {mkdir} from 'node:fs/promises';
-          import {join} from 'node:path';
-          import {Readable} from 'node:stream';
-          import {pipeline} from 'node:stream/promises';
-          import {execFileSync} from 'node:child_process';
-          const directory=join(process.env.RUNNER_TEMP,'reviewed-memcode-beta10');
-          await mkdir(directory,{recursive:true});
-          const archive=join(directory,'MemCode.app.tar.gz');
-          const response=await fetch('https://d12b8r6xagt10r.cloudfront.net/releases/memcode/0.4.0-beta.10/macos-aarch64/MemCode.app.tar.gz');
-          if(!response.ok||!response.body)throw Error('Could not fetch the reviewed previous installer');
-          await pipeline(Readable.fromWeb(response.body),createWriteStream(archive,{flags:'wx'}));
-          const hash=createHash('sha256');for await(const chunk of createReadStream(archive))hash.update(chunk);
-          if(hash.digest('hex')!=='54cb1619d1e672242f7e29e33a63410973e6754e0c0fff5e272456f9f112f687')throw Error('Previous installer integrity failed');
-          execFileSync('/usr/bin/tar',['-xzf',archive,'-C',directory]);
-          execFileSync(process.execPath,['scripts/upgrade-models-acceptance.mjs','--previous-resources',join(directory,'MemCode.app/Contents/Resources'),'--resources','src-tauri/target/release/bundle/macos/MemCode.app/Contents/Resources'],{stdio:'inherit'});
-          NODE
-
-      - name: Verify the updater and collect bounded candidate files
-        env:
-          ENGINE_ACCEPTANCE: ${{ github.event_name == 'workflow_dispatch' && inputs.engine_acceptance && 'true' || 'false' }}
-        run: |
-          node --input-type=module <<'NODE'
-          import { mkdirSync, readFileSync, readdirSync, copyFileSync, writeFileSync } from 'node:fs';
-          import { basename, join } from 'node:path';
-          import { createHash } from 'node:crypto';
-          import { execFileSync } from 'node:child_process';
-          const bundle = 'src-tauri/target/release/bundle';
-          const updates = readdirSync(join(bundle, 'macos')).filter(name => name.endsWith('.app.tar.gz'));
-          const installers = readdirSync(join(bundle, 'dmg')).filter(name => name.endsWith('.dmg'));
-          if (updates.length !== 1 || installers.length !== 1) throw Error('Expected exactly one macOS updater and one DMG');
-          const updater = join(bundle, 'macos', updates[0]);
-          execFileSync(process.execPath, ['scripts/verify-desktop-candidate.mjs', updater], { stdio: 'inherit' });
-          const paths = [join(bundle, 'dmg', installers[0]), updater, updater + '.sig'];
-          const output = 'release/macos-arm64-candidate';
-          mkdirSync(output, { recursive: true });
-          const digest = bytes => createHash('sha256').update(bytes).digest('hex');
-          const files = paths.map(path => {
-            const bytes = readFileSync(path);
-            copyFileSync(path, join(output, basename(path)));
-            return { name: basename(path), sha256: digest(bytes), bytes: bytes.length };
-          });
-          const provenance = {
-            product: 'MemCode',
-            version: JSON.parse(readFileSync('package.json', 'utf8')).version,
-            source: { repository: process.env.GITHUB_REPOSITORY, commit: process.env.GITHUB_SHA },
-            target: 'aarch64-apple-darwin',
-            published: false,
-            updaterSignatureVerified: true,
-            macOS: {
-              ...JSON.parse(readFileSync(join(process.env.RUNNER_TEMP, 'memcode-macos-compatibility.json'), 'utf8')),
-              ...JSON.parse(readFileSync('release/macos-release-trust.json', 'utf8')),
-              signing: process.env.MEMCODE_MACOS_RELEASE_MODE === 'public-release' ? 'developer-id' : 'ad-hoc',
-              gatekeeperAcceptance: process.env.MEMCODE_MACOS_RELEASE_MODE === 'public-release' ? 'accepted' : 'manual-approval-required',
-            },
-            nativeColdStart: JSON.parse(readFileSync('release/macos-cold-start.json', 'utf8')),
-            nativeUpdaterAcl: JSON.parse(readFileSync('release/native-updater-acl-darwin.json', 'utf8')),
-            nativeKeychainRotation: JSON.parse(readFileSync('release/macos-keychain-rotation.json', 'utf8')),
-            nativeHarnessDiscovery: JSON.parse(readFileSync('release/macos-harness-discovery.json', 'utf8')),
-            nativeInstallationGuard: JSON.parse(readFileSync('release/macos-installation-guard.json', 'utf8')),
-            installedModelRetention: JSON.parse(readFileSync('release/upgrade-models-darwin.json', 'utf8')),
-            bundledEngine: JSON.parse(readFileSync('release/bundled-engine-darwin-prepare-only.json', 'utf8')),
-            authenticatedEngineAcceptance: process.env.ENGINE_ACCEPTANCE === 'true' ? JSON.parse(readFileSync('release/bundled-engine-darwin-real-account-index-watch.json', 'utf8')) : {tested:false,reason:'dedicated real account test not requested'},
-            packagedRuntime: JSON.parse(readFileSync('dist-desktop-runtime/provenance.json', 'utf8')),
-            files,
-          };
-          const metadata = JSON.stringify(provenance, null, 2) + '\n';
-          writeFileSync(join(output, 'candidate.json'), metadata);
-          writeFileSync(join(output, 'SHA256SUMS'), [...files.map(file => `${file.sha256}  ${file.name}`), `${digest(metadata)}  candidate.json`].join('\n') + '\n');
-          NODE
-          printf '%s\n' "Candidate mode: $MEMCODE_MACOS_RELEASE_MODE. Private-candidate mode is NOT Apple-notarized and needs explicit per-app beta approval. Public-release mode requires verified Developer ID, app/DMG tickets and Gatekeeper acceptance. The native cold-start and real engine integration checks do not replace physical Mac installation, browser sign-in, native Keychain and project-picker UI acceptance." >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload bounded cold-start evidence even on failure
+          test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$APP/Contents/Info.plist")" = '0.4.0-beta.12'
+          swiftc "$GITHUB_WORKSPACE/.github/scripts/beta13-mac-update-ui.swift" -framework ApplicationServices -o ui-check
+          export MEMCODE_DATA_DIR="$RUNNER_TEMP/native-upgrade/fresh-profile"
+          mkdir -m 700 "$MEMCODE_DATA_DIR"
+          "$APP/Contents/MacOS/memcode" </dev/null >"$RUNNER_TEMP/native-upgrade/app.stdout" 2>"$RUNNER_TEMP/native-upgrade/app.stderr" &
+          APP_PID=$!
+          trap 'kill "$APP_PID" 2>/dev/null || true' EXIT
+          ./ui-check "$APP_PID" "$RUNNER_TEMP/native-upgrade/ui.json" &
+          UI_PID=$!
+          for i in {1..120}; do
+            test -f "$MEMCODE_DATA_DIR/updates/pending.json" && break
+            kill -0 "$APP_PID"
+            sleep 1
+          done
+          wait "$UI_PID"
+          python3 - <<'PY'
+          from pathlib import Path
+          from hashlib import sha256
+          import os,json,sys
+          r=Path(os.environ["RUNNER_TEMP"])/"native-upgrade"
+          cache=Path(os.environ["MEMCODE_DATA_DIR"])/"updates"
+          ui=json.loads((r/"ui.json").read_text())
+          result={"nativePlatform":"darwin-arm64","installedVersion":"0.4.0-beta.12","productionAppLaunched":True,"userInterface":ui,"beta13SignedDownloadStagedByBeta12":False}
+          journal=cache/"pending.json"
+          if journal.is_file():
+            pending=json.loads(journal.read_bytes())
+            payload=cache/pending["directory"]/"signed-update"
+            digest=sha256(payload.read_bytes()).hexdigest()
+            result.update({"beta13SignedDownloadStagedByBeta12":pending["version"]=="0.4.0-beta.13" and digest==os.environ["EXPECTED_UPDATER_SHA"] and payload.stat().st_size==pending["length"],"offeredVersion":pending["version"],"sha256":digest,"bytes":pending["length"]})
+          print(json.dumps(result,indent=2))
+          (r/"proof.json").write_text(json.dumps(result,indent=2))
+          if not (result["beta13SignedDownloadStagedByBeta12"] or ui["settingsShowsBeta13"]): sys.exit("beta.12 did not demonstrate the production beta.13 update")
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: MemCode-macos-cold-start-${{ github.sha }}
+          name: beta12-mac-production-update-proof
           path: |
-            release/macos-cold-start.json
-            release/macos-cold-start.png
-            release/native-updater-acl-darwin.json
-            release/macos-keychain-rotation.json
-            release/macos-harness-discovery.json
-            release/macos-installation-guard.json
-            release/upgrade-models-darwin.json
-            release/macos-release-trust.json
-            release/bundled-engine-darwin-prepare-only.json
-            release/bundled-engine-darwin-real-account-index-watch.json
-          if-no-files-found: ignore
+            ${{ runner.temp }}/native-upgrade/proof.json
+            ${{ runner.temp }}/native-upgrade/ui.json
           retention-days: 7
-
-      - name: Upload the private review candidate
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: MemCode-macos-arm64-candidate-${{ github.sha }}
-          path: release/macos-arm64-candidate/*
-          if-no-files-found: error
-          retention-days: 7
+          if-no-files-found: warn
