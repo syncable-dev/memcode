@@ -7,8 +7,28 @@ import { installDemo, demoEvent } from './state';
 import { installGuide } from './guide';
 import './style.css';
 
+class DemoWorkspace extends React.Component<Record<string, never>, { failed: boolean }> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() { return { failed: true }; }
+
+  componentDidCatch() { demoEvent('workspace-error'); }
+
+  render() {
+    if (this.state.failed) {
+      return (
+        <main className="demo-load-error">
+          <h1>This screen couldn’t load.</h1>
+          <button className="button primary" onClick={() => location.reload()}>Reload example</button>
+        </main>
+      );
+    }
+    return <App />;
+  }
+}
+
 installDemo();
-createRoot(document.getElementById('root')!).render(<><App /><div className="website-demo-label">Interactive example · no live agents or local access</div></>);
+createRoot(document.getElementById('root')!).render(<><DemoWorkspace /><div className="website-demo-label">Interactive example · no live agents or local access</div></>);
 installGuide();
 
 document.addEventListener('click', (event) => {

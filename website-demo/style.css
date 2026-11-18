@@ -112,3 +112,18 @@ html[data-tour-step="board"] .workspace-hero {
   .insights-page .intelligence-overview { display: flex; flex-direction: column; align-items: stretch; }
   .insights-page .intelligence-overview-copy { width: auto; }
 }
+
+.demo-load-error {
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 16px;
+  height: 100%;
+  padding: 16px;
+  background: #f4f8f3;
+}
+.demo-load-error h1 {
+  margin: 0;
+  color: #244033;
+  font-size: 20px;
+}
