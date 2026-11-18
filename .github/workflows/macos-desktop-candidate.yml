@@ -30,7 +30,7 @@ jobs:
           cd "$RUNNER_TEMP/native-upgrade"
           curl --fail --silent --show-error --location --retry 3 'https://d12b8r6xagt10r.cloudfront.net/releases/memcode/0.4.0-beta.12/macos-aarch64/MemCode.app.tar.gz' -o previous.tar.gz
           echo '2b46e92c497bb06d35cfbdf9b86e2ce51dc3865bb6d781a20e034497c5ba387b  previous.tar.gz' | shasum -a 256 -c -
-          mkdir "$HOME/Applications" -p
+          mkdir -p "$HOME/Applications"
           test ! -e "$HOME/Applications/MemCode.app"
           tar -xzf previous.tar.gz -C "$HOME/Applications"
           APP="$HOME/Applications/MemCode.app"
@@ -77,3 +77,4 @@ jobs:
             ${{ runner.temp }}/native-upgrade/ui.json
           retention-days: 7
           if-no-files-found: warn
+
