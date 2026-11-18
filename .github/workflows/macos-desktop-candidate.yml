@@ -110,6 +110,8 @@ jobs:
       - name: Check types, behavior and license material
         timeout-minutes: 12
         run: |
+          # Match the canonical project paths returned by Git and child processes on macOS.
+          export TMPDIR="$(cd -- "$TMPDIR" && pwd -P)"
           npm run typecheck
           node --import tsx --test --test-reporter=tap --test-timeout=90000 tests/*.test.ts
           node scripts/verify-third-party-notices.mjs
