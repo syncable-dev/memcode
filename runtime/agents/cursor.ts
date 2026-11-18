@@ -1,8 +1,13 @@
 import { spawn, execFile } from "node:child_process";
 import { appVersion } from "../../src/version";
 import { createInterface } from "node:readline";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { promisify } from "node:util";
+import { tmpdir } from "node:os";
+import { cursorCatalog, cursorChoices, cursorModelValue, rankedCursorModel } from "../../src/cursor-models";
+import { childEnv, type Command } from "../commands";
+import { cursorDefaultModel, type ModelOption } from "../../src/shared";
+export { cursorModelValue } from "../../src/cursor-models";
 import { join } from "node:path";
 import type { AgentSession, AgentSessionOptions } from "./types";
 import { withoutPermissionArgs } from "./permissions";
@@ -45,51 +50,6 @@ const contentText = (content: unknown): string =>
     .filter(Boolean)
     .join("\n");
 
-/** ACP advertises canonical variant values, unlike the CLI's shorthand aliases. */
-export function cursorModelValue(
-  requested: string,
-  choices: Json[],
-): string | undefined {
-  const flat = choices.flatMap((choice) =>
-    Array.isArray(choice.options) ? array(choice.options) : [choice],
-  );
-  const exact = flat.find((choice) => choice.value === requested);
-  if (exact) return text(exact.value);
-  const byName = flat.filter(
-    (choice) => text(choice.name).toLowerCase() === requested.toLowerCase(),
-  );
-  if (byName.length === 1) return text(byName[0].value);
-  const fast = requested.endsWith("-fast"),
-    withoutFast = requested.replace(/-fast$/, "");
-  const effort = /^(.*)-(low|medium|high|xhigh|max|none)$/.exec(withoutFast);
-  const base = (effort?.[1] ?? withoutFast).replace(/^cursor-(?=grok-)/, "");
-  const matches = flat.filter((choice) => {
-    const value = text(choice.value),
-      match = /^([^\[]+)\[([^\]]*)\]$/.exec(value);
-    if (
-      !match ||
-      (match[1] !== base && !(base === "auto" && match[1] === "default"))
-    )
-      return false;
-    const parameters = Object.fromEntries(
-      match[2]
-        .split(",")
-        .filter(Boolean)
-        .map((entry) => entry.split("=")),
-    );
-    return (
-      (!fast || parameters.fast === "true") &&
-      (!effort ||
-        [
-          parameters.effort,
-          parameters.reasoning,
-          parameters.reasoning_effort,
-        ].includes(effort[2]))
-    );
-  });
-  return matches.length === 1 ? text(matches[0].value) : undefined;
-}
-
 /** Use only Cursor's acknowledged selection, never our routing request. Auto
  * names a routing policy and does not identify the model that served a task. */
 export function cursorSessionModel(
@@ -123,6 +83,45 @@ export function cursorSessionModel(
     },
     models: [variant?.[1] ?? value],
   };
+}
+
+export async function selectCursorModel(
+  session: Json,
+  requested: string,
+  request: (method: string, params: Json) => Promise<Json>,
+  tier?: import("../../src/shared").ModelTier,
+): Promise<{ config: Json[]; legacyModel?: string; alternative?: string }> {
+  let config = array(session.configOptions);
+  let legacyModel = text(session.models?.currentModelId);
+  const model = config.find((item) => item.category === "model" || item.id === "model");
+  const current = text(model?.currentValue) || legacyModel;
+  if (!requested || requested === cursorDefaultModel) return { config, legacyModel };
+  const choices = cursorChoices(session);
+  let value = cursorModelValue(requested, choices) ?? (current === requested ? current : undefined);
+  let alternative: string | undefined;
+  if (!value && tier) {
+    const candidate = rankedCursorModel(session, tier);
+    if (candidate) {
+      value = candidate.id;
+      alternative = `Cursor no longer offers ${requested}. MemCode selected ${candidate.label} for this ${tier} task.`;
+    } else {
+      return { config, legacyModel, alternative: "Cursor will use the current session’s configured model." };
+    }
+  }
+  if (!value)
+    throw Error(`This Cursor session does not offer ${requested}. Choose Match task complexity or another model in Worker assignment.`);
+  if (value !== current) {
+    if (model) {
+      const selected = await request("session/set_config_option", { sessionId: session.sessionId, configId: model.id, value });
+      config = array(selected.configOptions);
+      if (!config.some((item) => item.id === model.id && item.currentValue === value))
+        throw Error("Cursor did not confirm the selected model. Refresh Workers and try again.");
+    } else {
+      await request("session/set_model", { sessionId: session.sessionId, modelId: value });
+      legacyModel = value;
+    }
+  }
+  return { config, legacyModel, alternative };
 }
 
 async function sessionServers(path?: string): Promise<Json[]> {
@@ -160,6 +159,28 @@ async function sessionServers(path?: string): Promise<Json[]> {
 
 /** Native ACP keeps stdin open for bound, bidirectional approval replies. */
 export function startCursorSession(options: AgentSessionOptions): AgentSession {
+  return runCursorSession(options);
+}
+
+/** Read exactly what this installed, authenticated ACP admits. No project,
+ * MCP tools or worker prompt are supplied to the discovery session. */
+export async function probeCursorCatalog(command: Command): Promise<ModelOption[]> {
+  const cwd = await mkdtemp(join(tmpdir(), "memcode-cursor-catalog-"));
+  try {
+    let models: ModelOption[] = [];
+    const session = runCursorSession({
+      command, cwd, env: childEnv(), model: "", effort: "low", prompt: "", briefPath: "", toolArgs: [],
+      onEvent: () => {}, requestInput: async () => ({ cancelled: true }),
+    }, (result) => { models = cursorCatalog(result); });
+    const timeout = setTimeout(() => { void session.stop(); }, 12000);
+    try { await session.completion; } finally { clearTimeout(timeout); }
+    return models;
+  } finally {
+    await rm(cwd, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+function runCursorSession(options: AgentSessionOptions, inspect?: (session: Json) => void): AgentSession {
   // Current ACP ignores --auto-review even though interactive Cursor supports it.
   // Never silently run an allowlist/bypass session labelled as Smart auto.
   if (options.permissionMode === "auto")
@@ -200,7 +221,6 @@ export function startCursorSession(options: AgentSessionOptions): AgentSession {
         : []),
       "--workspace",
       options.cwd,
-      ...(options.model ? ["--model", options.model] : []),
       "acp",
     ],
     {
@@ -491,11 +511,6 @@ export function startCursorSession(options: AgentSessionOptions): AgentSession {
           messageId: assistantId,
         });
       }
-      emit({
-        type: "activity",
-        label: "Cursor is responding…",
-        phase: "working",
-      });
     } else if (
       ["tool_call", "tool_call_update"].includes(event.sessionUpdate)
     ) {
@@ -507,7 +522,10 @@ export function startCursorSession(options: AgentSessionOptions): AgentSession {
           toolTitles.get(id) ||
           "Cursor tool";
       toolTitles.set(id, title);
-      emit({ type: "activity", label: title, toolId: id, phase: "tool" });
+      const finished = event.status === "failed" || event.status === "completed";
+      if (id) emit({ type: "activity", label: title, toolId: id, phase: "tool",
+        ...(finished ? { toolResult: event.status } : {}) });
+      if (finished) toolTitles.delete(id);
       const output = contentText(event.content).slice(-10000);
       if (event.status === "failed") {
         const message = `${title} failed${output ? ": " + output : "."}`;
@@ -634,41 +652,17 @@ export function startCursorSession(options: AgentSessionOptions): AgentSession {
       });
       sessionId = text(session.sessionId);
       if (!sessionId) throw Error("Cursor did not return a session identity.");
-      emit({ type: "session", sessionId });
-      let config = array(session.configOptions);
-      let legacyModel = session.models?.currentModelId;
-      const model = config.find(
-        (option) => option.category === "model" || option.id === "model",
-      );
-      const requestedModel =
-        model && options.model
-          ? cursorModelValue(options.model, array(model.options))
-          : options.model;
-      if (model && options.model && !requestedModel)
-        throw Error(
-          `Cursor ACP does not advertise the requested model variant ${options.model}. Choose an available model before starting this worker.`,
-        );
-      if (
-        options.model &&
-        (model?.currentValue ?? session.models?.currentModelId) !==
-          requestedModel
-      ) {
-        if (model) {
-          const selected = await request("session/set_config_option", {
-            sessionId,
-            configId: model.id,
-            value: requestedModel,
-          });
-          config = array(selected.configOptions);
-        } else if (session.models) {
-          await request("session/set_model", {
-            sessionId,
-            modelId: options.model,
-          });
-          // The legacy setter's empty success response acknowledges this ID.
-          legacyModel = options.model;
-        }
+      if (inspect) {
+        inspect(session);
+        await finish({ exitCode: 0 });
+        return;
       }
+      emit({ type: "session", sessionId });
+      const selected = await selectCursorModel(session, options.model, request, options.automaticModelTier);
+      let config = selected.config;
+      const legacyModel = selected.legacyModel;
+      if (selected.alternative)
+        emit({ type: "message", role: "system", text: selected.alternative });
       const effort = config.find(
         (option) =>
           option.category === "thought_level" ||

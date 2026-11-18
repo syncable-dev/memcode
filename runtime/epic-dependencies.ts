@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { open, realpath } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { AppState, WorkItem } from "../src/shared";
+import { pendingPrerequisites, stageLabel } from "../src/domain";
+import { taskStatus, workflowFor } from "../src/planning/workflow";
 import { readWorkerChanges } from "./changes";
 import { within } from "./local";
 
@@ -48,6 +50,18 @@ async function contentHash(
   }
 }
 
+export function assertPrerequisitesComplete(state: AppState, task: WorkItem): void {
+  const pending = pendingPrerequisites(task, state.tasks);
+  if (!pending.length) return;
+  const workflow = workflowFor(state, task.projectId);
+  const blockers = pending.map(({ story }) =>
+    story
+      ? `${story.identifier} · ${story.title} (${taskStatus(story, workflow)?.name ?? stageLabel(story.stage)})`
+      : "a story that is no longer available",
+  );
+  throw Error(`Waiting for ${blockers.join(", ")}. Review this story’s prerequisites before starting.`);
+}
+
 /** Done is a planning state. Across epics, verify the actual prerequisite code. */
 export async function assertEpicDependencies(
   state: AppState,
@@ -56,14 +70,11 @@ export async function assertEpicDependencies(
 ): Promise<void> {
   if (!task.dependsOn?.length) return;
   const root = await realpath(workspace);
-  for (const id of task.dependsOn ?? []) {
-    const dependency = state.tasks.find(
-      (item) => item.id === id && item.projectId === task.projectId,
-    );
-    if (!dependency || dependency.stage !== "done")
-      throw Error(
-        "Complete the prerequisite stories before starting this worker.",
-      );
+  assertPrerequisitesComplete(state, task);
+  const dependencies = state.tasks.filter(
+    (item) => item.projectId === task.projectId && task.dependsOn?.includes(item.id),
+  );
+  for (const dependency of dependencies) {
     if (dependency.epicId === task.epicId || dependency.kind === "research")
       continue;
     const changes = await readWorkerChanges(dependency);

@@ -68,6 +68,57 @@ test("new, removed, renamed and uncertain declarations never enter the paired me
   assert.equal(axes[0].after, 85);
 });
 
+test("one-sided native values remain visible without inferring a pair", () => {
+  const { line, ...baseline } = measured();
+  const old = {
+    ...baseline,
+    cognitive: null,
+    comparison: { status: "ambiguous" as const },
+  };
+  assert.deepEqual(reviewMetricPair(old, "cognitive"), {
+    before: 8,
+    after: null,
+    delta: null,
+  });
+  assert.deepEqual(
+    reviewMetricPair(
+      { ...old, comparison: { status: "removed" } },
+      "cognitive",
+    ),
+    { before: 8, after: null, delta: null },
+  );
+  assert.deepEqual(
+    reviewMetricPair(
+      { ...measured(), comparison: { status: "added" } },
+      "cognitive",
+    ),
+    { before: null, after: 0, delta: null },
+  );
+  assert.deepEqual(
+    reviewMetricPair(
+      { ...measured(), comparison: { status: "ambiguous" } },
+      "cognitive",
+    ),
+    { before: 8, after: 0, delta: null },
+  );
+  const unknown = {
+    ...measured(),
+    comparison: { status: "unavailable" as const },
+  };
+  assert.equal(reviewMetricPair(unknown, "cognitive").before, null);
+  assert.deepEqual(
+    reviewMetricPair(
+      {
+        ...unknown,
+        source: "unavailable",
+        before: { ...unknown.before!, halsteadVolume: 0, source: "ast" },
+      },
+      "halsteadVolume",
+    ),
+    { before: 0, after: null, delta: null },
+  );
+});
+
 test("each axis reports its own missing-pair count rather than coercing a missing baseline to zero", () => {
   const first = measured(),
     second = {
@@ -141,6 +192,31 @@ test("removed functions retain their baseline but do not dilute the current main
     comparison: { status: "removed" },
   };
   assert.equal(reviewMetricPair(removed, "maintainabilityIndex").after, null);
+  const baselineOnly: CodeReviewMetric = {
+    ...removed,
+    line: undefined,
+    before: { ...removed.before!, line: 5 },
+    comparison: { status: "ambiguous" },
+  };
+  const refactor = {
+    state: "completed" as const,
+    coverage: { complete: true, limitations: [] },
+    metrics: [measured(), baselineOnly],
+  };
+  assert.equal(reviewQuality(refactor).score, 85);
+  assert.equal(
+    reviewQuality({
+      ...refactor,
+      qualityComparison: {
+        filesMeasured: 1,
+        filesUnavailable: 0,
+        omittedFiles: 0,
+        omittedFunctions: 1,
+        notes: [],
+      },
+    }).score,
+    null,
+  );
   assert.equal(
     reviewQuality({
       state: "completed",

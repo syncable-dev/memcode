@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { WorkItem } from "../src/shared.ts";
+import { storyReadiness } from "../src/planning/readiness.ts";
+import { defaultWorkflow } from "../src/planning/workflow.ts";
+import { initialState } from "../src/seed.ts";
 import {
   sameBoardRenderProps,
   sameBoardTask,
@@ -41,6 +44,48 @@ function fixture() {
     toggle: (_id: string) => {},
   };
 }
+
+test("readiness follows prerequisites outside the filtered cycle and distinguishes cross-epic code handoffs", () => {
+  const [first, second] = initialState().tasks;
+  const dependency = {
+    ...first,
+    cycleId: "cycle-one",
+    epicId: "epic-a",
+    stage: "working" as const,
+  };
+  const story = {
+    ...second,
+    cycleId: "cycle-two",
+    epicId: "epic-b",
+    stage: "planned" as const,
+    dependsOn: [first.id],
+  };
+  const workflow = defaultWorkflow(story.projectId);
+  const readiness = (source: WorkItem) =>
+    storyReadiness(story, [story, source], workflow)!;
+  assert.equal(
+    readiness(dependency).label,
+    `Blocked by ${dependency.identifier}`,
+  );
+  assert.match(readiness(dependency).detail, /In progress/);
+  const completed = { ...dependency, stage: "done" as const };
+  assert.equal(readiness(completed).state, "handoff");
+  assert.equal(
+    readiness({ ...completed, epicId: story.epicId }).state,
+    "ready",
+  );
+  assert.equal(readiness({ ...completed, kind: "research" }).state, "ready");
+  assert.equal(storyReadiness(story, [story], workflow)?.state, "blocked");
+  assert.equal(storyReadiness(completed, [story], workflow), undefined);
+  const board = { ...fixture(), tasks: [story] };
+  assert.equal(
+    sameBoardRenderProps(
+      { ...board, readiness: new Map([[story.id, readiness(dependency)]]) },
+      { ...board, readiness: new Map([[story.id, readiness(completed)]]) },
+    ),
+    false,
+  );
+});
 
 test("board memo preserves the view when derived arrays and sets are recreated", () => {
   const before = fixture();

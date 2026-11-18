@@ -19,12 +19,19 @@ const nativeMI = (metric: CodeReviewMetric): number | null =>
 
 /** Metrics may omit failed lookups; their length is not an expected-function count. */
 export function reviewQuality(
-  run: Pick<StoryReviewRun, "state" | "coverage" | "metrics"> | null,
+  run: Pick<
+    StoryReviewRun,
+    "state" | "coverage" | "metrics" | "qualityComparison"
+  > | null,
 ): ReviewQualitySummary {
   const functions = new Map<string, number | null>();
   let ambiguous = false;
   for (const metric of run?.metrics ?? []) {
-    if (metric.comparison?.status === "removed") continue;
+    if (
+      metric.comparison?.status === "removed" ||
+      (metric.line == null && metric.before?.line != null)
+    )
+      continue;
     if (!metric.path.trim() || !metric.symbol.trim()) {
       ambiguous = true;
       continue;
@@ -47,7 +54,9 @@ export function reviewQuality(
   const reason =
     !run || run.state !== "completed"
       ? "A current completed review is needed."
-      : !run.coverage.complete
+      : !run.coverage.complete ||
+          run.qualityComparison?.omittedFiles ||
+          run.qualityComparison?.omittedFunctions
         ? "Partial coverage; no overall maintainability score."
         : ambiguous
           ? "Function measurements could not be resolved consistently."

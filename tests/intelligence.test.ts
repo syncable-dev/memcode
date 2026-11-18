@@ -28,6 +28,7 @@ const project: Project = {
 const metadata = () => ({
   graph_revision: { token: "graph-1", publication_unchanged_during_call: true },
 });
+const unexpectedAnalysis = async () => { throw new Error("An aligned checkout must reuse its graph"); };
 const readyWatch = async () => ({
   state: "watching" as const,
   path: project.path!,
@@ -125,6 +126,21 @@ test("checkpoint counts use the full AST distribution, not the bounded hotspot s
   assert.equal(snapshot.source.revision, "source-1");
 });
 
+test("pending repository summaries never present old graph counts as current", () => {
+  const input = fixture();
+  input.results.stats.summary_current = false;
+  input.results.after.indexed_file_count = 12;
+  const partial = normalizeQualitySnapshot(input);
+  assert.equal(partial.status, "partial");
+  assert.equal(partial.metrics.nodes, null);
+  assert.equal(partial.metrics.edges, null);
+  assert.equal(partial.metrics.files, 12);
+  assert.equal(partial.metrics.measuredFunctions, 100);
+  assert.match(partial.limitations.join(" "), /repository totals/);
+  input.results.after.ready = false;
+  assert.equal(normalizeQualitySnapshot(input).metrics.files, null);
+});
+
 test("optional Halstead metadata does not erase the declared AST complexity schema", () => {
   const input = fixture();
   const optional = finding("optional-quality", 20);
@@ -201,6 +217,12 @@ test("stale indexes, another branch and changed HEAD are labelled rather than si
     },
     (input: ReturnType<typeof fixture>) => {
       input.results.after.branch = "another-epic";
+    },
+    (input: ReturnType<typeof fixture>) => {
+      input.results.after.worktree = "/some/other/checkout";
+    },
+    (input: ReturnType<typeof fixture>) => {
+      input.results.before.repo_id = "another-repo";
     },
     (input: ReturnType<typeof fixture>) => {
       input.commit = "new-head";
@@ -360,7 +382,7 @@ test("a settling publication is read again before opening the dependent capture 
     () => state,
     () => project,
     async () => {},
-    engine,
+    engine, unexpectedAnalysis,
   );
   const snapshot = await handlers.get("intelligence:refresh")!({
     projectId: project.id,
@@ -371,6 +393,59 @@ test("a settling publication is read again before opening the dependent capture 
   assert.equal(boundaries[2].wait_ms, 0);
   assert.equal(snapshot.graph.stable, true);
   assert.equal(snapshot.source.indexReady, true);
+});
+
+test("Insights and Improve share one branch-bound capture and retry its cold summary without indexing", async () => {
+  const selected = { ...project, path: process.cwd(), branch: "epic/review" };
+  const state = initialState();
+  state.projects = [selected];
+  state.qualitySnapshots = [];
+  const data = fixture().results;
+  const revision = {
+    ...data.after, repo_id: selected.repoId, worktree: selected.path,
+    branch: selected.branch, source_commit: undefined, status: "complete",
+    publication: { status: "published", token: "graph-1" },
+  };
+  let summaries = 0;
+  const calls: string[] = [];
+  const engine = {
+    watch: async () => ({ ...await readyWatch(), branch: selected.branch }),
+    call: async (_selected: Project, name: string, args: Record<string, unknown>) => {
+      assert.equal(args.repo_id, selected.repoId);
+      assert.equal(args.branch, selected.branch);
+      calls.push(name);
+      if (name === "get_query_revision") return revision;
+      if (name === "get_repository_stats") {
+        summaries++;
+        return summaries === 1
+          ? { ...data.stats, total_nodes: 999, summary_current: false, summary_refresh_in_progress: true }
+          : { ...data.stats, summary_current: true };
+      }
+      if (name === "find_most_complex_functions") return data.complex;
+      if (name === "find_dead_code") return data.dead;
+      if (name === "find_import_cycles") return data.cycles;
+      if (name === "get_style_fingerprint") return { _meta: metadata(), dominant_idioms: [] };
+      throw new Error("Unexpected engine operation " + name);
+    }
+  } as unknown as MemtraceEngine;
+  const handlers = new Map<string, (input: unknown) => Promise<any>>();
+  registerIntelligence(
+    (name, schema, handler) => handlers.set(name, async (input) => handler(schema.parse(input))),
+    () => state, () => selected, async () => {}, engine, unexpectedAnalysis,
+  );
+  const capture = handlers.get("intelligence:refresh")!;
+  const [insights, improve] = await Promise.all([
+    capture({ projectId: selected.id, refreshIndex: true }), capture({ projectId: selected.id }),
+  ]);
+  assert.equal(summaries, 2);
+  assert.equal(insights.id, improve.id);
+  assert.equal(state.qualitySnapshots.length, 1);
+  assert.equal(insights.status, "current");
+  assert.equal(insights.metrics.nodes, 180);
+  const view = await handlers.get("intelligence:query")!({ projectId: selected.id, section: "style" });
+  assert.doesNotMatch(view.notes.join(" "), /could not be verified/);
+  assert.deepEqual(calls.slice(-3), ["get_query_revision", "get_style_fingerprint", "get_query_revision"]);
+  await assert.rejects(capture({ projectId: selected.id, branch: "wrong" }), /Unrecognized key/);
 });
 
 test("concurrent checkpoint captures coalesce and examples cannot produce quality evidence", async () => {
@@ -406,7 +481,7 @@ test("concurrent checkpoint captures coalesce and examples cannot produce qualit
     () => state,
     () => state.projects[0],
     async () => {},
-    engine,
+    engine, unexpectedAnalysis,
   );
   const refresh = handlers.get("intelligence:refresh")!;
   const [first, second] = await Promise.all([
@@ -430,6 +505,38 @@ test("concurrent checkpoint captures coalesce and examples cannot produce qualit
     }),
     /Unrecognized key/,
   );
+});
+
+test("a capture cannot save an empty report or a result for a checkout that changed while reading", async () => {
+  for (const rebind of [false, true]) {
+    const selected = { ...project, path: process.cwd() };
+    const state = initialState();
+    state.projects = [selected];
+    state.qualitySnapshots = [];
+    const data = fixture().results;
+    delete data.after.source_commit;
+    const engine = {
+      watch: readyWatch,
+      call: async (_project: Project, name: string) => {
+        if (name === "get_query_revision") return data.after;
+        if (rebind && name === "get_repository_stats") {
+          selected.path = selected.path + "-replacement";
+          return data.stats;
+        }
+        return {};
+      },
+    } as unknown as MemtraceEngine;
+    const handlers = new Map<string, (input: unknown) => Promise<any>>();
+    registerIntelligence(
+      (name, schema, handler) => handlers.set(name, async (input) => handler(schema.parse(input))),
+      () => state, () => selected, async () => {}, engine, unexpectedAnalysis,
+    );
+    await assert.rejects(
+      handlers.get("intelligence:refresh")!({ projectId: selected.id }),
+      rebind ? /project changed/ : /no measured quality data/,
+    );
+    assert.equal(state.qualitySnapshots.length, 0);
+  }
 });
 
 test("a ready project after restart reattaches its native watch before checkpoint queries without reindexing", async (t) => {
@@ -494,7 +601,7 @@ test("a ready project after restart reattaches its native watch before checkpoin
     () => state,
     () => selected,
     async () => {},
-    engine,
+    engine, unexpectedAnalysis,
   );
   const capture = handlers.get("intelligence:refresh")!;
   const snapshot = await capture({
@@ -551,7 +658,7 @@ test("an unavailable native watcher remains visible while independently aligned 
     () => state,
     () => selected,
     async () => {},
-    engine,
+    engine, unexpectedAnalysis,
   );
   const snapshot = await handlers.get("intelligence:refresh")!({
     projectId: selected.id,

@@ -9,7 +9,7 @@ import {
   validateCycle,
 } from "../src/planning/cycles";
 import { isActive } from "../src/domain";
-import { workflowFor, taskStatus } from "../src/planning/workflow";
+import { backlogStatusId, isBacklogStatus, storedTaskStatus, workflowFor, taskStatus } from "../src/planning/workflow";
 type Register = (
   name: string,
   schema: z.ZodType,
@@ -132,7 +132,7 @@ export function registerPlanningControls(
   });
   register(
     "workflow:save",
-    z.object({ projectId: id, states: z.array(status).min(4).max(16) }),
+    z.object({ projectId: id, states: z.array(status).min(4).max(17) }),
     async (input) => {
       project(input.projectId);
       if (
@@ -145,10 +145,12 @@ export function registerPlanningControls(
         );
       if (
         stages.some(
-          (stage) => !input.states.some((s: any) => s.stage === stage),
+          (stage) => !input.states.some((s: any) => s.stage === stage && !isBacklogStatus(s.id)),
         )
       )
         throw new Error("Keep at least one state for each execution stage.");
+      if (input.states.some((s: any) => isBacklogStatus(s.id) && (s.id !== backlogStatusId(input.projectId) || s.stage !== "planned")))
+        throw Error("Backlog belongs to this project's planned stage.");
       for (const task of state().tasks.filter(
         (task) => task.projectId === input.projectId && isActive(task),
       )) {
@@ -162,10 +164,11 @@ export function registerPlanningControls(
       state().workflowStates = state()
         .workflowStates.filter((s) => s.projectId !== input.projectId)
         .concat(input.states);
+      const saved = workflowFor(state(), input.projectId);
       for (const task of state().tasks.filter(
         (task) => task.projectId === input.projectId,
       ))
-        task.statusId = taskStatus(task, input.states).id;
+        task.statusId = storedTaskStatus(task, saved, {});
       await changed();
     },
   );

@@ -532,6 +532,48 @@ function reviewFindings(
 }
 
 /** Measure only the captured contribution; recovery may genuinely republish its exact local graph. */
+async function supportsSourceQuality(
+  engine: ReviewEngine,
+  project: Project,
+  assertActive: () => void,
+): Promise<boolean> {
+  try {
+    // Capability reads are not graph evidence. Keep them out of this group's
+    // publication observations; old engines must not scan for a literal '*'.
+    const capabilities = await engine.call(
+      project,
+      "get_checkout_capabilities",
+      {},
+    );
+    assertActive();
+    return capabilities?.source_quality_v1 === true;
+  } catch {
+    assertActive();
+    return false;
+  }
+}
+
+export async function measureCapturedStoryQuality(
+  engine: ReviewEngine,
+  project: Project,
+  capture: StoryReviewCapture,
+  assertActive: () => void,
+) {
+  const supported = await supportsSourceQuality(engine, project, assertActive);
+  return compareCapturedQuality(
+    capture,
+    [],
+    async (name, args) => {
+      assertActive();
+      const response = await engine.call(project, name, args);
+      assertActive();
+      return response;
+    },
+    { repo_id: project.repoId, branch: project.branch },
+    supported,
+  );
+}
+
 async function analyzeStableGroup(
   engine: ReviewEngine,
   project: Project,
@@ -665,7 +707,7 @@ async function analyzeStableGroup(
     symbols.splice(0, symbols.length, ...unique.slice(0, 24));
     if (unique.length > 24)
       limitations.add(
-        "Quality and impact are bounded to 24 changed functions; narrow the story or review the remainder separately.",
+        "Graph quality lookups and impact cover the first 24 affected functions. Captured-source measurements have separate coverage.",
       );
     if (!symbols.length)
       limitations.add(
@@ -741,20 +783,11 @@ async function analyzeStableGroup(
     limitations.add(`Changed-symbol coverage: ${(error as Error).message}`);
   }
 
-  let sourceQuality = false;
-  try {
-    // Capability reads are not graph evidence. Keep them out of this group's
-    // publication observations; old engines must not scan for a literal '*'.
-    const capabilities = await engine.call(
-      project,
-      "get_checkout_capabilities",
-      {},
-    );
-    assertActive();
-    sourceQuality = capabilities?.source_quality_v1 === true;
-  } catch {
-    assertActive();
-  }
+  const sourceQuality = await supportsSourceQuality(
+    engine,
+    project,
+    assertActive,
+  );
   const compared = await compareCapturedQuality(
     capture,
     metrics,

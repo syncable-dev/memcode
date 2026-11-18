@@ -7,7 +7,9 @@ import {
   startCursorSession,
   cursorModelValue,
   cursorSessionModel,
+  selectCursorModel,
 } from "../runtime/agents/cursor.ts";
+import { cursorCatalog, rankedCursorModel } from "../src/cursor-models.ts";
 import type { AgentEvent } from "../runtime/agents/types.ts";
 import type { PermissionMode } from "../src/permissions";
 import type {
@@ -87,6 +89,41 @@ test("Cursor reports its acknowledged model selection and leaves Auto identity u
   });
   assert.equal(cursorSessionModel([], undefined), undefined);
   assert.equal(cursorSessionModel([], "composer-2.5")?.model?.id, "composer-2.5");
+});
+
+test("Cursor reselects an advertised model at the measured tier when the automatic variant disappears", async () => {
+  const grok = "grok-4.7[reasoning_effort=high,fast=true]";
+  const opus = "claude-opus-5[thinking=true,context=300k,effort=high,fast=false]";
+  const model = {
+    id: "model-choice", category: "model", currentValue: grok,
+    options: [{name:"Grok 4.7",value:grok},{name:"Opus 5",value:opus},{name:"Other",value:"other"}],
+  };
+  const session = { sessionId: "test", configOptions: [model] };
+  assert.deepEqual(cursorCatalog(session).map(({ id, tier }) => [id, tier]), [
+    [grok,"balanced"],[opus,"frontier"],["other",undefined],
+  ]);
+  const selected = await selectCursorModel(session, "grok-4.7-xhigh", async (method, params) => {
+    assert.equal(method, "session/set_config_option");
+    assert.deepEqual(params, {sessionId:"test",configId:"model-choice",value:opus});
+    return {configOptions:[{...model,currentValue:opus}]};
+  }, "frontier");
+  assert.match(selected.alternative ?? "", /Opus 5/);
+  assert.equal(cursorSessionModel(selected.config)?.model?.id, "claude-opus-5");
+  assert.equal(cursorSessionModel(selected.config)?.model?.effort, "high");
+  await assert.rejects(selectCursorModel(session, "grok-4.7-xhigh", async () => assert.fail("Pinned models cannot be replaced")), /does not offer/);
+  await assert.rejects(selectCursorModel(session, opus, async () => ({configOptions:[model]})), /did not confirm/);
+  assert.equal(rankedCursorModel(session, "extreme"), undefined);
+});
+
+test("legacy ACP choices and saved CLI aliases resolve to the actual selection", async () => {
+  const grok = "grok-4.7[reasoning_effort=high,fast=true]";
+  const session = {sessionId:"older",models:{currentModelId:"other",availableModels:[{modelId:grok,name:"Grok"}]}};
+  const selected = await selectCursorModel(session, "grok-4.7-high", async (method, params) => {
+    assert.equal(method, "session/set_model");
+    assert.deepEqual(params, {sessionId:"older", modelId:grok});
+    return {};
+  });
+  assert.equal(selected.legacyModel, grok);
 });
 
 async function fixture(kind = "normal") {
@@ -172,6 +209,7 @@ test(
     });
     assert.ok(session.child);
     assert.deepEqual(await session.completion, { exitCode: 0 });
+    assert.ok(f.events.some((event) => event.type === "activity" && event.toolId === "tool-1" && event.toolResult === "failed"));
     const log = await f.trace(),
       requests = log.filter((row) => row.in?.method).map((row) => row.in);
     const response = (id: string | number) =>

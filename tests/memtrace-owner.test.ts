@@ -29,7 +29,7 @@ const scope = {
   jobDirectory: "C:/temporary/selected-project/.memcode/memtrace/.memtrace",
 };
 const command = { command: "node", prefix: ["installed/memtrace.js"] };
-function fixture() {
+function fixture(flush?: () => Promise<void>) {
   const child = Object.assign(new EventEmitter(), {
     pid: 123456,
     exitCode: null as number | null,
@@ -49,6 +49,7 @@ function fixture() {
     timeoutMs: 100,
     stop: async (process) => {
       stopped.push(process);
+      await flush?.();
     },
   });
   return { owners, child, spawns, stopped };
@@ -305,6 +306,34 @@ test("overlapping bootstrap requests share one owned process", async () => {
   assert.equal(f.spawns.length, 1);
   await f.owners.close();
   assert.equal(f.stopped.length, 1);
+});
+
+test("reopening the same store waits for its native shutdown to release the database", async () => {
+  let finish!: () => void;
+  const draining = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const f = fixture(() => draining);
+  await f.owners.ready(scope, command, {}, async () => {
+    if (!f.spawns.length) throw pending();
+  });
+  const retiring = f.owners.release(scope.dataDirectory);
+  let probes = 0;
+  const reopening = f.owners.ready(scope, command, {}, async () => {
+    probes++;
+    if (f.spawns.length < 2) throw pending();
+  });
+  try {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(f.spawns.length, 1, "the previous owner is still flushing");
+    assert.equal(probes, 0, "a closing owner cannot be borrowed");
+  } finally {
+    finish();
+    await Promise.all([retiring, reopening]);
+    await f.owners.close();
+  }
+  assert.equal(f.spawns.length, 2);
+  assert.equal(f.stopped.length, 2);
 });
 
 test("readiness timeout releases its own process instead of leaving a hidden owner", async () => {

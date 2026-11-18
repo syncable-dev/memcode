@@ -42,7 +42,9 @@ tested it. An approving code-owner review is required before merging.
 Repository write access alone does not permit direct updates to our working
 branches; the maintainer exception is limited to admin and maintain roles.
 
-The repository is currently private; see [LICENSE](LICENSE) for its source license.
+The repository is public. Personal and other permitted noncommercial use,
+modification and sharing are covered by [LICENSE](LICENSE); commercial use
+requires separate permission. See [licensing](docs/licensing.md) for details.
 
 ## Verification
 

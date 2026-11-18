@@ -3,7 +3,7 @@ import { open, realpath } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { createTwoFilesPatch } from "diff";
 import type { WorkItem } from "../src/shared";
-import type { StoryReviewRun } from "../src/code-review";
+import type { ReviewFileAttribution, StoryReviewRun } from "../src/code-review";
 import { readWorkerChanges } from "./changes";
 import { checkSourceBinding } from "./verification";
 import { git, within } from "./local";
@@ -66,7 +66,16 @@ export interface StoryReviewCapture {
   sourceBinding: string | null;
 }
 
-/** Compose only the story's own reservation edits. Never substitute the epic diff. */
+type ContinuousAttribution = Exclude<ReviewFileAttribution, "discontinuous">;
+function combineAttribution(
+  previous: ContinuousAttribution | undefined,
+  basis: "native-edit" | "reservation" | "legacy",
+): ContinuousAttribution {
+  if (basis === "legacy" || previous === "legacy") return "legacy";
+  return !previous || previous === basis ? basis : "verified-edits";
+}
+
+/** Compose only the edits attributed to this story. */
 export async function captureStoryReview(
   task: WorkItem,
 ): Promise<StoryReviewCapture> {
@@ -96,12 +105,16 @@ export async function captureStoryReview(
       beforeHash?: string;
       afterHash?: string;
       binary: boolean;
-      attribution: "reservation" | "legacy" | "discontinuous";
-      allReservations: boolean;
+      basis: ContinuousAttribution;
+      discontinuous: boolean;
       segments: Array<{ beforeHash?: string; afterHash?: string }>;
     }
   >();
   const limitations = new Set<string>();
+  if (changes.unverifiedEdits)
+    limitations.add(
+      `${changes.unverifiedEdits} worker edit${changes.unverifiedEdits === 1 ? "" : "s"} could not be bound to exact before-and-after file contents. The Changes tab shows the recorded diff. Review coverage excludes those edits.`,
+    );
   if (!sourceBinding)
     limitations.add(
       "The full source snapshot could not be verified within the capture limits.",
@@ -110,6 +123,12 @@ export async function captureStoryReview(
     if (checkpoint.taskId !== task.id || checkpoint.branch !== branch) {
       limitations.add(
         "Some earlier checkpoints belong to another execution branch and were excluded.",
+      );
+      continue;
+    }
+    if (checkpoint.basis === "native-receipt") {
+      limitations.add(
+        "A worker edit has no verified file snapshot and was excluded.",
       );
       continue;
     }
@@ -128,9 +147,15 @@ export async function captureStoryReview(
         beforeHash: previous ? previous.beforeHash : file.beforeHash,
         afterHash: file.afterHash,
         binary: (previous?.binary ?? false) || file.binary,
-        allReservations:
-          (previous?.allReservations ?? true) &&
-          checkpoint.basis === "fleet-reservation",
+        basis: combineAttribution(
+          previous?.basis,
+          checkpoint.basis === "native-edit"
+            ? "native-edit"
+            : checkpoint.basis === "fleet-reservation"
+              ? "reservation"
+              : "legacy",
+        ),
+        discontinuous: !continuous || previous?.discontinuous === true,
         // Retain one overflow sentinel without quadratic/unbounded journal copies.
         segments:
           (previous?.segments.length ?? 0) >= 17
@@ -139,13 +164,6 @@ export async function captureStoryReview(
                 ...(previous?.segments ?? []),
                 { beforeHash: file.beforeHash, afterHash: file.afterHash },
               ],
-        attribution:
-          !continuous || previous?.attribution === "discontinuous"
-            ? "discontinuous"
-            : checkpoint.basis !== "fleet-reservation" ||
-                previous?.attribution === "legacy"
-              ? "legacy"
-              : "reservation",
       });
     }
   }
@@ -179,33 +197,29 @@ export async function captureStoryReview(
   for (const [path, file] of files) {
     // Equal whole-file endpoints prove a net no-op only for a continuous own
     // chain. With peers between reservations, an own fix may undo their edit.
-    if (
-      file.beforeHash === file.afterHash &&
-      file.attribution !== "discontinuous"
-    )
-      continue;
+    if (file.beforeHash === file.afterHash && !file.discontinuous) continue;
     const entry: StoryReviewRun["snapshot"]["files"][number] = {
       path,
       beforeHash: file.beforeHash,
       afterHash: file.afterHash,
-      attribution: file.attribution,
+      attribution: file.discontinuous ? "discontinuous" : file.basis,
     };
     captured.push(entry);
-    const segmentProjection = file.attribution === "discontinuous";
+    const segmentProjection = file.discontinuous;
     if (
       segmentProjection &&
-      (!file.allReservations ||
+      (file.basis === "legacy" ||
         file.segments.length > 16 ||
         file.segments.some(
           (segment) => !segment.beforeHash || !segment.afterHash,
         ))
     ) {
       limitations.add(
-        `Changes to ${path} include an intervening edit. ${file.segments.length > 16 ? "The journal exceeds the bounded 16-segment projection." : !file.allReservations ? "Not every own segment has a Fleet reservation." : "Added/deleted-file transitions cannot be projected across peer edits."} They were not attributed to this story as one patch.`,
+        `Changes to ${path} include an intervening edit. ${file.segments.length > 16 ? "The journal exceeds the bounded 16-segment projection." : file.basis === "legacy" ? "An older scoped baseline cannot establish ownership of every edit." : "Added/deleted-file transitions cannot be projected across peer edits."} They were not attributed to this story as one patch.`,
       );
       continue;
     }
-    if (file.attribution === "legacy")
+    if (file.basis === "legacy")
       limitations.add(
         `Attribution for ${path} uses an older scoped baseline rather than a Fleet reservation.`,
       );
@@ -225,7 +239,10 @@ export async function captureStoryReview(
     const needsProjection = segmentProjection || currentHash !== file.afterHash;
     if (
       needsProjection &&
-      (!file.beforeHash || !file.afterHash || !current || !file.allReservations)
+      (!file.beforeHash ||
+        !file.afterHash ||
+        !current ||
+        file.basis === "legacy")
     ) {
       limitations.add(
         `${path} changed after the story's last checkpoint. Capture its current contribution before reviewing.`,
@@ -275,7 +292,7 @@ export async function captureStoryReview(
         }
         oldText = projection.baseline;
         newText = currentText;
-        entry.attribution = "reservation";
+        entry.attribution = file.basis;
         entry.projection = {
           method: "unique-exact-context",
           baselineHash: digest(oldText),
@@ -300,10 +317,15 @@ export async function captureStoryReview(
       "",
       { context: 3 },
     );
-    patch += `diff --git a/${path} b/${path}\n${unified.replace(/^=+\n/, "")}`;
+    patch += `diff --git a/${path} b/${path}\n`;
+    if (!file.beforeHash) patch += "new file mode 100644\n";
+    if (!file.afterHash) patch += "deleted file mode 100644\n";
+    patch += unified.replace(/^=+\n/, "");
+    let inHunk = false;
     for (const line of unified.split("\n")) {
-      if (line.startsWith("+") && !line.startsWith("+++")) additions++;
-      if (line.startsWith("-") && !line.startsWith("---")) deletions++;
+      if (line.startsWith("@@")) inHunk = true;
+      if (inHunk && line.startsWith("+")) additions++;
+      if (inHunk && line.startsWith("-")) deletions++;
     }
   }
   const finalSource = await checkSourceBinding(root);
@@ -312,7 +334,13 @@ export async function captureStoryReview(
       "Source changed during capture; this snapshot cannot certify the current code.",
     );
   const commit = await git(root, ["rev-parse", "HEAD"]);
-  const journalRevision = digest(JSON.stringify(changes.checkpoints));
+  const journalRevision = digest(
+    JSON.stringify(
+      changes.unverifiedEdits
+        ? [changes.checkpoints, changes.unverifiedRevision]
+        : changes.checkpoints,
+    ),
+  );
   const patchHash = digest(patch);
   return {
     snapshot: {

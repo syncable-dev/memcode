@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { z } from "zod";
 import type { AppState, WorkItem } from "../src/shared";
 import { isActive } from "../src/domain";
+import { backlogStatusId } from "../src/planning/workflow";
 import {
   deleteEntitySchema,
   deleteStorySchema,
@@ -182,6 +183,7 @@ function deleteCycle(state: AppState, id: string): DeletionResult {
   state.cycles = state.cycles.filter((cycle) => cycle.id !== id);
   for (const story of stories) {
     story.cycleId = null;
+    if (story.stage === "planned") story.statusId = backlogStatusId(story.projectId);
     story.updatedAt = new Date().toISOString();
   }
   for (const view of state.savedViews)

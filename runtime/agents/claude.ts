@@ -2,6 +2,10 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
+import { tmpdir } from "node:os";
+import type { ModelOption } from "../../src/shared";
+import { childEnv, type Command } from "../commands";
+import { claudeCatalog, selectClaudeModel } from "./claude-models";
 import { stripVTControlCharacters } from "node:util";
 import { claudeProfileArgs } from "../context/profile";
 import type {
@@ -34,6 +38,22 @@ const contentText = (content: unknown): string =>
  * Keep stdin open: can_use_tool requests resume only after their matching response.
  */
 export function startClaudeSession(options: AgentSessionOptions): AgentSession {
+  return runClaudeSession(options);
+}
+
+export async function probeClaudeCatalog(command: Command): Promise<ModelOption[]> {
+  let models: ModelOption[] = [];
+  const session = runClaudeSession({
+    command, cwd: tmpdir(), env: childEnv(), model: "", effort: "low", prompt: "", briefPath: "",
+    toolArgs: ["--tools", "", "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}', "--no-session-persistence"],
+    onEvent: () => {}, requestInput: async () => ({ cancelled: true }),
+  }, (offered) => { models = offered; });
+  const timer = setTimeout(() => { void session.stop(); }, 10_000);
+  try { await session.completion; } finally { clearTimeout(timer); }
+  return models;
+}
+
+function runClaudeSession(options: AgentSessionOptions, inspect?: (models: ModelOption[]) => void): AgentSession {
   if (options.localModel)
     throw Error("The local-model option currently supports Codex with Ollama.");
   const nativeMode =
@@ -63,9 +83,7 @@ export function startClaudeSession(options: AgentSessionOptions): AgentSession {
       "stdio",
       "--permission-mode",
       nativeMode,
-      "--effort",
-      options.effort,
-      ...(options.model ? ["--model", options.model] : []),
+      ...(options.model && options.model !== "default" ? ["--effort", options.effort, "--model", options.model] : []),
       ...profile,
       ...withoutPermissionArgs("claude", options.toolArgs),
     ],
@@ -358,6 +376,17 @@ export function startClaudeSession(options: AgentSessionOptions): AgentSession {
       }
       if (closed || stopping || inputEnded || child.stdin!.destroyed) return;
       initialized = true;
+      const offered = claudeCatalog(frame.response.response?.models);
+      if (inspect) {
+        inspect(offered);
+        result = { exitCode: 0 };
+        endInput();
+        return;
+      }
+      if (options.model && options.model !== "default") {
+        try { selectClaudeModel(offered, options.model, true); }
+        catch (error) { fail(error instanceof Error ? error.message : String(error)); return; }
+      }
       emit({ type: "prompted" });
       write({
         type: "user",
@@ -369,6 +398,8 @@ export function startClaudeSession(options: AgentSessionOptions): AgentSession {
       return;
     }
     if (frame.type === "system") {
+      if (frame.subtype === "status" && frame.status === "compacting")
+        activity("Compacting the conversation", "working");
       if (
         options.permissionMode &&
         options.permissionMode !== "review" &&
@@ -448,10 +479,9 @@ export function startClaudeSession(options: AgentSessionOptions): AgentSession {
               message: `${name}: ${bounded(text)}`,
               fatal: false,
             });
-          activity(
-            pending.size ? "Waiting for your input" : "Claude is continuing",
-            pending.size ? "waiting" : "working",
-          );
+          emit({ type: "activity", label: name, toolId: block.tool_use_id,
+            phase: "tool", toolResult: block.is_error ? "failed" : "completed" });
+          toolNames.delete(block.tool_use_id);
         }
     }
     if (frame.type === "error")

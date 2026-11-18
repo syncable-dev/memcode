@@ -77,6 +77,24 @@ export interface TeamReference {
   range?: string;
   selector?: string;
 }
+export const teamWorkerPhases = [
+  "preparing", "joining", "starting", "responding", "reading", "editing",
+  "testing", "working", "waiting", "finishing", "stopping",
+] as const;
+export type TeamWorkerPhase = typeof teamWorkerPhases[number];
+/** Live, read-only progress attached to the device holding this claim. */
+export interface TeamWorkerActivity {
+  storyId: string;
+  attemptId: string;
+  epoch: number;
+  phase: TeamWorkerPhase;
+  harness?: "claude" | "cursor" | "codex";
+  requestedModel?: string;
+  actualModel?: string;
+  startedAt: string;
+  updatedAt: string;
+  recent?: Array<{ phase: TeamWorkerPhase; at: string }>;
+}
 export interface TeamClaim {
   storyId: string;
   attemptId: string;

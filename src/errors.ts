@@ -17,3 +17,33 @@ export function browserErrorMessage(error: unknown) {
     return "The page took too long to respond. Check the server or reload the page.";
   return message.split("Call log:")[0].trim();
 }
+
+export function analysisErrorMessage(error: string) {
+  const details = error.replace(/\x1b\[[0-9;]*m/g, "").trim();
+  if (
+    /MemDB store [^\r\n]*already has a memcore-server|store (?:is )?locked by a previous instance|another memcore-server still holds|timed out waiting for store-scope lock|another memtrace daemon (?:already owns this store|is already running)/i.test(
+      details,
+    )
+  )
+    return {
+      summary:
+        "The project’s code index is in use by another process. Try again when it is available.",
+      details,
+    };
+  if (/memcore-server did not become ready/i.test(details))
+    return {
+      summary:
+        "MemCode timed out waiting for the code index to start. Try again in a moment.",
+      details,
+    };
+  if (
+    !details ||
+    details.length > 180 ||
+    /[\r\n]|\bstderr\b|\bMcpError\b|\bcommand failed\b/i.test(details)
+  )
+    return {
+      summary: "MemCode couldn’t read the latest code analysis.",
+      details,
+    };
+  return { summary: details };
+}

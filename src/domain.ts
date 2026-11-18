@@ -31,6 +31,18 @@ export function isActive(task: WorkItem): boolean {
   );
 }
 
+export function pendingPrerequisites(
+  task: WorkItem,
+  tasks: readonly WorkItem[],
+): Array<{ id: string; story?: WorkItem }> {
+  return (task.dependsOn ?? [])
+    .map((id) => ({
+      id,
+      story: tasks.find((item) => item.id === id && item.projectId === task.projectId),
+    }))
+    .filter(({ story }) => story?.stage !== "done");
+}
+
 export function validateDependencies(
   tasks: WorkItem[],
   owner: WorkItem,

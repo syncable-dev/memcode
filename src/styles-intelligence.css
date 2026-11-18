@@ -813,6 +813,39 @@
   flex-shrink: 0;
   margin-top: 3px;
 }
+.analysis-error {
+  min-width: 0;
+  max-width: 100%;
+  margin: 12px 0;
+  padding: 10px 14px;
+  border-left: 3px solid #bb9d66;
+  border-radius: 4px;
+  color: #664e2c;
+  background: #faf6ed;
+  text-align: left;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.analysis-error > p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.analysis-error details {
+  margin-top: 4px;
+}
+.analysis-error summary {
+  cursor: pointer;
+  font-size: 11px;
+}
+.analysis-error pre {
+  margin: 5px 0 0;
+  max-height: 12rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: #485247;
+  font: 11px/1.5 var(--mono);
+}
 .improvement-summary {
   display: flex;
   align-items: center;

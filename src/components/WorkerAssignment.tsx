@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type Ref } from "react";
 import {
   ArrowUpRight,
   GitBranch,
@@ -15,9 +15,12 @@ import type {
   TeamWorkspaceState,
   WorkItem,
 } from "../shared";
+import { ModelSelect } from "./ModelSelect";
 import { harnessNames } from "../shared";
 import { workerReadiness } from "../worker-availability";
-import { isActive } from "../domain";
+import { isActive, type pendingPrerequisites } from "../domain";
+import { taskStatus } from "../planning/workflow";
+import type { WorkflowState } from "../planning/types";
 import { Select } from "./Select";
 import { RoutingCard } from "./Routing";
 import { WorkerPermissions } from "./WorkerPermissions";
@@ -52,8 +55,12 @@ export function WorkerAssignment({
   const owner = teamClaimForStory(team, task.id);
   const claimBlock = teamStartBlocked(team, task.id);
   const readiness = workerReadiness(task, runtime.harnesses, connections);
-  const catalog =
+  const remoteCatalog =
     runtime.harnesses.find((h) => h.id === task.harness)?.models ?? [];
+  const catalog = settings.localModel && task.harness === "codex"
+    ? [task.modelOverride, settings.model].filter((id, index, ids): id is string => !!id && ids.indexOf(id) === index)
+      .map(id => ({ id, label: id + " · local", source: "alias" as const }))
+    : remoteCatalog;
   return (
     <>
       {team && (
@@ -75,13 +82,6 @@ export function WorkerAssignment({
               : "Starting a worker reserves this story on this device."}
           </small>
           {claimBlock && <p>{claimBlock}</p>}
-          {owner && !owner.local && (
-            <small>
-              {team.connection === "offline" || team.connection === "connecting"
-                ? "Last known claim · reconnect to check its status."
-                : "Claim held · live worker status is local to its device."}
-            </small>
-          )}
         </div>
       )}
       <label className="inspector-field">
@@ -110,29 +110,15 @@ export function WorkerAssignment({
       </label>
       <label className="inspector-field">
         <span>Model</span>
-        <Select
-          aria-label="Assigned model"
-          value={task.modelOverride ?? "auto"}
+          <ModelSelect
+            label="Assigned model"
+            harness={task.harness}
+            models={catalog}
+            value={task.modelOverride}
+            automaticLabel={automatic ? (task.route?.model ?? "Memtrace chooses") : "Match task complexity"}
           disabled={isActive(task) || automatic}
-          onValueChange={(value) =>
-            update({ modelOverride: value === "auto" ? null : value })
-          }
-        >
-          <option value="auto">
-            {automatic
-              ? (task.route?.model ?? "Memtrace chooses")
-              : "Match task complexity"}
-          </option>
-          {catalog.map((model) => (
-            <option key={model.id} value={model.id}>
-              {model.label}
-            </option>
-          ))}
-          {task.modelOverride &&
-            !catalog.some((model) => model.id === task.modelOverride) && (
-              <option value={task.modelOverride}>{task.modelOverride}</option>
-            )}
-        </Select>
+            onChange={modelOverride => update({ modelOverride })}
+          />
       </label>
       <div className="inspector-field">
         <span>Execution</span>
@@ -179,16 +165,68 @@ export function WorkerAssignment({
   );
 }
 
+export function WorkerPrerequisites({
+  blockers,
+  workflow,
+  open,
+  edit,
+}: {
+  blockers: ReturnType<typeof pendingPrerequisites>;
+  workflow: WorkflowState[];
+  open: (story: WorkItem) => void;
+  edit: () => void;
+}) {
+  return (
+    <section
+      id="worker-prerequisites"
+      className="worker-prerequisites"
+      aria-label="Worker prerequisites"
+    >
+      <header>
+        <strong>
+          Waiting on{" "}
+          {blockers.length === 1 ? "a prerequisite" : "prerequisites"}
+        </strong>
+        <button type="button" onClick={edit}>
+          Edit prerequisites
+        </button>
+      </header>
+      <ul>
+        {blockers.map(({ id, story }) => (
+          <li key={id}>
+            {story ? (
+              <button type="button" onClick={() => open(story)}>
+                <span>
+                  <small>
+                    {story.identifier} · {story.archivedAt && "Archived · "}
+                    {taskStatus(story, workflow).name}
+                  </small>
+                  {story.title}
+                </span>
+                <ArrowUpRight size={13} aria-hidden="true" />
+              </button>
+            ) : (
+              <span>Story unavailable in this project</span>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 export function StoryMetadata({
   task,
   epics,
   tasks,
   update,
+  prerequisitesRef,
 }: {
   task: WorkItem;
   epics: Epic[];
   tasks: WorkItem[];
   update: Update;
+  prerequisitesRef: Ref<HTMLDivElement>;
 }) {
   const [scope, setScope] = useState((task.scope ?? []).join("\n"));
   useEffect(
@@ -198,6 +236,9 @@ export function StoryMetadata({
   const prerequisites = tasks.filter((item) =>
     task.dependsOn?.includes(item.id),
   );
+  const missingCount = (task.dependsOn ?? []).filter(
+    (id) => !prerequisites.some((item) => item.id === id),
+  ).length;
   const disabled = isActive(task);
   return (
     <section className="inspector-section story-metadata">
@@ -261,8 +302,20 @@ export function StoryMetadata({
             }}
           />
         </label>
-        <div className="metadata-field">
-          <span>Prerequisites</span>
+        <div
+          className="metadata-field"
+          ref={prerequisitesRef}
+          tabIndex={-1}
+          aria-label="Edit story prerequisites"
+          role="group"
+        >
+          <span>
+            Prerequisites <small>Optional</small>
+          </span>
+          <p className="prerequisites-hint">
+            Link a story when this work needs its result. Remove the link here
+            if the two stories can run independently.
+          </p>
           {prerequisites.map((item) => (
             <div
               className={
@@ -273,6 +326,7 @@ export function StoryMetadata({
               <GitBranch size={11} />
               <span>
                 {item.identifier} · {item.title}
+                {item.archivedAt && " (archived)"}
               </span>
               <button
                 title="Remove prerequisite"
@@ -287,6 +341,26 @@ export function StoryMetadata({
               </button>
             </div>
           ))}
+          {missingCount > 0 && (
+            <div className="prerequisite">
+              <GitBranch size={11} />
+              <span>
+                {missingCount === 1
+                  ? "1 unavailable story"
+                  : `${missingCount} unavailable stories`}
+              </span>
+              <button
+                type="button"
+                title="Remove unavailable prerequisites"
+                disabled={disabled}
+                onClick={() =>
+                  update({ dependsOn: prerequisites.map((item) => item.id) })
+                }
+              >
+                <X size={11} />
+              </button>
+            </div>
+          )}
           <Select
             aria-label="Add prerequisite"
             value="none"
@@ -300,7 +374,9 @@ export function StoryMetadata({
             {tasks
               .filter(
                 (item) =>
-                  item.id !== task.id && !task.dependsOn?.includes(item.id),
+                  item.id !== task.id &&
+                  !item.archivedAt &&
+                  !task.dependsOn?.includes(item.id),
               )
               .map((item) => (
                 <option key={item.id} value={item.id}>

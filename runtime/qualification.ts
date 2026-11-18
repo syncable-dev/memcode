@@ -365,7 +365,7 @@ export async function collectEvidence(
       line: row.symbol_start_line ?? row.start_line,
     });
   }
-  for (const symbol of symbols.slice(0, 5)) {
+  const measureSymbol = async (symbol: Evidence["symbols"][number]) => {
     try {
       const context = await client.call(project, "get_symbol_context", {
         repo_id: project.repoId,
@@ -392,7 +392,7 @@ export async function collectEvidence(
       const m = result.function;
       if (!m) {
         incomplete = true;
-        continue;
+        return;
       }
       symbol.metricSource = m.complexity_source === "ast" ? "ast" : "estimated";
       if (typeof m.cognitive_complexity === "number")
@@ -403,7 +403,10 @@ export async function collectEvidence(
     } catch {
       incomplete = true;
     }
-  }
+  };
+  const measured = symbols.slice(0, 5);
+  for (let offset = 0; offset < measured.length; offset += 3)
+    await Promise.all(measured.slice(offset, offset + 3).map(measureSymbol));
   if (symbols.length > 5) incomplete = true;
   let affected: number | undefined,
     affectedProcesses: number | undefined,

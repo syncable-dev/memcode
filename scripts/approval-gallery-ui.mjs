@@ -9,6 +9,7 @@ import { createServer } from "node:net";
 import { chromium, expect } from "@playwright/test";
 import { initialState } from "../src/seed.ts";
 import { nativeBinary, nativeEnv } from "./tauri-env.mjs";
+import { verifyWorkerSessionUI } from "./worker-session-ui.mjs";
 
 await access(nativeBinary());
 const profile = await mkdtemp(join(tmpdir(), "memcode-approval-gallery-"));
@@ -199,6 +200,7 @@ try {
     browser.contexts()[0].pages()[0];
   await page.waitForFunction(() => !!window.memcode, { timeout: 25000 });
   await rpc("project:select", "example");
+  if (!galleryOnly) await verifyWorkerSessionUI(page, fixtureTask.id, fixtureTask.title);
   await page.addInitScript(
     ({ taskId, command }) => {
       let api,

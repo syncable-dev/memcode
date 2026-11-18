@@ -19,11 +19,12 @@ source location, detector evidence and affected code before deciding what to do.
 
 ### Compare the quality
 
-**Before & after** shows maintainability, cognitive complexity, cyclomatic
-complexity and nesting for the same matched functions. Higher maintainability is
-better; lower complexity and nesting are better. Each chart gives its own matched
-function count. Expand **Measured functions** to inspect an individual function
-and open its current source.
+**Before & after** lists every function reported in the review. Each cell shows
+its before and after measurements. A dash marks an unavailable value. Select a
+function name to open its current source or inspect the captured changes for a
+removed declaration. **Matched function averages** shows how maintainability,
+cognitive complexity, cyclomatic complexity and nesting changed across functions
+with both measurements. Each chart gives its own matched function count.
 
 Both sides are measured by Memtrace's native AST parser from the captured source,
 without changing your checkout or opening another index. New and removed

@@ -16,6 +16,7 @@ import {
 import { join } from "node:path";
 import { z } from "zod";
 import { TeamSpaceStore } from "./spaces";
+import { acceptWorkerReport, workerReport } from "./worker-activity";
 import { createMemtraceIdentityVerifier, teamIdentityAudience, type TeamIdentityChallenge, type TeamIdentityProofVerifier } from "../team-identity";
 import { sanitizeRepositoryURL } from "../repository-onboarding";
 import { teamInvitationLanding } from "./landing";
@@ -28,6 +29,7 @@ import type {
   TeamSessionReply,
   TeamSnapshot,
   TeamSyncReply,
+  TeamWorkerActivity,
 } from "../../src/team";
 import {
   applyTeamEvent,
@@ -62,6 +64,7 @@ type RecordEntry =
   | { kind: "workflow_roles"; dedup: string; commandHash: string; event: TeamEvent; roles: TeamWorkflowRoles; assignLegacyReview?: true }
   | { kind: "planning_timestamps_repair"; dedup: string; commandHash: string; event: TeamEvent; sourceImportOpId: string; sourceImportHash: string; corrections: Array<{id:string;from:string;to:string}> };
 interface Room {
+  workerActivity?: Map<string, TeamWorkerActivity>;
   snapshot: TeamSnapshot;
   history: TeamPlanningHistory;
   workflowRoles: TeamWorkflowRoles;
@@ -151,9 +154,9 @@ async function body(request: IncomingMessage, limit: number) {
   }
   return Buffer.concat(chunks);
 }
-async function json(request: IncomingMessage) {
+async function json(request: IncomingMessage, limit = 256 * 1024) {
   try {
-    return JSON.parse((await body(request, 256 * 1024)).toString("utf8"));
+    return JSON.parse((await body(request, limit)).toString("utf8"));
   } catch (failure) {
     if (failure instanceof TeamProtocolError) throw failure;
     return error("JSON", "Send a valid JSON request.");
@@ -191,6 +194,12 @@ function applyRecord(room: Room, record: RecordEntry) {
     });
     room.snapshot = applyTeamEvent(room.snapshot, record.event);
     room.events.push(record.event);
+  }
+  if (room.workerActivity?.size && room.snapshot.claims !== before.claims) {
+    for (const [storyId, row] of room.workerActivity) {
+      if (!room.snapshot.claims.some(c => c.storyId === storyId && c.attemptId === row.attemptId && c.epoch === row.epoch))
+        room.workerActivity.delete(storyId);
+    }
   }
   if (record.kind === "planning_import") {
     room.history = { ...structuredClone(record.history), version: 1, workspaceId: room.snapshot.workspaceId, through: record.event.sequence, import: { opId: record.opId, hash: record.commandHash, at: record.importedAt } };
@@ -512,7 +521,7 @@ export async function startTeamRelay(
         if (!allowedHosts.has(url.hostname))
           return error("HOST", "Unrecognized relay host.", 403);
         if (request.method === "GET" && url.pathname === "/v1/service")
-          return reply(response, 200, { version: 1, selfServiceTeams: options.selfServiceTeams === true, accountTeamLimit, workflowRoles: 1 });
+          return reply(response, 200, { version: 1, selfServiceTeams: options.selfServiceTeams === true, accountTeamLimit, workflowRoles: 1, workerActivity: 1 });
         if (request.method === "GET" && url.pathname === "/v1/team-auth/challenge") {
           for (const [key, value] of challenges) if (Date.parse(value.expiresAt) <= Date.now()) challenges.delete(key);
           if (challenges.size >= 500) return error("LIMIT", "Too many pending identity requests. Try again shortly.", 429);
@@ -832,6 +841,26 @@ export async function startTeamRelay(
             await commit(room,{kind:"planning_timestamps_repair",dedup:key,commandHash:hash,event,sourceImportOpId:room.history.import!.opId,sourceImportHash:room.history.import!.hash,corrections});
             return reply(response,200,{history:room.history,corrected:corrections.length,replayed:false});
           });
+        }
+        if (url.pathname === "/v1/worker-activity" && request.method === "GET") {
+          const { room } = authenticate(request, teamId.parse(url.searchParams.get("workspaceId")));
+          return reply(response, 200, { workers: [...(room.workerActivity?.values() ?? [])] });
+        }
+        if (url.pathname === "/v1/worker-activity" && request.method === "POST") {
+          const input = workerReport.parse(await json(request, 4096));
+          const { room, actor } = authenticate(request, input.workspaceId);
+          const claim = room.snapshot.claims.find(c => c.storyId === input.storyId);
+          if (!claim || claim.attemptId !== input.attemptId || claim.epoch !== input.epoch)
+            return error("CLAIM_CHANGED", "This worker claim has ended.", 409);
+          if (claim.deviceId !== actor.deviceId || claim.memberId !== actor.memberId)
+            return error("CLAIM_OWNER", "Only the device running this worker can report activity.", 403);
+          const rows = (room.workerActivity ??= new Map());
+          const previous = rows.get(input.storyId);
+          const worker = acceptWorkerReport(input, previous, new Date().toISOString());
+          rows.set(input.storyId, worker);
+          if (worker.phase !== previous?.phase || worker.actualModel !== previous?.actualModel || worker.harness !== previous?.harness || worker.requestedModel !== previous?.requestedModel)
+            for (const wake of room.waiters) wake();
+          return reply(response, 200, { worker });
         }
         if (request.method === "GET" && url.pathname === "/v1/sync") {
           const workspaceId = teamId.parse(url.searchParams.get("workspaceId")),

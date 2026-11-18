@@ -15,6 +15,7 @@ import {
   relativeFile,
 } from "../src/intelligence";
 import type { MemtraceEngine } from "./memtrace";
+import { certifiedPublication, pathKey } from "./memtrace-peer-index";
 import { git, within } from "./local";
 import { styleProfile } from "../src/style-profile";
 
@@ -92,10 +93,20 @@ function revision(value: Json | undefined): string | null {
     null
   );
 }
+function checkoutMatches(value: Json | undefined, project: Project): boolean {
+  if (!value || !project.path) return false;
+  return value.branch === project.branch &&
+    (!value.repo_id || value.repo_id === project.repoId) &&
+    (!value.worktree ||
+      (typeof value.worktree === "string" && pathKey(value.worktree) === pathKey(project.path))) &&
+    (project.analysisCheckout === "owned-worktree-v1"
+      ? value.checkout_mode === project.analysisCheckout && value.graph_scope === "owned_worktree_graph"
+      : value.checkout_mode !== "owned-worktree-v1" && value.graph_scope !== "owned_worktree_graph");
+}
 
 export function normalizeQualitySnapshot(input: CaptureInput): QualitySnapshot {
   const { project, capturedAt, commit, dirty, results, failures } = input;
-  const stats = results.stats,
+  const stats = results.stats?.summary_current === false ? undefined : results.stats,
     complex = results.complex,
     dead = results.dead,
     cycles = results.cycles,
@@ -120,6 +131,9 @@ export function normalizeQualitySnapshot(input: CaptureInput): QualitySnapshot {
         }
       : null;
   const limitations = [...failures];
+  const summaryPending = results.stats?.summary_current === false;
+  if (summaryPending)
+    limitations.push("The engine has not verified its repository totals yet. Record another checkpoint once the summary is ready.");
   if (
     distribution &&
     measured !== null &&
@@ -153,7 +167,7 @@ export function normalizeQualitySnapshot(input: CaptureInput): QualitySnapshot {
     after?.retry_query_group !== true &&
     publicationsMatch;
   const branchAligned =
-    before?.branch === project.branch && after?.branch === project.branch;
+    checkoutMatches(before, project) && checkoutMatches(after, project);
   const commitAligned =
     !commit || !after?.source_commit || commit === after.source_commit;
   const ready =
@@ -175,7 +189,7 @@ export function normalizeQualitySnapshot(input: CaptureInput): QualitySnapshot {
     );
   if (!branchAligned)
     limitations.push(
-      "The source revision does not match the selected project branch. This checkpoint is excluded from comparisons.",
+      "The source revision does not match the selected repository, checkout or branch. This checkpoint is excluded from comparisons.",
     );
   if (!commitAligned)
     limitations.push(
@@ -215,6 +229,7 @@ export function normalizeQualitySnapshot(input: CaptureInput): QualitySnapshot {
       ? "stale"
       : ready !== true ||
           failures.length ||
+          summaryPending ||
           !stable ||
           !distribution ||
           measured === null ||
@@ -250,7 +265,7 @@ export function normalizeQualitySnapshot(input: CaptureInput): QualitySnapshot {
       nodes: n(stats?.total_nodes ?? stats?.queryable_node_count),
       edges: n(stats?.total_edges),
       symbols: n(stats?.symbol_node_count),
-      files: n(stats?.nodes_by_kind?.File),
+      files: n(stats?.nodes_by_kind?.File) ?? (ready && stable ? n(after?.indexed_file_count) : null),
       communities: n(stats?.community_count),
       processes: n(stats?.nodes_by_kind?.Process),
       measuredFunctions: measured,
@@ -295,6 +310,7 @@ export function registerIntelligence(
   projectById: (id: string) => Project,
   changed: () => Promise<void>,
   engine: MemtraceEngine,
+  analyze: (projectId: string) => Promise<void>,
 ): void {
   const captures = new Map<string, Promise<QualitySnapshot>>();
   register(
@@ -302,18 +318,21 @@ export function registerIntelligence(
     z.object({
       projectId: z.string().min(1).max(200),
       refreshIndex: z.boolean().optional(),
-    }),
+    }).strict(),
     async ({ projectId, refreshIndex }) => {
-      const pending = captures.get(projectId);
+      const project = projectById(projectId);
+      const key = JSON.stringify([projectId, project.path, project.branch, project.analysisCheckout]);
+      const pending = captures.get(key);
       if (pending) return pending;
       const capture = captureSnapshot(
-        projectById(projectId),
+        project,
         !!refreshIndex,
         state,
         changed,
         engine,
-      ).finally(() => captures.delete(projectId));
-      captures.set(projectId, capture);
+        analyze,
+      ).finally(() => captures.delete(key));
+      captures.set(key, capture);
       return capture;
     },
   );
@@ -330,7 +349,7 @@ export function registerIntelligence(
         })
         .strict()
         .optional(),
-    }),
+    }).strict(),
     async ({ projectId, section, input }) => {
       const project = projectById(projectId);
       requireProject(project);
@@ -354,40 +373,25 @@ async function captureSnapshot(
   state: () => AppState,
   changed: () => Promise<void>,
   engine: MemtraceEngine,
+  analyze: (projectId: string) => Promise<void>,
 ): Promise<QualitySnapshot> {
   if (project.example || !project.path)
     throw new Error(
       "Choose a real local project before capturing a quality checkpoint.",
     );
-  if (["connecting", "indexing"].includes(project.analysis))
-    throw new Error(
-      "Project analysis is already running. Capture a checkpoint when it finishes.",
-    );
-  if (refreshIndex || project.analysis !== "ready" || !project.repoId) {
-    project.analysis = "connecting";
-    project.analysisNote = "Preparing a measured code-quality checkpoint…";
-    await changed();
-    try {
-      project.repoId = await engine.analyze(
-        project,
-        (note) => {
-          project.analysis = "indexing";
-          project.analysisNote = note;
-          void changed();
-        },
-        refreshIndex,
-      );
-      project.analysis = "ready";
-      project.analysisNote = "Code context is connected.";
-      await changed();
-    } catch (error) {
-      project.analysis = "error";
-      project.analysisNote = (error as Error).message;
-      await changed();
-      throw error;
-    }
+  if (project.analysis !== "ready" || !project.repoId)
+    await analyze(project.id);
+  else if (refreshIndex) {
+    const current = await engine.call(project, "get_query_revision", {
+      repo_id: project.repoId,
+      branch: project.branch,
+    });
+    if (!certifiedPublication(current, project, project.repoId))
+      await analyze(project.id);
   }
   requireProject(project);
+  const selected = project;
+  project = { ...selected };
   const results: Record<string, Json | undefined> = {},
     failures: string[] = [];
   // Saved projects may still be Ready after restart while their process-local
@@ -417,10 +421,11 @@ async function captureSnapshot(
       failures.push(`${key}: ${(error as Error).message}`);
     }
   };
-  await call("before", "get_query_revision", { repo_id: project.repoId });
+  const scope = { repo_id: project.repoId, branch: project.branch };
+  await call("before", "get_query_revision", scope);
   if (results.before?.ready === false && results.before.source_revision) {
     await call("before", "get_query_revision", {
-      repo_id: project.repoId,
+      ...scope,
       expected_source_revision: results.before.source_revision,
       wait_ms: 10000,
     });
@@ -431,7 +436,7 @@ async function captureSnapshot(
         ?.publication_unchanged_during_call !== true
     )
       await call("before", "get_query_revision", {
-        repo_id: project.repoId,
+        ...scope,
         wait_ms: 0,
       });
   }
@@ -440,7 +445,6 @@ async function captureSnapshot(
       failures.at(-1)?.replace(/^before: /, "") ??
         "Memtrace could not bind this report to the selected repository.",
     );
-  const scope = { repo_id: project.repoId, branch: project.branch };
   await Promise.allSettled([
     call("stats", "get_repository_stats", scope),
     call("complex", "find_most_complex_functions", { ...scope, top_n: 30 }),
@@ -452,6 +456,16 @@ async function captureSnapshot(
     }),
     call("cycles", "find_import_cycles", scope),
   ]);
+  // Native summaries are computed on demand. Give a cold summary a bounded
+  // chance to finish alongside the source-backed quality measurements.
+  for (const delay of [250, 750, 1500]) {
+    const stats = results.stats;
+    if (stats?.summary_current !== false || stats.summary_error) break;
+    const wait = n(stats.summary_retry_after_ms);
+    if (!stats.summary_refresh_in_progress && (wait === null || wait > delay)) break;
+    await new Promise<void>((done) => setTimeout(done, delay));
+    await call("stats", "get_repository_stats", scope);
+  }
   if (!results.stats && !results.complex && !results.dead && !results.cycles)
     throw new Error(
       "Memtrace could not read source-backed quality data. Check the engine connection and try again.",
@@ -467,7 +481,7 @@ async function captureSnapshot(
     );
   }
   await call("after", "get_query_revision", {
-    repo_id: project.repoId,
+    ...scope,
     ...(results.before?.token
       ? { expected_revision: results.before.token }
       : {}),
@@ -489,6 +503,13 @@ async function captureSnapshot(
         ? engine.scopeFor(project.id)
         : null,
   });
+  if (Object.values(snapshot.metrics).every(value => value === null))
+    throw new Error("Memtrace returned no measured quality data for this checkout. Retry the checkpoint once the graph is ready.");
+  if (selected.path !== project.path || selected.branch !== project.branch ||
+      selected.analysisCheckout !== project.analysisCheckout ||
+      selected.repoId !== project.repoId || selected.analysis !== "ready" ||
+      !state().projects.includes(selected))
+    throw new Error("The local project changed during this checkpoint. Capture the current checkout again.");
   state().qualitySnapshots ??= [];
   state().qualitySnapshots.push(snapshot);
   await changed();
@@ -525,7 +546,7 @@ async function queryDetails(
       return undefined;
     }
   };
-  const before = await query("get_query_revision", { repo_id: project.repoId });
+  const before = await query("get_query_revision", scope);
   if (!before)
     throw new Error(
       notes.at(-1) ??
@@ -573,7 +594,7 @@ async function queryDetails(
     notes,
   });
   const after = await query("get_query_revision", {
-    repo_id: project.repoId,
+    ...scope,
     ...(before?.token ? { expected_revision: before.token } : {}),
     ...(before?.source_revision
       ? { expected_source_revision: before.source_revision }
@@ -583,8 +604,8 @@ async function queryDetails(
   const aligned =
     before?.ready === true &&
     after?.ready === true &&
-    before?.branch === project.branch &&
-    after?.branch === project.branch &&
+    checkoutMatches(before, project) &&
+    checkoutMatches(after, project) &&
     !!before?.source_revision &&
     before.source_revision === after.source_revision &&
     before?.source_unchanged_during_observation === true &&

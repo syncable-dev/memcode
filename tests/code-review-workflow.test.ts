@@ -124,7 +124,7 @@ test("an imported workflow waits for explicit roles instead of guessing from lab
   assert.equal(isCodeReviewTask(state, task), false);
 });
 
-test("a fresh workflow has five visible lanes but retains the four portable execution categories", () => {
+test("a fresh workflow has six visible lanes and four portable execution categories", () => {
   const state = {
     projects: [{ id: "p" }],
     tasks: [],
@@ -133,7 +133,7 @@ test("a fresh workflow has five visible lanes but retains the four portable exec
   initializeCodeReviewWorkflow(state);
   assert.deepEqual(
     workflowFor(state, "p").map((item) => item.name),
-    ["Planned", "In progress", "Code review", "Ready for acceptance", "Done"],
+    ["Backlog", "Planned", "In progress", "Code review", "Ready for acceptance", "Done"],
   );
   assert.deepEqual(
     [...new Set(state.workflowStates.map((item) => item.stage))],

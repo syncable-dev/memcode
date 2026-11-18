@@ -1,5 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { git } from "../runtime/local";
+import type { Harness, Project, WorkItem } from "../src/shared";
 import { WorkerStartupQueue } from "../runtime/worker-startup";
 import { WorkerManager } from "../runtime/workers";
 import type { MemtraceEngine } from "../runtime/memtrace";
@@ -152,6 +157,8 @@ test("WorkerManager reserves queued slots, stops queued work before activation a
       call: async () => ({}),
     } as unknown as MemtraceEngine,
     "fixture-data",
+    undefined,
+    async () => [],
   );
   // Isolate the preparation boundary: no git, model or harness processes run.
   Object.assign(manager, {
@@ -190,3 +197,118 @@ test("WorkerManager reserves queued slots, stops queued work before activation a
   assert.deepEqual(qualified, ["first", "next"]);
   await manager.close();
 });
+
+/** Keep a regression from hanging the suite when an unrelated checkout holds the lock. */
+async function observe(signal: Promise<void>, description: string) {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    await Promise.race([
+      signal,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(Error(`Timed out waiting for ${description}`)), 15_000);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+for (const owned of [true, false]) {
+  test(owned
+    ? "different epic worktrees qualify concurrently while another story waits for its own epic"
+    : "a legacy checkout keeps preparations for distinct epic branches serialized", async () => {
+    const root = await mkdtemp(join(tmpdir(), "memcode-startup-"));
+    const source = join(root, "source");
+    const state = initialState();
+    const project: Project = { ...state.projects[0], path: source, branch: "main", analysis: "ready", repoId: "startup-fixture" };
+    state.projects = [project];
+    state.epics = ["a", "b"].map((id, order) => ({
+      id, identifier: "EP-" + id, title: id, projectId: project.id, branch: "epic/" + id,
+      description: "", phase: "now", color: "mint", order,
+    }));
+    const firstStory = state.tasks[0];
+    state.tasks = ["first", "same", "other", "next"].map((id) => ({
+      ...firstStory, id, projectId: project.id, epicId: id === "other" ? "b" : "a", example: false,
+      stage: "planned", dependsOn: [], harness: "codex", assignment: "manual", messages: [], run: { state: "idle" },
+    }));
+    const [first, same, other, next] = state.tasks;
+    state.settings.maxWorkers = state.tasks.length;
+    approveFixtureWorker(state, "codex");
+    const releaseFirst = deferred(), releaseOther = deferred();
+    const firstEntered = deferred(), otherEntered = deferred(), waitingSame = deferred(), waitingOther = deferred(), waitingNext = deferred();
+    const catalogRequests: (Harness | undefined)[] = [];
+    const entered: string[] = [];
+    const manager = new WorkerManager(() => state, async () => {
+      if (same.run.activity?.label?.includes("preparing this epic")) waitingSame.resolve();
+      if (next.run.activity?.label?.includes("preparing this epic")) waitingNext.resolve();
+      if (other.run.activity?.label === "Waiting for local worker startup") waitingOther.resolve();
+    }, {
+      ownedWorktreeSupport: async () => owned,
+      analyze: async (p: Project) => p.id,
+      qualify: async (_project: Project, task: WorkItem) => {
+        entered.push(task.id);
+        if (task.id === first.id) {
+          firstEntered.resolve();
+          await releaseFirst.promise;
+        } else if (task.id === other.id) {
+          otherEntered.resolve();
+          await releaseOther.promise;
+        }
+        throw Error("Reached fixture qualification");
+      },
+      call: async () => ({}),
+    } as unknown as MemtraceEngine, join(root, "profile"), undefined, async (harness) => {
+      catalogRequests.push(harness);
+      return [];
+    });
+    const starts: Promise<unknown>[] = [];
+    const start = (task: WorkItem) => {
+      const result = manager.start(task, project).then(() => undefined, (err: Error) => err.message);
+      starts.push(result);
+      return result;
+    };
+    try {
+      await mkdir(source);
+      await git(source, ["init", "--initial-branch=main"]);
+      await writeFile(join(source, "source.ts"), "export const value = 1;\n");
+      await git(source, ["add", "source.ts"]);
+      await git(source, ["-c", "user.name=MemCode test", "-c", "user.email=test@example.invalid", "commit", "-m", "fixture"]);
+      const firstResult = start(first);
+      await observe(firstEntered.promise, "first epic");
+      const otherResult = start(other);
+      if (owned) {
+        await observe(otherEntered.promise, "second epic to qualify while the first is still running");
+        assert.notEqual(first.run.workspace, other.run.workspace);
+        assert.equal(await git(source, ["branch", "--show-current"]), "main");
+        const cancelled = start(same);
+        await observe(waitingSame.promise, "same-epic queue");
+        assert.equal(same.run.workspace, first.run.workspace);
+        await manager.stop(same.id);
+        assert.match(String(await cancelled), /cancelled/i);
+        const nextResult = start(next);
+        await observe(waitingNext.promise, "next story on same epic");
+        assert.deepEqual(entered, [first.id, other.id]);
+        releaseFirst.resolve();
+        assert.equal(await firstResult, "Reached fixture qualification");
+        assert.equal(await nextResult, "Reached fixture qualification");
+        assert.deepEqual(entered, [first.id, other.id, next.id]);
+      } else {
+        await observe(waitingOther.promise, "legacy startup queue");
+        assert.deepEqual(entered, [first.id]);
+        releaseFirst.resolve();
+        assert.equal(await firstResult, "Reached fixture qualification");
+        await observe(otherEntered.promise, "legacy branch switch after first worker finished");
+        assert.equal(first.run.workspace, other.run.workspace);
+      }
+      releaseOther.resolve();
+      assert.equal(await otherResult, "Reached fixture qualification");
+      assert.deepEqual(catalogRequests, entered.map(() => "codex"));
+    } finally {
+      releaseFirst.resolve();
+      releaseOther.resolve();
+      await Promise.allSettled(starts);
+      await manager.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+}

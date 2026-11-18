@@ -22,7 +22,7 @@ export const reviewMetricAxes = [
   { key: "nesting", label: "Nesting depth", better: "lower", unit: "" },
 ] as const;
 export type ReviewMetricAxis = (typeof reviewMetricAxes)[number];
-export type ReviewMetricKey = ReviewMetricAxis["key"];
+export type ReviewMetricKey = ReviewMetricAxis["key"] | "halsteadVolume";
 
 function valid(value: unknown, key: ReviewMetricKey): value is number {
   return (
@@ -33,15 +33,22 @@ function valid(value: unknown, key: ReviewMetricKey): value is number {
   );
 }
 
-/** Pair only native, explicitly matched declarations from the same captured change. */
+/** Each side has its own evidence. Only an explicit declaration match has a delta. */
 export function reviewMetricPair(
   metric: CodeReviewMetric,
   key: ReviewMetricKey,
 ) {
-  const matched =
-    metric.source === "ast" && metric.comparison?.status === "matched";
+  const status = metric.comparison?.status;
+  // Older captures recorded a single source. An unavailable comparison in that
+  // format does not identify which side lacked native measurements.
+  const nativeBefore = metric.before?.source
+    ? metric.before.source === "ast"
+    : metric.source === "ast" &&
+      (status === "matched" || status === "removed" || status === "ambiguous");
   const before =
-    matched && valid(metric.before?.[key], key) ? metric.before![key]! : null;
+    nativeBefore && status !== "added" && valid(metric.before?.[key], key)
+      ? metric.before![key]!
+      : null;
   const after =
     metric.source === "ast" &&
     metric.comparison?.status !== "removed" &&
@@ -51,7 +58,10 @@ export function reviewMetricPair(
   return {
     before,
     after,
-    delta: before !== null && after !== null ? after - before : null,
+    delta:
+      status === "matched" && before !== null && after !== null
+        ? after - before
+        : null,
   };
 }
 

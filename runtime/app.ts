@@ -30,7 +30,7 @@ import { browserRequestSchema } from "../src/browser";
 import { AgentBrowserManager } from "./browser/manager";
 import { TerminalManager } from "./terminals";
 import { terminalRequestSchema } from "../src/terminal";
-import { readWorkerChanges, WorkerChangeJournal } from "./changes";
+import { readDisplayedWorkerChanges, WorkerChangeJournal } from "./changes";
 import { canonicalArtifactRoots, resolveFile } from "./files";
 import { registerReview } from "./review";
 import { registerOnboarding } from "./onboarding";
@@ -253,6 +253,7 @@ export async function createRuntime(
         await codeReviews.beforeWorker(item.id);
       },
       (item) => codeReviews?.occupiedSlots(item) ?? 0,
+      (id) => analyze(id),
     ),
     preview = new PreviewManager(
       host,
@@ -290,6 +291,7 @@ export async function createRuntime(
     openExternal: (url) => host.call("open_memcode_identity", { url }),
   });
   team = new TeamSyncClient(state, store.dir, changed, {
+    onWorkerActivity: () => emit("workspace:state", store.state),
     identityProof: teamIdentity,
     identityAvailable: teamIdentity.available,
     serviceDiscovery: () => discoverOfficialTeamService(),
@@ -486,16 +488,23 @@ export async function createRuntime(
       await changed();
       return;
     }
+    const previousFailure =
+      item.analysis === "error" ? item.analysisNote : undefined;
     item.analysis = "connecting";
     item.analysisNote = "Connecting to local Memtrace…";
     await changed();
     try {
       await ensureProjectRepository(item);
-      item.repoId = await engine.analyze(item, (note) => {
-        item.analysis = "indexing";
-        item.analysisNote = note;
-        void changed();
-      });
+      item.repoId = await engine.analyze(
+        item,
+        (note) => {
+          item.analysis = "indexing";
+          item.analysisNote = note;
+          void changed();
+        },
+        false,
+        previousFailure,
+      );
       item.analysis = "ready";
       item.analysisNote = "Project code context is connected.";
       await changed();
@@ -871,8 +880,6 @@ export async function createRuntime(
   register("task:qualify", identifier, (id) => assignStory(id));
   register("worker:start", identifier, async (id) => {
     const item = task(id);
-    if (project(item.projectId).analysis !== "ready")
-      await analyze(item.projectId);
     await workers.start(item, project(item.projectId));
   });
   register("worker:stop", identifier, (id) => workers.stop(id));
@@ -1256,8 +1263,15 @@ export async function createRuntime(
     },
   );
   registerPlanningControls(register, state, project, changed);
-  registerIntelligence(register, state, project, changed, engine);
-  registerLocalAnalysis(register, project, engine);
+  registerIntelligence(register, state, project, changed, engine, analyze);
+  registerLocalAnalysis(register, project, engine, async (item, repoId) => {
+    if (closed || analyses.has(item.id)) return;
+    item.repoId = repoId;
+    item.analysis = "ready";
+    item.analysisNote =
+      "Memtrace verified the current source and graph for this checkout.";
+    await changed();
+  });
   registerAppUpdates(register, appUpdateGate, changed, () =>
     workers.dispatchQueued(),
   );
@@ -1443,7 +1457,7 @@ export async function createRuntime(
   register("preview:hide", z.undefined(), () => preview.hide());
   register("worker:changes", identifier, async (id) => {
     const item = task(id);
-    let changes = await readWorkerChanges(item);
+    let changes = await readDisplayedWorkerChanges(item);
     if (
       !changes.checkpoints.length &&
       item.run.baseline &&
@@ -1470,7 +1484,7 @@ export async function createRuntime(
           project(item.projectId),
           item,
         );
-        changes = await readWorkerChanges(item);
+        changes = await readDisplayedWorkerChanges(item);
         await changed();
       }
     }

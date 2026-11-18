@@ -98,7 +98,7 @@ function cycleGroups({ tasks, cycles }: GroupSources): WorkGroup[] {
       name: cycle.name,
       color: cycle.state === "active" ? "#36b894" : "#a1b39d",
     })),
-    { id: "none", name: "Backlog · no cycle", color: "#b4bdb2" },
+    { id: "none", name: "No cycle", color: "#b4bdb2" },
   ];
   return assignGroups(definitions, tasks, (task) =>
     ids.has(task.cycleId ?? "") ? task.cycleId! : "none",

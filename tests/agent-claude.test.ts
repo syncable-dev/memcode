@@ -30,7 +30,7 @@ for await(const line of createInterface({input:process.stdin})){
   if(frame.request.subtype==='interrupt')process.exit(0);
   assert.equal(frame.request.subtype,'initialize');
   if(scenario==='init-fail'){send({type:'control_response',response:{subtype:'error',request_id:frame.request_id,error:'Fixture initialization rejected.'}});continue;}
-  send({type:'control_response',response:{subtype:'success',request_id:frame.request_id,response:{models:[]}}});continue;
+  send({type:'control_response',response:{subtype:'success',request_id:frame.request_id,response:{models:[{value:'fixture-model'}]}}});continue;
  }
  if(frame.type==='user'){
   assert.equal(frame.message.role,'user');assert.equal(frame.message.content,'A prompt with $(literal) and "quotes".');
@@ -189,6 +189,7 @@ test("Claude approvals, questions and plan review return exact control responses
     assert.match(pending[3].prompt.details!, /keep execution local/);
     pending[3].respond({ optionId: "allow-once" });
     assert.deepEqual(await run.session.completion, { exitCode: 0 });
+    assert.ok(run.events.some((event) => event.type === "activity" && event.toolId === "bash-tool" && event.toolResult === "failed"));
     assert.equal(
       run.events.filter((event) => event.type === "prompted").length,
       1,

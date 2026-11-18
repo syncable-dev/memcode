@@ -3,7 +3,6 @@ import { CircleHelp, Clock3, ShieldCheck, X } from "lucide-react";
 import type { WorkItem } from "../shared";
 import type { WorkerInputRequest, WorkerInputResponse } from "../worker-input";
 import { loadCardDraft, saveCardDraft } from "../card-drafts";
-import "../styles-worker-input.css";
 
 export function WorkerInputPanel({ request }: { request: WorkerInputRequest }) {
   const key = "memcode-worker-input:" + request.id;
@@ -243,47 +242,82 @@ export function WorkerInputPanel({ request }: { request: WorkerInputRequest }) {
   );
 }
 
-export function WorkerActivityView({ task }: { task: WorkItem }) {
+function secondsSince(clock: number, start?: string): number {
+  const timestamp = start ? Date.parse(start) : NaN;
+  return Number.isFinite(timestamp)
+    ? Math.max(0, Math.floor((clock - timestamp) / 1000))
+    : 0;
+}
+
+function duration(seconds: number) {
+  return seconds < 60
+    ? `${seconds}s`
+    : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+}
+
+export function WorkerActivityView({
+  task,
+  requestedAt,
+}: {
+  task: WorkItem;
+  requestedAt?: string;
+}) {
   const [clock, setClock] = useState(Date.now());
   useEffect(() => {
     const timer = setInterval(() => setClock(Date.now()), 1000);
     return () => clearInterval(timer);
   }, []);
-  const activity = task.run.activity,
-    elapsed = Math.max(
-      0,
-      Math.floor(
-        (clock -
-          Date.parse(
-            activity?.at ?? task.run.startedAt ?? new Date().toISOString(),
-          )) /
-          1000,
-      ),
-    ),
-    age =
-      elapsed >= 60
-        ? `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`
-        : `${elapsed}s`;
+  const activity = task.run.activity;
+  const elapsed = secondsSince(clock, activity?.at ?? task.run.startedAt);
+  const age = duration(elapsed);
+  if (requestedAt || task.run.state === "preparing") {
+    const label = requestedAt
+      ? "Requesting worker"
+      : (activity?.label ?? "Preparing worker");
+    const total = duration(
+      secondsSince(clock, requestedAt ?? task.run.startedAt),
+    );
+    return (
+      <div
+        className="worker-start-progress"
+        role="group"
+        aria-label="Worker startup"
+      >
+        <Clock3 size={14} aria-hidden="true" />
+        <span role="status">{label}</span>
+        <small>
+          {!requestedAt && activity?.at && elapsed >= 5 && (
+            <>{age} on this step · </>
+          )}
+          {total} total
+        </small>
+      </div>
+    );
+  }
   return (
     <div
       className={"worker-live-activity " + (activity?.phase ?? "working")}
-      role="status"
+      role="group"
+      aria-label="Worker activity"
     >
-      <Clock3 size={13} />
-      <span>
+      <Clock3 size={13} aria-hidden="true" />
+      <span role="status">
         {activity?.phase === "waiting_for_user"
           ? "Waiting for your reply below"
-          : (activity?.label ??
-            (task.run.state === "preparing"
-              ? "Preparing worker context"
-              : "Waiting for a harness update"))}
+          : (activity?.label ?? "Waiting for a harness update")}
       </span>
-      {elapsed >= 30 && (
+      {(activity?.phase === "tool" || elapsed >= 10) && (
         <small>
           {activity?.phase === "waiting_for_user" ||
           activity?.phase === "waiting_for_worker"
             ? `Waiting ${age}`
-            : `No update for ${age}`}
+            : age}
+        </small>
+      )}
+      {activity?.lastTool && (
+        <small title={activity.lastTool.label}>
+          Last tool {activity.lastTool.failed ? "failed" : "finished"} in{" "}
+          {duration(Math.floor(activity.lastTool.durationMs / 1000))}
         </small>
       )}
     </div>

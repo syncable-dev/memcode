@@ -1,3 +1,4 @@
+import { ClaudeEditJournal, recoverClaudeEdits } from "./claude-changes";
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { join, dirname, resolve } from "node:path";
@@ -11,17 +12,18 @@ import type {
   HarnessRuntime,
   ReasoningEffort,
 } from "../src/shared";
-import { isActive } from "../src/domain";
+import { isActive, pendingPrerequisites } from "../src/domain";
+import { codexDefaultModel, cursorDefaultModel, harnessNames } from "../src/shared";
 import { childEnv, findCommand, git, now, exists, within } from "./local";
 import type { Command } from "./local";
 import { commandIdentity } from "./commands";
 import type { MemtraceEngine } from "./memtrace";
 import { discoverHarnesses } from "./catalog";
-import { planRoute } from "./router";
+import { assignedHarness, planRoute } from "./router";
 import { assertWorkerConnected, connectedRuntimes } from "./worker-connections";
 import { EpicWorkspace } from "./epic-workspace";
 import { epicAnalysisProject } from "./epic-checkout";
-import { assertEpicDependencies } from "./epic-dependencies";
+import { assertEpicDependencies, assertPrerequisitesComplete } from "./epic-dependencies";
 import { FleetCoordinator, FleetBlocked } from "./fleet";
 import { startContextSession, type ContextSession } from "./context/host";
 import type { RetrievalAssistant } from "./context/local-model";
@@ -38,6 +40,7 @@ import { WorkerStartupQueue } from "./worker-startup";
 import { workerTurnContext } from "./worker-turn";
 import { effectivePermissionMode } from "../src/permissions";
 import type { AgentEvent } from "./agents/types";
+import { trackTurnActivity } from "./agents/activity";
 import { applyAgentMeasurement } from "./agents/measurements";
 import { createMeasurementAudit } from "./measurement-audit";
 import { checkSourceBinding } from "./verification";
@@ -100,9 +103,7 @@ export function harnessArgs(
         "workspace-write",
         "-C",
         cwd,
-        ...(model ? ["-m", model] : []),
-        "-c",
-        `model_reasoning_effort="${effort}"`,
+        ...(model && model !== codexDefaultModel ? ["-m", model, "-c", `model_reasoning_effort="${effort}"`] : []),
         ...(local ? ["--oss", "--local-provider", "ollama"] : []),
         ...toolArgs,
         "-",
@@ -134,8 +135,7 @@ export function harnessArgs(
       args: [
         "--print",
         "--trust",
-        "--model",
-        model,
+        ...(model && model !== cursorDefaultModel ? ["--model", model] : []),
         "--output-format",
         "stream-json",
         "--workspace",
@@ -202,6 +202,8 @@ export class WorkerManager {
   private cancellingReview = new Set<string>();
   private nextQueueOrder = 0;
   private startup = new WorkerStartupQueue();
+  private checkoutStarts = new Map<string, WorkerStartupQueue>();
+  private admitted = new Set<string>();
   private children = new Map<
     string,
     {
@@ -220,9 +222,8 @@ export class WorkerManager {
     private readonly resolveCommand: (
       name: string,
     ) => Promise<Command | null> = findCommand,
-    private readonly catalog: () => Promise<
-      HarnessRuntime[]
-    > = discoverHarnesses,
+    private readonly catalog: (only?: WorkItem["harness"]) => Promise<HarnessRuntime[]> =
+      (only) => discoverHarnesses(false, only),
     private readonly browsers?: AgentBrowserManager,
     private readonly terminals?: TerminalManager,
     private readonly sessionFactory: typeof startHarnessSession = startHarnessSession,
@@ -237,6 +238,7 @@ export class WorkerManager {
     ) => Promise<void>,
     private readonly reviewStarting?: (task: WorkItem) => Promise<void>,
     private readonly reviewSlots: (task?: WorkItem) => number = () => 0,
+    private readonly prepareProject?: (id: string) => Promise<void>,
   ) {
     this.inputs = new WorkerInputs(state, changed);
     for (const task of state().tasks)
@@ -341,13 +343,7 @@ export class WorkerManager {
           void this.changed();
           continue;
         }
-        if (
-          (task.dependsOn ?? []).some(
-            (id) =>
-              this.state().tasks.find((item) => item.id === id)?.stage !==
-              "done",
-          )
-        )
+        if (pendingPrerequisites(task, this.state().tasks).length)
           continue;
         if (
           this.implementationCount() + this.reviewSlots(task) >=
@@ -480,13 +476,7 @@ export class WorkerManager {
       throw new Error(
         "All worker slots are occupied. Wait for a worker or increase the limit in Settings.",
       );
-    const pending = (task.dependsOn ?? [])
-      .map((id) => this.state().tasks.find((t) => t.id === id))
-      .filter((item) => !item || item.stage !== "done");
-    if (pending.length)
-      throw new Error(
-        "Complete the prerequisite stories before starting this worker.",
-      );
+    assertPrerequisitesComplete(this.state(), task);
     this.cancelled.delete(task.id);
     const continuing = () => {
       if (this.closing || this.cancelled.has(task.id))
@@ -546,8 +536,10 @@ export class WorkerManager {
         this.cancellingReview.delete(task.id);
       }
     }
+    const previousAttempt = task.harness === "claude" && task.run.sessionId ? { ...task, run: { ...task.run } } : undefined;
     task.run = {
       ...task.run,
+      nativeEditCapture: undefined,
       state: "preparing",
       permissionMode,
       error: undefined,
@@ -560,7 +552,7 @@ export class WorkerManager {
       finishedSourceBinding: undefined,
       activity: {
         phase: "working",
-        label: "Preparing worker context",
+        label: "Checking the story claim",
         at: now(),
       },
     };
@@ -570,7 +562,12 @@ export class WorkerManager {
         state: "stale",
         updatedAt: now(),
       };
-    await this.changed();
+    const progress = async (label: string) => {
+      continuing();
+      task.run.activity = { phase: "working", label, at: now() };
+      await this.changed();
+      continuing();
+    };
     let contextSession: ContextSession | undefined;
     let contextOpening: Promise<ContextSession> | undefined;
     let contextEvidence: Promise<ContextPack> | undefined;
@@ -609,6 +606,9 @@ export class WorkerManager {
       clearInterval(heartbeat);
     };
     let releaseStartup: (() => void) | undefined;
+    let checkoutQueue: WorkerStartupQueue | undefined;
+    let checkoutId: string | undefined;
+    let releaseCheckout: (() => void) | undefined;
     let teamClaimHeld = false;
     let analysisProject = project;
     const releaseIdleEpic = () => this.releaseIdleAnalysis(task, project);
@@ -626,11 +626,21 @@ export class WorkerManager {
         ),
     });
     try {
+      await this.changed();
+      continuing();
+      if (previousAttempt) {
+        await recoverClaudeEdits(previousAttempt).catch(() => undefined);
+        continuing();
+      }
       // This is inside start, so queued follow-ups and direct starts use the
       // same atomic relay claim before any Fleet or workspace preparation.
       await this.teamClaims?.acquire(task.id, project.id);
       teamClaimHeld = !!this.teamClaims;
       continuing();
+      if (this.prepareProject && (project.analysis !== "ready" || !project.repoId)) {
+        await progress("Connecting to the project code graph");
+        await Promise.race([this.prepareProject(project.id), aborted]);
+      }
       const waitingForStartup = this.startup.busy;
       if (waitingForStartup) {
         task.run.activity = {
@@ -644,9 +654,7 @@ export class WorkerManager {
       continuing();
       // The early lexical guard cannot detect junction/symlink aliases. This
       // second check runs under the shared startup lock, so two aliases queued
-      // together cannot both pass before the first worker starts. Other
-      // Preparing tasks are still queued behind this one; Running/Stopping
-      // workers already own their checkout identity.
+      // together cannot both take ownership during concurrent epic preparation.
       const activeAliases = this.state().projects.filter(
         (candidate) =>
           candidate.id !== project.id &&
@@ -654,7 +662,7 @@ export class WorkerManager {
           this.state().tasks.some(
             (other) =>
               other.projectId === candidate.id &&
-              (other.run.state === "running" || other.run.state === "stopping"),
+              (this.admitted.has(other.id) || other.run.state === "running" || other.run.state === "stopping"),
           ),
       );
       if (activeAliases.length && project.path) {
@@ -678,15 +686,7 @@ export class WorkerManager {
             );
         }
       }
-      if (waitingForStartup) {
-        task.run.activity = {
-          phase: "working",
-          label: "Preparing worker context",
-          at: now(),
-        };
-        await this.changed();
-        continuing();
-      }
+      await progress("Opening the epic checkout");
       if (project.analysis !== "ready" || !project.repoId)
         throw new Error("Connect Memtrace before starting a Fleet worker.");
       const ownedCheckout =
@@ -698,17 +698,36 @@ export class WorkerManager {
       analysisProject = epicAnalysisProject(project, task);
       await assertEpicDependencies(this.state(), task, task.run.workspace!);
       continuing();
+      if (ownedCheckout) {
+        // The global lock protects checkout ownership. Independent owned
+        // worktrees can build their graphs and join Fleet concurrently.
+        checkoutId = checkoutKey(task.run.workspace!);
+        checkoutQueue = this.checkoutStarts.get(checkoutId) ?? new WorkerStartupQueue();
+        this.checkoutStarts.set(checkoutId, checkoutQueue);
+        this.admitted.add(task.id);
+        releaseStartup();
+        releaseStartup = undefined;
+        if (checkoutQueue.busy) {
+          task.run.activity = { phase: "working", label: "Waiting for another worker to finish preparing this epic", at: now() };
+          void this.changed().catch(() => {});
+        }
+        releaseCheckout = await checkoutQueue.enter(cancelledPreparation.signal);
+        continuing();
+      }
       if (activation.changedBranch || analysisProject !== project) {
         analysisProject.analysis = "indexing";
-        await this.changed();
+        await progress("Connecting to the epic code graph");
         try {
           analysisProject.repoId = await this.engine.analyze(
             analysisProject,
             (note) => {
+              if (task.run.state !== "preparing" || task.run.activity?.label === note) return;
               task.run.activity = { phase: "working", label: note, at: now() };
-              void this.changed();
+              void this.changed().catch(() => {});
             },
             activation.changedBranch,
+            undefined,
+            cancelledPreparation.signal,
           );
           analysisProject.analysis = "ready";
           if (analysisProject !== project)
@@ -718,10 +737,13 @@ export class WorkerManager {
           throw error;
         }
       }
-      await this.changed();
-      task.evidence = await this.engine.qualify(analysisProject, task);
+      await progress("Measuring story scope and checking available workers");
+      const [evidence, catalog] = await Promise.all([
+        this.engine.qualify(analysisProject, task),
+        this.catalog(assignedHarness(task, permissionSettings)),
+      ]);
       continuing();
-      const catalog = await this.catalog();
+      task.evidence = evidence;
       const selectedRuntime = catalog.find(
         (runtime) => runtime.id === task.harness,
       );
@@ -761,7 +783,7 @@ export class WorkerManager {
         command.command,
         commandIdentity(command),
       );
-      await this.changed();
+      await progress("Joining the epic Fleet");
       task.run.changeRunId = randomUUID();
       await this.fleet.before(project, task);
       const workspace = task.run.workspace!;
@@ -827,11 +849,14 @@ export class WorkerManager {
         }, 5_000);
       }
       const workerRoot = join(".memcode", "workers", task.id);
+      this.message(task, "system", `Story worker joined the epic Fleet.\n${task.run.branch}`);
+      await progress("Preparing the worker brief");
       const artifactRoot = join(workerRoot, "artifacts");
       await mkdir(join(workspace, artifactRoot), { recursive: true });
       await mkdir(join(workspace, artifactRoot, "evidence"), {
         recursive: true,
       });
+      let fleetContext: Awaited<ReturnType<FleetCoordinator["context"]>>;
       let contextConfig: string | undefined,
         initialContext: ContextPack | undefined;
       let toolProfile: WorkerToolProfile = { args: [] };
@@ -932,7 +957,10 @@ export class WorkerManager {
                 budgetChars: 16000,
               },
         );
-        initialContext = await Promise.race([contextEvidence, aborted]);
+        [initialContext, fleetContext] = await Promise.race([
+          Promise.all([contextEvidence, this.fleet.context(project, task)]),
+          aborted,
+        ]);
         continuing();
       }
       conversation = claimReviewContext(task.messages, now());
@@ -954,7 +982,7 @@ export class WorkerManager {
         "After a source edit group, call coordinate action checkpoint to record its Fleet episode. Then inspect again before the next source edit. Artifact writes inside your private output folder do not claim shared source ownership.",
         "Use memcode-context terminal for PERSISTENT user-visible processes: dev servers, watchers, interactive REPLs and running apps. Start the actual program with its argument array (for example program=node, args=[tools/server.mjs]); do not detach it or redirect its output. The card shows the same PTY, live output and user input. Observe using sessionId and after=last seq. Reuse a running session instead of starting duplicates. Sessions remain available after your turn. Short grep/read/test tool commands remain native tool history, not card terminals. Never report a private detached process as a shared terminal.",
         "Current Fleet plans and branch context:\n" +
-          JSON.stringify(await this.fleet.context(project, task)),
+          JSON.stringify(fleetContext),
         "If a tool or test command is denied, report that exact blocker and continue independent work. Do not repeatedly try equivalent commands or change permission settings to get around it.",
         task.checklist.length
           ? "Runbook:\n" +
@@ -988,7 +1016,6 @@ export class WorkerManager {
         toolProfile.args,
       );
       continuing();
-      this.preparations.delete(task.id);
       closeArtifacts = watchArtifacts(
         join(workspace, artifactRoot),
         async () => {
@@ -1015,14 +1042,18 @@ export class WorkerManager {
           }, 100);
       };
       const launchedHarness = task.harness;
+      const claudeEdits = launchedHarness === "claude" ? new ClaudeEditJournal(task, () => { if (!settled) saveEvent(); }) : undefined;
+      if (claudeEdits) task.run.nativeEditCapture = true;
       const measurementAudit = createMeasurementAudit(
         workspace,
         task.id,
         task.run.changeRunId,
       );
+      const observeActivity = trackTurnActivity();
       const onEvent = (event: AgentEvent) => {
         if (settled) return;
         if (event.type === "raw") {
+          claudeEdits?.observe(event.event);
           measurementAudit.observe(event.event);
           return;
         }
@@ -1069,27 +1100,8 @@ export class WorkerManager {
             input.runId === task.run.changeRunId &&
             input.status === "pending",
         );
-        if (!waiting)
-          task.run.activity = {
-            phase:
-              event.type === "activity"
-                ? event.phase === "waiting"
-                  ? "working"
-                  : (event.phase ?? "working")
-                : "working",
-            label:
-              event.type === "activity"
-                ? event.label
-                : event.type === "error"
-                  ? event.message
-                  : event.type === "message" && event.role === "tool"
-                    ? "Tool result received"
-                    : "Worker is responding",
-            at: now(),
-            ...(event.type === "activity" && event.toolId
-              ? { toolId: event.toolId }
-              : {}),
-          };
+        const activity = observeActivity(event, task.run.activity, now());
+        if (!waiting) task.run.activity = activity;
         saveEvent();
       };
       let publishTelemetryAttempt: (() => string | undefined) | undefined;
@@ -1104,10 +1116,12 @@ export class WorkerManager {
       } catch {
         /* Optional reporting cannot block launch. */
       }
+      await progress(`Starting ${harnessNames[launchedHarness]}`);
       const session = this.sessionFactory(launchedHarness, {
         command,
         cwd: workspace,
         model: task.route.model,
+        automaticModelTier: task.modelOverride || permissionSettings.model ? undefined : task.route.tier,
         effort: task.route.effort,
         localModel: this.state().settings.localModel,
         permissionMode,
@@ -1140,6 +1154,7 @@ export class WorkerManager {
         stop: () => session.stop(),
       };
       this.children.set(task.id, entry);
+      this.preparations.delete(task.id);
       task.run.state = "running";
       task.stage = "working";
       try {
@@ -1155,11 +1170,6 @@ export class WorkerManager {
       } catch {
         /* Optional reporting must never block a worker. */
       }
-      this.message(
-        task,
-        "system",
-        `Story worker joined the epic Fleet.\n${task.run.branch}\nWorkers share this branch and coordinate through Memtrace. Unresolved overlaps pause the fleet for a human decision.`,
-      );
       let stderr = "";
       const settle = async (code: number | null, error?: Error) => {
         if (settled) return;
@@ -1178,6 +1188,7 @@ export class WorkerManager {
           releaseReviewClaims(task.messages, conversation);
           stopHeartbeat();
           const closeErrors: string[] = [];
+          await claudeEdits?.flush().catch(() => closeErrors.push("Some confirmed edits could not be saved to this story’s change history."));
           await closeWithin(closeArtifacts?.(), "Artifact watcher").catch(
             (error) => closeErrors.push(error.message),
           );
@@ -1322,6 +1333,10 @@ export class WorkerManager {
       throw error;
     } finally {
       this.preparations.delete(task.id);
+      this.admitted.delete(task.id);
+      releaseCheckout?.();
+      if (checkoutId && checkoutQueue && !checkoutQueue.busy && this.checkoutStarts.get(checkoutId) === checkoutQueue)
+        this.checkoutStarts.delete(checkoutId);
       releaseStartup?.();
       if (!this.children.has(task.id) && !isActive(task))
         await releaseIdleEpic().catch(() => {});
@@ -1344,8 +1359,8 @@ export class WorkerManager {
       if (preparing) {
         this.cancelled.add(id);
         preparing.run.state = "stopping";
-        await resources?.cancel();
-        await this.changed();
+        const cleanup = resources?.cancel();
+        await Promise.all([this.changed(), cleanup]);
       }
       return;
     }

@@ -36,7 +36,10 @@ async function fixture(selfServiceTeams = true) {
 test("Team self-service is explicitly opt-in and private operator creation still requires verified identity", async () => {
   const f = await fixture(false);
   try {
-    assert.equal((await f.request("/v1/service")).body.selfServiceTeams,false);
+    const service = await f.request("/v1/service");
+    assert.equal(service.status, 200);
+    assert.equal(service.body.selfServiceTeams, false);
+    assert.equal(service.body.workerActivity, 1);
     assert.equal((await f.create()).status,403);
     assert.equal((await f.create("forged",f.relay.adminCapability)).status,403);
     const valid = await f.create("alice",f.relay.adminCapability);

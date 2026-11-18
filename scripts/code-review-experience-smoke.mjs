@@ -253,7 +253,7 @@ try {
     .scrollIntoViewIfNeeded();
   assert.match(
     await page.locator(".review-comparison-caption").innerText(),
-    /2 compared · 3 current/,
+    /2 matched · 1 added · 1 removed/,
   );
   assert.match(
     await page.locator(".review-comparison-grid").first().innerText(),
@@ -273,11 +273,17 @@ try {
   result.assertions.push(
     "Paired native means, directions and separate new functions are visible",
   );
-  await page.locator(".review-function-details > summary").click();
-  await page
-    .locator(".review-function-list summary")
-    .filter({ hasText: "newBoundary" })
-    .click();
+  const functions = page.getByRole("table", {
+    name: "Measurements by function",
+  });
+  const added = functions.getByRole("row").filter({ hasText: "newBoundary" });
+  assert.equal(
+    await added
+      .getByRole("cell", { name: "Before unavailable, after 80", exact: true })
+      .count(),
+    1,
+  );
+  await added.locator("summary").click();
   await page
     .getByText("This declaration was added in the captured change.", {
       exact: true,
@@ -287,12 +293,20 @@ try {
   result.assertions.push(
     "Function detail exposes a new declaration without inventing its baseline",
   );
-  await page
-    .locator(".review-function-list summary")
-    .filter({ hasText: "removedHelper" })
-    .click();
-  await page
-    .getByRole("button", { name: "View captured changes", exact: true })
+  const removed = functions
+    .getByRole("row")
+    .filter({ hasText: "removedHelper" });
+  assert.equal(
+    await removed
+      .getByRole("cell", { name: "Before 65, after unavailable", exact: true })
+      .count(),
+    1,
+  );
+  await removed
+    .getByRole("button", {
+      name: "View captured changes for removedHelper",
+      exact: true,
+    })
     .click();
   assert.equal(
     await page.evaluate(() =>

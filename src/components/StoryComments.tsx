@@ -22,7 +22,7 @@ export function StoryComments({
   taskId: string;
   comments: StoryComment[];
   notify: (text: string) => void;
-  onFollowup: (text: string) => void;
+  onFollowup?: (text: string) => void;
   onOpenLink: (href: string) => void;
 }) {
   const draftKey = "memcode-story-comment:" + taskId;
@@ -159,7 +159,7 @@ export function StoryComments({
                 Reply
               </button>
             )}
-            <button
+            {onFollowup && <button
               onClick={() =>
                 onFollowup(
                   "Please consider this story comment from " +
@@ -174,7 +174,7 @@ export function StoryComments({
             >
               <ArrowUpRight size={12} />
               Use in follow-up
-            </button>
+            </button>}
           </footer>
         </>
       )}

@@ -1,10 +1,23 @@
 import { memo, useCallback, useRef, useState } from "react";
-import { ArrowUpRight, Check, Clock3, MessageSquare, Plus } from "lucide-react";
+import {
+  ArrowUpRight,
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  CircleCheck,
+  Clock3,
+  GitBranch,
+  Inbox,
+  Link2,
+  MessageSquare,
+  Plus,
+} from "lucide-react";
 import type { Cycle, Stage, WorkItem } from "../shared";
 import type { StoryComment } from "../story-comments";
 import { harnessNames, stages } from "../shared";
 import { isActive, stageLabel } from "../domain";
 import { dateLabel, dayAt } from "../planning/dates";
+import type { StoryReadiness } from "../planning/readiness";
 import { PriorityMark, StageIcon, WorkerMark } from "./UI";
 import { Select } from "./Select";
 
@@ -22,8 +35,10 @@ interface Props {
   groups?: BoardGroup[];
   cycles?: Cycle[];
   storyComments?: StoryComment[];
+  backlogId?: string;
+  readiness?: ReadonlyMap<string, StoryReadiness>;
   open: (task: WorkItem) => void;
-  create: () => void;
+  create: (statusId?: string) => void;
   move: (id: string, group: string) => void;
   selected?: Set<string>;
   toggle?: (id: string) => void;
@@ -71,6 +86,17 @@ export function sameBoardRenderProps(a: BoardRenderProps, b: BoardRenderProps) {
   return (
     a.mode === b.mode &&
     a.today === b.today &&
+    a.backlogId === b.backlogId &&
+    (a.readiness === b.readiness ||
+      a.tasks.every((task) => {
+        const before = a.readiness?.get(task.id);
+        const after = b.readiness?.get(task.id);
+        return (
+          before?.state === after?.state &&
+          before?.label === after?.label &&
+          before?.detail === after?.detail
+        );
+      })) &&
     sameItems(a.tasks, b.tasks, sameBoardTask) &&
     (a.groups === b.groups ||
       (!!a.groups &&
@@ -110,7 +136,7 @@ export function WorkBoard(props: Props) {
       ),
     [],
   );
-  const create = useCallback(() => actions.current.create(), []);
+  const create = useCallback((statusId?: string) => actions.current.create(statusId), []);
   const move = useCallback(
     (id: string, group: string) => actions.current.move(id, group),
     [],
@@ -134,6 +160,8 @@ function BoardContent({
   groups,
   cycles = [],
   storyComments = [],
+  backlogId,
+  readiness,
   open,
   create,
   move,
@@ -143,6 +171,36 @@ function BoardContent({
 }: BoardRenderProps) {
   const [dragged, setDragged] = useState<string | null>(null),
     [over, setOver] = useState<string | null>(null);
+  const [backlogCollapsed, setBacklogCollapsed] = useState(() => {
+    try {
+      return (
+        !!backlogId &&
+        localStorage.getItem("memcode.board." + backlogId + ".collapsed") ===
+          "true"
+      );
+    } catch {
+      return false;
+    }
+  });
+  function toggleBacklog() {
+    const next = !backlogCollapsed;
+    setBacklogCollapsed(next);
+    try {
+      localStorage.setItem(
+        "memcode.board." + backlogId + ".collapsed",
+        String(next),
+      );
+    } catch {
+      // The board remains usable when this window has no writable browser storage.
+    }
+  }
+  const collapseButton = useRef<HTMLButtonElement>(null);
+  function changeBacklogVisibility() {
+    toggleBacklog();
+    requestAnimationFrame(() =>
+      collapseButton.current?.focus({ preventScroll: true }),
+    );
+  }
   const commentCounts = new Map<string, number>();
   for (const comment of storyComments)
     if (!comment.deletedAt)
@@ -227,7 +285,7 @@ function BoardContent({
               <button
                 className="icon-button"
                 title="Create work item"
-                onClick={create}
+                onClick={() => create(group.stage ? group.id : undefined)}
               >
                 <Plus size={14} />
               </button>
@@ -299,7 +357,13 @@ function BoardContent({
     <div
       className="work-board"
       style={{
-        gridTemplateColumns: `repeat(${lanes.length},minmax(245px,1fr))`,
+        gridTemplateColumns: lanes
+          .map((lane) =>
+            lane.id === backlogId && backlogCollapsed
+              ? "42px"
+              : "minmax(245px,1fr)",
+          )
+          .join(" "),
       }}
     >
       {lanes.map((group) => (
@@ -318,185 +382,243 @@ function BoardContent({
             setOver(null);
           }}
         >
-          <div className="column-heading" data-work-group={group.id}>
-            <div>
-              {group.stage ? (
-                <StageIcon stage={group.stage} />
-              ) : (
-                <span
-                  className="group-color"
-                  style={{ background: group.color ?? "#9aaf9e" }}
-                />
-              )}
-              <h3>{group.name}</h3>
-              <span
-                className={
-                  "column-count " +
-                  (group.wipLimit && group.tasks.length > group.wipLimit
-                    ? "over-limit"
-                    : "")
-                }
-              >
-                {group.tasks.length}
-                {group.wipLimit ? ` / ${group.wipLimit}` : ""}
-              </span>
-            </div>
+          {group.id === backlogId && backlogCollapsed ? (
             <button
-              className="icon-button"
-              title={`Add work item to ${group.name}`}
-              onClick={create}
+              ref={collapseButton}
+              type="button"
+              className="backlog-rail"
+              data-work-group={group.id}
+              aria-label={`Expand Backlog, ${group.tasks.length} stories`}
+              title={`Expand Backlog (${group.tasks.length})`}
+              aria-expanded={false}
+              onClick={changeBacklogVisibility}
             >
-              <Plus size={15} />
+              <ChevronRight size={15} />
+              <Inbox size={14} />
+              <span>Backlog</span>
+              <small>{group.tasks.length}</small>
             </button>
-          </div>
-          <div
-            className="column-track"
-            style={group.color ? { background: group.color + "70" } : undefined}
-          />
-          <div
-            className="column-cards"
-            tabIndex={0}
-            aria-label={`${group.name} lane`}
-          >
-            {group.tasks.map((task) => (
-              <article
-                className={
-                  "work-card " +
-                  (dragged === task.id ? "dragging " : "") +
-                  (selected.has(task.id) ? "selected" : "")
-                }
-                key={task.id}
-                role="button"
-                data-work-item={task.id}
-                tabIndex={0}
-                aria-label={`${task.identifier}: ${task.title}`}
-                draggable={!isActive(task)}
-                onDragStart={(event) => {
-                  event.dataTransfer.setData("text/plain", task.id);
-                  event.dataTransfer.effectAllowed = "move";
-                  setDragged(task.id);
-                }}
-                onDragEnd={() => {
-                  setDragged(null);
-                  setOver(null);
-                }}
-                onClick={() => open(task)}
-                onKeyDown={(event) => {
-                  if (
-                    event.target === event.currentTarget &&
-                    ["Enter", " "].includes(event.key)
-                  ) {
-                    event.preventDefault();
-                    open(task);
-                  }
-                }}
-              >
-                <div className="card-topline">
-                  <span className="card-identifier card-selection">
-                    {toggle && checkbox(task)}
-                    <span>{task.identifier}</span>
-                  </span>
-                  <div className="card-actions">
-                    <PriorityMark value={task.priority} />
+          ) : (
+            <>
+              <div className="column-heading" data-work-group={group.id}>
+                <div>
+                  {group.id === backlogId ? (
+                    <Inbox size={14} />
+                  ) : group.stage ? (
+                    <StageIcon stage={group.stage} />
+                  ) : (
                     <span
-                      onClick={(event) => event.stopPropagation()}
-                      onKeyDown={(event) => event.stopPropagation()}
-                    >
-                      <Select
-                        aria-label={`Move ${task.identifier}`}
-                        className="card-move-select"
-                        value="none"
-                        disabled={isActive(task)}
-                        onValueChange={(value) => {
-                          if (value !== "none") move(task.id, value);
-                        }}
-                      >
-                        <option value="none">•••</option>
-                        {lanes.map((lane) => (
-                          <option key={lane.id} value={lane.id}>
-                            Move to {lane.name}
-                          </option>
-                        ))}
-                      </Select>
-                    </span>
-                  </div>
-                </div>
-                <h4>{task.title}</h4>
-                {task.run.activity?.phase === "waiting_for_user" && (
-                  <span className="worker-needs-input">Waiting for you</span>
-                )}
-                <p className="card-description">{task.description}</p>
-                <div className="card-tags">
-                  <span className={`category ${task.category.toLowerCase()}`}>
-                    <i />
-                    {task.category}
+                      className="group-color"
+                      style={{ background: group.color ?? "#9aaf9e" }}
+                    />
+                  )}
+                  <h3>{group.name}</h3>
+                  <span
+                    className={
+                      "column-count " +
+                      (group.wipLimit && group.tasks.length > group.wipLimit
+                        ? "over-limit"
+                        : "")
+                    }
+                  >
+                    {group.tasks.length}
+                    {group.wipLimit ? ` / ${group.wipLimit}` : ""}
                   </span>
-                  {task.labels?.slice(0, 2).map((label) => (
-                    <span className="story-label" key={label}>
-                      {label}
-                    </span>
-                  ))}
                 </div>
-                {(task.estimate != null || task.dueDate || task.parentId) && (
-                  <div className="card-planning">
-                    {task.estimate != null && <span>{task.estimate} pts</span>}
-                    {task.dueDate && (
-                      <span
-                        className={
-                          task.dueDate < today && task.stage !== "done"
-                            ? "overdue"
-                            : ""
-                        }
-                      >
-                        <Clock3 size={10} />
-                        {dateLabel(task.dueDate)}
+                <div>
+                  {group.id === backlogId && (
+                    <button
+                      ref={collapseButton}
+                      type="button"
+                      className="icon-button"
+                      title="Collapse Backlog"
+                      aria-label="Collapse Backlog"
+                      aria-expanded={true}
+                      onClick={changeBacklogVisibility}
+                    >
+                      <ChevronLeft size={15} />
+                    </button>
+                  )}
+                  <button
+                    className="icon-button"
+                    title={`Add work item to ${group.name}`}
+                    onClick={() => create(group.stage ? group.id : undefined)}
+                  >
+                    <Plus size={15} />
+                  </button>
+                </div>
+              </div>
+              <div
+                className="column-track"
+                style={
+                  group.color ? { background: group.color + "70" } : undefined
+                }
+              />
+              <div
+                className="column-cards"
+                tabIndex={0}
+                aria-label={`${group.name} lane`}
+              >
+                {group.tasks.map((task) => (
+                  <article
+                    className={
+                      "work-card " +
+                      (dragged === task.id ? "dragging " : "") +
+                      (selected.has(task.id) ? "selected" : "")
+                    }
+                    key={task.id}
+                    role="button"
+                    data-work-item={task.id}
+                    tabIndex={0}
+                    aria-label={`${task.identifier}: ${task.title}`}
+                    aria-describedby={
+                      readiness?.has(task.id)
+                        ? `readiness-${task.id}`
+                        : undefined
+                    }
+                    draggable={!isActive(task)}
+                    onDragStart={(event) => {
+                      event.dataTransfer.setData("text/plain", task.id);
+                      event.dataTransfer.effectAllowed = "move";
+                      setDragged(task.id);
+                    }}
+                    onDragEnd={() => {
+                      setDragged(null);
+                      setOver(null);
+                    }}
+                    onClick={() => open(task)}
+                    onKeyDown={(event) => {
+                      if (
+                        event.target === event.currentTarget &&
+                        ["Enter", " "].includes(event.key)
+                      ) {
+                        event.preventDefault();
+                        open(task);
+                      }
+                    }}
+                  >
+                    <div className="card-topline">
+                      <span className="card-identifier card-selection">
+                        {toggle && checkbox(task)}
+                        <span>{task.identifier}</span>
+                      </span>
+                      <div className="card-actions">
+                        <PriorityMark value={task.priority} />
+                        <span
+                          onClick={(event) => event.stopPropagation()}
+                          onKeyDown={(event) => event.stopPropagation()}
+                        >
+                          <Select
+                            aria-label={`Move ${task.identifier}`}
+                            className="card-move-select"
+                            value="none"
+                            disabled={isActive(task)}
+                            onValueChange={(value) => {
+                              if (value !== "none") move(task.id, value);
+                            }}
+                          >
+                            <option value="none">•••</option>
+                            {lanes.map((lane) => (
+                              <option key={lane.id} value={lane.id}>
+                                Move to {lane.name}
+                              </option>
+                            ))}
+                          </Select>
+                        </span>
+                      </div>
+                    </div>
+                    <h4>{task.title}</h4>
+                    {task.run.activity?.phase === "waiting_for_user" && (
+                      <span className="worker-needs-input">
+                        Waiting for you
                       </span>
                     )}
-                    {task.parentId && (
-                      <span className="sub-story-tag">Child story</span>
+                    <p className="card-description">{task.description}</p>
+                    {readiness?.has(task.id) && (
+                      <ReadinessNote
+                        id={task.id}
+                        value={readiness.get(task.id)!}
+                      />
                     )}
-                  </div>
+                    <div className="card-tags">
+                      <span
+                        className={`category ${task.category.toLowerCase()}`}
+                      >
+                        <i />
+                        {task.category}
+                      </span>
+                      {task.labels?.slice(0, 2).map((label) => (
+                        <span className="story-label" key={label}>
+                          {label}
+                        </span>
+                      ))}
+                    </div>
+                    {(task.estimate != null ||
+                      task.dueDate ||
+                      task.parentId) && (
+                      <div className="card-planning">
+                        {task.estimate != null && (
+                          <span>{task.estimate} pts</span>
+                        )}
+                        {task.dueDate && (
+                          <span
+                            className={
+                              task.dueDate < today && task.stage !== "done"
+                                ? "overdue"
+                                : ""
+                            }
+                          >
+                            <Clock3 size={10} />
+                            {dateLabel(task.dueDate)}
+                          </span>
+                        )}
+                        {task.parentId && (
+                          <span className="sub-story-tag">Child story</span>
+                        )}
+                      </div>
+                    )}
+                    <div className="card-runbook">
+                      <div className="tiny-track">
+                        <i
+                          style={{
+                            width: task.checklist.length
+                              ? `${(task.checklist.filter((item) => item.done).length / task.checklist.length) * 100}%`
+                              : "0%",
+                          }}
+                        />
+                      </div>
+                      <span>
+                        {task.checklist.filter((item) => item.done).length}/
+                        {task.checklist.length}
+                      </span>
+                    </div>
+                    <div className="card-footer">
+                      <div className="worker-identity">
+                        <WorkerMark task={task} small />
+                        <span>{assignment(task)}</span>
+                        {isActive(task) && <span className="live-dot" />}
+                      </div>
+                      <div className="card-meta">
+                        {queued(task)}
+                        {discussion(task)}
+                        {task.stage === "done" ? (
+                          <Check size={13} className="mint-ink" />
+                        ) : (
+                          <ArrowUpRight size={13} />
+                        )}
+                      </div>
+                    </div>
+                  </article>
+                ))}
+                {!group.tasks.length && (
+                  <button className="empty-column" onClick={() => create(group.stage ? group.id : undefined)}>
+                    <Plus size={16} />
+                    <span>Add a work item</span>
+                  </button>
                 )}
-                <div className="card-runbook">
-                  <div className="tiny-track">
-                    <i
-                      style={{
-                        width: task.checklist.length
-                          ? `${(task.checklist.filter((item) => item.done).length / task.checklist.length) * 100}%`
-                          : "0%",
-                      }}
-                    />
-                  </div>
-                  <span>
-                    {task.checklist.filter((item) => item.done).length}/
-                    {task.checklist.length}
-                  </span>
-                </div>
-                <div className="card-footer">
-                  <div className="worker-identity">
-                    <WorkerMark task={task} small />
-                    <span>{assignment(task)}</span>
-                    {isActive(task) && <span className="live-dot" />}
-                  </div>
-                  <div className="card-meta">
-                    {queued(task)}
-                    {discussion(task)}
-                    {task.stage === "done" ? (
-                      <Check size={13} className="mint-ink" />
-                    ) : (
-                      <ArrowUpRight size={13} />
-                    )}
-                  </div>
-                </div>
-              </article>
-            ))}
-            {!group.tasks.length && (
-              <button className="empty-column" onClick={create}>
-                <Plus size={16} />
-                <span>Add a work item</span>
-              </button>
-            )}
-          </div>
+              </div>
+            </>
+          )}
         </section>
       ))}
     </div>
@@ -504,3 +626,23 @@ function BoardContent({
 }
 
 const MemoBoardContent = memo(BoardContent, sameBoardRenderProps);
+
+function ReadinessNote({ id, value }: { id: string; value: StoryReadiness }) {
+  const Icon =
+    value.state === "ready"
+      ? CircleCheck
+      : value.state === "handoff"
+        ? GitBranch
+        : Link2;
+  return (
+    <span
+      id={`readiness-${id}`}
+      className={`card-readiness ${value.state}`}
+      title={value.detail}
+    >
+      <Icon size={12} aria-hidden="true" />
+      <span>{value.label}</span>
+      <span className="sr-only">{value.detail}</span>
+    </span>
+  );
+}

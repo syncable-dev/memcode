@@ -1,3 +1,4 @@
+import { recoverClaudeEdits } from "./claude-changes";
 import { createHash, randomUUID } from "node:crypto";
 import {
   mkdir,
@@ -300,8 +301,15 @@ export class WorkerChangeJournal {
   }
 }
 
-export async function readWorkerChanges(
+export function readWorkerChanges(task: WorkItem) {
+  return readChanges(task, false);
+}
+export function readDisplayedWorkerChanges(task: WorkItem) {
+  return readChanges(task, true);
+}
+async function readChanges(
   task: WorkItem,
+  includeReceipts: boolean,
 ): Promise<WorkerChanges> {
   const empty: WorkerChanges = {
     taskId: task.id,
@@ -311,24 +319,85 @@ export async function readWorkerChanges(
     files: 0,
   };
   if (!task.run.workspace) return empty;
-  const text = await readFile(
-    join(directory(task), "checkpoints.jsonl"),
-    "utf8",
-  ).catch((e) => {
-    if (e.code === "ENOENT") return "";
-    throw e;
+  await recoverClaudeEdits(task);
+  const readLedger = async (name: string): Promise<ChangeCheckpoint[]> => {
+    const target = join(directory(task), name);
+    const path = await realpath(target).catch((e) => {
+      if (e.code === "ENOENT") return undefined;
+      throw e;
+    });
+    if (!path) return [];
+    if (!within(await realpath(task.run.workspace!), path))
+      throw Error("This change journal is outside the worker checkout.");
+    if ((await stat(path)).size > 16_000_000)
+      throw Error("Open a smaller worker run to review its change journal.");
+    const text = await readFile(path, "utf8");
+    const rows = text.split("\n");
+    // A simultaneous append may still be writing its final record.
+    rows.pop();
+    return rows
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as ChangeCheckpoint)
+      .filter((entry) => entry.taskId === task.id);
+  };
+  const [fleet, native] = await Promise.all([
+    readLedger("checkpoints.jsonl"),
+    readLedger("claude-edits.jsonl"),
+  ]);
+  const unique = new Map<string, ChangeCheckpoint>();
+  for (const entry of native) {
+    if (!unique.has(entry.id) || entry.basis === "native-edit")
+      unique.set(entry.id, entry);
+  }
+  const receipts = [...unique.values()];
+  const uncovered = receipts.filter(
+    (entry) =>
+      !fleet.some(
+        (reservation) =>
+          reservation.basis === "fleet-reservation" &&
+          reservation.runId === entry.runId &&
+          reservation.branch === entry.branch &&
+          reservation.startedAt <= entry.at &&
+          reservation.at >= entry.at &&
+          reservation.files.some((file) => file.path === entry.files[0]?.path),
+      ),
+  );
+  const unverified = uncovered.filter(
+    (entry) =>
+      entry.basis === "native-receipt" && entry.branch === task.run.branch,
+  );
+  // The old importer could save a whole scoped file before native receipts
+  // were supported. Prefer the worker's receipts for that interval and file.
+  const scoped = fleet.flatMap((entry) => {
+    if (entry.basis !== "scoped-baseline") return [entry];
+    const files = entry.files.filter(
+      (file) =>
+        !receipts.some(
+          (edit) =>
+            edit.branch === entry.branch &&
+            edit.at >= entry.startedAt &&
+            edit.at <= entry.at &&
+            edit.files.some((nativeFile) => nativeFile.path === file.path),
+        ),
+    );
+    return files.length ? [{ ...entry, files }] : [];
   });
-  if (text.length > 16_000_000)
-    throw Error("Open a smaller worker run to review its change journal.");
-  const checkpoints: ChangeCheckpoint[] = text
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => JSON.parse(line))
-    .filter((c) => c.taskId === task.id);
+  const checkpoints = [
+    ...scoped,
+    ...uncovered.filter(
+      (entry) => includeReceipts || entry.basis === "native-edit",
+    ),
+  ].sort((a, b) => a.at.localeCompare(b.at));
   const files = checkpoints.flatMap((c) => c.files);
   return {
     taskId: task.id,
     checkpoints,
+    ...(unverified.length > 0 && {
+      unverifiedEdits: unverified.length,
+      unverifiedRevision: createHash("sha256")
+        .update(JSON.stringify(unverified))
+        .digest("hex"),
+    }),
     files: new Set(files.map((f) => f.path)).size,
     additions: files.reduce((n, f) => n + f.additions, 0),
     deletions: files.reduce((n, f) => n + f.deletions, 0),

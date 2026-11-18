@@ -97,7 +97,7 @@ test("review composes the story's net add over multiple runs and preserves its a
   assert.equal(result.snapshot.files[0].beforeHash, undefined);
   assert.equal(result.snapshot.additions, 1);
   assert.equal(result.snapshot.deletions, 0);
-  assert.match(result.patch, /--- \/dev\/null/);
+  assert.match(result.patch, /new file mode 100644\n--- \/dev\/null/);
   assert.match(result.patch, /\+export const value = 2;/);
   assert.equal(result.baseFiles["source.ts"], "");
   assert.equal(result.implementationRunIds.length, 2);
@@ -212,6 +212,7 @@ test("an unchanged story deletion still produces an exact deletion patch", async
   await rm(join(f.root, "source.ts"), { force: true });
   const result = await captureStoryReview(f.task);
   assert.deepEqual(result.limitations, []);
+  assert.match(result.patch, /deleted file mode 100644\n--- a\/source\.ts/);
   assert.match(result.patch, /\+\+\+ \/dev\/null/);
   assert.match(result.patch, /-const own = 0;/);
   assert.equal(result.snapshot.deletions, 1);

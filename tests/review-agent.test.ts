@@ -24,7 +24,11 @@ const fixtureScript = `
 import fs from 'node:fs';import readline from 'node:readline';
 const [harness,scenario,recordPath]=process.argv.slice(2,5);const record={args:process.argv.slice(5),requests:[],replies:[],prompted:false};
 const save=()=>fs.writeFileSync(recordPath,JSON.stringify(record));const send=p=>console.log(JSON.stringify(p));save();
-if(harness==='claude'){
+if(harness==='claude' && record.args[record.args.indexOf('--input-format')+1]==='stream-json'){
+ const lines=readline.createInterface({input:process.stdin});
+ lines.on('line',line=>{const p=JSON.parse(line);if(p.request?.subtype==='initialize')send({type:'control_response',response:{subtype:'success',request_id:p.request_id,response:{models:[{value:'requested-model'}]}}});});
+ lines.on('close',()=>process.exit(0));
+}else if(harness==='claude'){
  let prompt='';process.stdin.on('data',b=>prompt+=b);process.stdin.on('end',()=>{record.prompted=true;record.contextRead=fs.readFileSync('review-context.json','utf8').includes('snapshot');save();send({type:'system',subtype:'init',model:'actual-claude',permissionMode:'dontAsk',tools:scenario==='writable'?['Read','Bash']:['Read','Glob','Grep'],mcp_servers:[]});if(scenario==='writable')return;send({type:'assistant',message:{model:'actual-claude',content:[{type:'tool_use',id:'read-1',name:'Read',input:{file_path:process.cwd()+'/review-context.json'}}]}});send({type:'user',message:{content:[{type:'tool_result',tool_use_id:'read-1',is_error:false,content:'snapshot'}]}});send({type:'assistant',message:{model:'actual-claude',content:[{type:'text',text:'Read the immutable snapshot. No writes.'}]}});send({type:'result',subtype:'success',is_error:false,result:'Read the immutable snapshot. No writes.'});});
 }else{
  const lines=readline.createInterface({input:process.stdin});let pendingId;let testStep=0;
@@ -34,6 +38,8 @@ if(harness==='claude'){
  record.requests.push(p);save();
  if(p.method==='initialize')send({id:p.id,result:harness==='cursor'?{authMethods:[]}:{}});
  if(p.method==='config/read')send({id:p.id,result:{config:{mcp_servers:{}}}});
+ if(p.method==='account/read')send({id:p.id,result:{account:{type:'chatgpt',id:'fixture'}}});
+ if(p.method==='model/list')send({id:p.id,result:{data:[{model:'requested-model',isDefault:true}]}});
  if(p.method==='thread/start')send({id:p.id,result:{thread:{id:'codex-thread'},model:'actual-codex',approvalPolicy:'never',sandbox:{type:scenario==='writable'?'workspaceWrite':'readOnly'}}});
  if(p.method==='mcpServerStatus/list')send({id:p.id,result:{data:scenario==='mcp'?[{name:'mutator',tools:{write:{}}}]:[],nextCursor:null}});
  if(p.method==='turn/start'){record.prompted=true;record.contextRead=fs.readFileSync('review-context.json','utf8').includes('snapshot');save();send({id:p.id,result:{turn:{id:'turn'}}});send({id:'evidence-probe',method:'item/tool/call',params:{tool:'read_review_evidence',arguments:{}}});}
@@ -70,7 +76,7 @@ async function fixture(harness: Harness, scenario = "safe") {
   const task = {
     id: "t",
     harness,
-    modelOverride: "requested-model",
+    modelOverride: harness === "cursor" ? "actual-cursor" : "requested-model",
     run: { state: "finished" },
   } as WorkItem;
   const review = {

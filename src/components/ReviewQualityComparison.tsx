@@ -1,4 +1,4 @@
-import { ArrowRight, ChevronDown, FileCode2 } from "lucide-react";
+import { ArrowRight, ChevronDown, FileCode2, FileDiff } from "lucide-react";
 import type {
   CodeReviewComparisonCoverage,
   CodeReviewMetric,
@@ -15,12 +15,18 @@ const value = (number: number | null | undefined) =>
     ? "—"
     : number.toLocaleString(undefined, { maximumFractionDigits: 1 });
 const statusLabels = {
-  matched: "Compared",
-  added: "New function",
-  removed: "Removed function",
-  ambiguous: "Uncertain match",
-  unavailable: "Before unavailable",
+  matched: "Matched",
+  added: "Added",
+  removed: "Removed",
+  ambiguous: "Uncertain",
+  unavailable: "Not compared",
 };
+type ComparisonStatus = keyof typeof statusLabels;
+
+const functionAxes = [
+  ...reviewMetricAxes,
+  { key: "halsteadVolume", label: "Halstead volume" },
+] as const;
 
 function PairChart({
   axis,
@@ -33,7 +39,7 @@ function PairChart({
   before: number | null;
   after: number | null;
   delta: number | null;
-  paired?: number;
+  paired: number;
 }) {
   const maximum =
     axis.key === "maintainabilityIndex"
@@ -81,13 +87,11 @@ function PairChart({
           />
         </div>
       </div>
-      {paired !== undefined && (
-        <small className="review-pair-count">
-          {paired
-            ? `${paired} matched ${paired === 1 ? "function" : "functions"} · mean${axis.unit ? ` ${axis.unit}` : ""}`
-            : "No comparable measurements"}
-        </small>
-      )}
+      <small className="review-pair-count">
+        {paired
+          ? `${paired} matched ${paired === 1 ? "function" : "functions"} · mean${axis.unit ? ` ${axis.unit}` : ""}`
+          : "No comparable measurements"}
+      </small>
     </div>
   );
 }
@@ -104,12 +108,29 @@ export default function ReviewQualityComparison({
   onOpenChanges: () => void;
 }) {
   const comparison = reviewQualityComparison(metrics);
-  const paired = Math.max(0, ...comparison.map((axis) => axis.paired));
-  const current = metrics.filter(
-    (metric) =>
-      metric.comparison?.status !== "removed" &&
-      !(metric.line == null && metric.before?.line != null),
-  ).length;
+  const hasPairs = comparison.some((axis) => axis.paired > 0);
+  const axes = functionAxes.filter((axis) => {
+    if (axis.key !== "halsteadVolume") return true;
+    return metrics.some((metric) => {
+      const pair = reviewMetricPair(metric, axis.key);
+      return pair.before !== null || pair.after !== null;
+    });
+  });
+  const counts: Record<ComparisonStatus, number> = {
+    matched: 0,
+    added: 0,
+    removed: 0,
+    ambiguous: 0,
+    unavailable: 0,
+  };
+  for (const metric of metrics)
+    counts[metric.comparison?.status ?? "unavailable"]++;
+  const omitted = [
+    coverage?.omittedFunctions &&
+      `${coverage.omittedFunctions} additional ${coverage.omittedFunctions === 1 ? "function" : "functions"}`,
+    coverage?.omittedFiles &&
+      `${coverage.omittedFiles} additional ${coverage.omittedFiles === 1 ? "file" : "files"}`,
+  ].filter(Boolean);
   const notes = [
     ...new Set([
       ...(coverage?.notes ?? []),
@@ -124,104 +145,144 @@ export default function ReviewQualityComparison({
       <div className="review-comparison-heading">
         <strong>Before & after</strong>
         <span>
-          <i /> Before <i className="after" /> After
+          {metrics.length} {metrics.length === 1 ? "function" : "functions"}
         </span>
       </div>
       <p className="review-comparison-caption">
-        Same matched functions, measured from this story’s captured source.{" "}
-        {paired} compared · {current} current functions.
+        {(Object.keys(counts) as ComparisonStatus[])
+          .filter((status) => counts[status] > 0)
+          .map(
+            (status) =>
+              `${counts[status]} ${statusLabels[status].toLowerCase()}`,
+          )
+          .join(" · ")}
       </p>
-      <div className="review-comparison-grid">
-        {comparison.map((axis) => (
-          <PairChart
-            key={axis.key}
-            axis={axis}
-            before={axis.before}
-            after={axis.after}
-            delta={axis.delta}
-            paired={axis.paired}
-          />
-        ))}
-      </div>
-      {!paired && (
+      {omitted.length > 0 && (
         <p className="review-comparison-note">
-          No comparable baseline is available. New, removed and unmatched
-          functions stay separate; missing values are never counted as zero.
+          This review omitted {omitted.join(" and ")}.
         </p>
       )}
-      <details className="review-function-details">
-        <summary>
-          Measured functions <small>{metrics.length}</small>
-          <ChevronDown size={13} />
-        </summary>
-        <div className="review-function-list">
-          {metrics.map((metric, index) => {
-            const removed = metric.comparison?.status === "removed";
-            const baselineOnly =
-              removed || (metric.line == null && metric.before?.line != null);
-            return (
-              <details
-                key={`${metric.path}:${metric.symbol}:${metric.line}:${index}`}
-              >
-                <summary>
-                  <span>
-                    <strong>{metric.symbol}</strong>
-                    <small>{metric.path}</small>
-                  </span>
-                  <em>
-                    {statusLabels[metric.comparison?.status ?? "unavailable"]}
-                  </em>
-                  <ChevronDown size={12} />
-                </summary>
-                <div className="review-function-measurements">
-                  <div className="review-comparison-grid">
-                    {reviewMetricAxes.map((axis) => {
-                      const pair = reviewMetricPair(metric, axis.key);
-                      return (
-                        <PairChart
-                          key={axis.key}
-                          axis={axis}
-                          {...pair}
-                          before={
-                            removed
-                              ? (metric.before?.[axis.key] ?? null)
-                              : pair.before
-                          }
-                        />
-                      );
-                    })}
-                  </div>
-                  {metric.comparison?.reason && (
-                    <p className="review-comparison-note">
-                      {metric.comparison.reason}
-                    </p>
-                  )}
-                  {baselineOnly ? (
-                    <>
-                      <p className="review-comparison-note">
-                        {removed
-                          ? "Removed from this snapshot. Its baseline measurements are kept here."
-                          : "No current declaration was matched safely. Inspect the captured changes for context."}
-                      </p>
-                      <button className="text-button" onClick={onOpenChanges}>
-                        View captured changes <ArrowRight size={12} />
-                      </button>
-                    </>
-                  ) : (
+      <p className="review-function-key">
+        Before → After <span>— Unavailable</span>
+      </p>
+      <div
+        className="review-function-scroll"
+        tabIndex={0}
+        role="region"
+        aria-label="Function measurements"
+      >
+        <table
+          className="review-function-table"
+          aria-label="Measurements by function"
+        >
+          <thead>
+            <tr>
+              <th scope="col">Function</th>
+              {axes.map((axis) => (
+                <th key={axis.key} scope="col">
+                  {axis.label}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {metrics.map((metric, index) => {
+              const status = metric.comparison?.status ?? "unavailable";
+              const baselineOnly =
+                status === "removed" ||
+                (metric.line == null && metric.before?.line != null);
+              const line = baselineOnly ? metric.before?.line : metric.line;
+              const action = baselineOnly
+                ? "View captured changes"
+                : "Open current source";
+              return (
+                <tr key={`${metric.path}:${metric.symbol}:${line}:${index}`}>
+                  <th scope="row">
                     <button
-                      className="text-button"
-                      onClick={() => onOpenSource(metric.path, metric.line)}
+                      type="button"
+                      title={action}
+                      aria-label={`${action} for ${metric.symbol}`}
+                      onClick={
+                        baselineOnly
+                          ? onOpenChanges
+                          : () => onOpenSource(metric.path, metric.line)
+                      }
                     >
-                      <FileCode2 size={12} /> Open current source{" "}
-                      <ArrowRight size={12} />
+                      {baselineOnly ? (
+                        <FileDiff size={12} />
+                      ) : (
+                        <FileCode2 size={12} />
+                      )}
+                      {metric.symbol}
                     </button>
-                  )}
-                </div>
-              </details>
-            );
-          })}
-        </div>
-      </details>
+                    <small>
+                      {metric.path}
+                      {line != null && `:${line}`}
+                    </small>
+                    {metric.comparison?.reason ? (
+                      <details className="review-function-status">
+                        <summary>
+                          {statusLabels[status]} <ChevronDown size={10} />
+                        </summary>
+                        <p>{metric.comparison.reason}</p>
+                      </details>
+                    ) : (
+                      <span className="review-function-status">
+                        {statusLabels[status]}
+                      </span>
+                    )}
+                  </th>
+                  {axes.map((axis) => {
+                    const { before, after } = reviewMetricPair(
+                      metric,
+                      axis.key,
+                    );
+                    const description = `Before ${before == null ? "unavailable" : value(before)}, after ${after == null ? "unavailable" : value(after)}`;
+                    return (
+                      <td key={axis.key} title={description}>
+                        <span className="sr-only">{description}</span>
+                        <span
+                          className="review-function-pair"
+                          aria-hidden="true"
+                        >
+                          {value(before)} <ArrowRight size={10} />{" "}
+                          <b>{value(after)}</b>
+                        </span>
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      {hasPairs ? (
+        <>
+          <div className="review-comparison-heading review-means-heading">
+            <strong>Matched function averages</strong>
+            <span>
+              <i /> Before <i className="after" /> After
+            </span>
+          </div>
+          <div className="review-comparison-grid">
+            {comparison.map((axis) => (
+              <PairChart
+                key={axis.key}
+                axis={axis}
+                before={axis.before}
+                after={axis.after}
+                delta={axis.delta}
+                paired={axis.paired}
+              />
+            ))}
+          </div>
+        </>
+      ) : (
+        <p className="review-comparison-note">
+          No matched functions have measurements on both sides.
+        </p>
+      )}
       {notes.length > 0 && (
         <details className="review-comparison-coverage">
           <summary>
@@ -235,8 +296,7 @@ export default function ReviewQualityComparison({
         </details>
       )}
       <p className="code-review-footnote">
-        Native AST measurements. These describe the captured functions, not
-        correctness or a project-wide quality grade.
+        Measurements come from Memtrace’s native AST analysis.
       </p>
     </div>
   );
