@@ -59,6 +59,7 @@ import {
 
 /** Team claims guard official runs; local Fleet still coordinates source edits. */
 export interface TeamWorkerClaims {
+  prepareFollowups?(task: WorkItem): Promise<void>;
   acquire(taskId: string, projectId: string): Promise<void>;
   release(taskId: string, projectId: string): Promise<void>;
 }
@@ -256,13 +257,17 @@ export class WorkerManager {
     await Promise.allSettled(ids.map((id) => this.stop(id, "paused")));
   }
   implementationCount(): number {
-    return (
-      this.state().tasks.filter((task) => !task.example && isActive(task))
-        .length + this.cancellingReview.size
-    );
+    return new Set([
+      ...this.state().tasks.filter((task) => !task.example && isActive(task)).map(task => task.id),
+      ...this.cancellingReview,
+      ...this.children.keys(),
+    ]).size;
   }
   implementationStarting(taskId: string): boolean {
-    return this.cancellingReview.has(taskId);
+    // A provider can exit before its final checkpoint and resource drain finish.
+    // Reviews must wait for that contribution to settle, even if the UI already
+    // shows the turn as finished.
+    return this.cancellingReview.has(taskId) || this.children.has(taskId);
   }
   async releaseIdleAnalysis(
     task: WorkItem,
@@ -288,7 +293,8 @@ export class WorkerManager {
           (other) =>
             other.projectId === task.projectId &&
             other.epicId === task.epicId &&
-            (isActive(other) || other.codeReview?.state === "running"),
+            (isActive(other) || other.codeReview?.state === "running" ||
+              queuedFollowups(other).length > 0),
         )
       )
         return;
@@ -963,6 +969,8 @@ export class WorkerManager {
         ]);
         continuing();
       }
+      await this.teamClaims?.prepareFollowups?.(task);
+      continuing();
       conversation = claimReviewContext(task.messages, now());
       await this.changed();
       const turn = workerTurnContext(task, conversation);

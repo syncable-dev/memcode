@@ -56,6 +56,11 @@ export function registerReview(
     enqueue: (task: WorkItem, messageId: string) => void;
     dispatchQueued: () => void;
   },
+  sharing?: {
+    remoteSend(task: WorkItem, body: string): Promise<string | undefined>;
+    actor(task: WorkItem): import("../src/team-session").SessionActor | undefined;
+    edit(task: WorkItem, messageId: string, text?: string, cancel?: boolean): Promise<boolean>;
+  },
 ) {
   const id = z.string().min(1).max(250),
     task = (taskId: string) => {
@@ -157,9 +162,15 @@ export function registerReview(
       throw Error("Worker dispatch is unavailable.");
     const messageId = randomUUID(),
       at = new Date().toISOString();
+    const remoteId = dispatch ? await sharing?.remoteSend(item, body) : undefined;
+    if (remoteId) {
+      for (const comment of notes) Object.assign(comment, {status: "shared", messageId: remoteId, updatedAt: at});
+      await changed(); publish(); return remoteId;
+    }
     item.messages.push({
       id: messageId,
       role: "user",
+      actor: sharing?.actor(item),
       text: body,
       at,
       references: notes.length ? references : undefined,
@@ -216,6 +227,7 @@ export function registerReview(
       })
       .strict(),
     async (input) => {
+      if (await sharing?.edit(task(input.taskId), input.messageId, input.text)) return;
       const item = task(input.taskId),
         message = editableFollowup(item, input.messageId),
         edits = new Map<string, string>(
@@ -262,6 +274,7 @@ export function registerReview(
     "review:queue-cancel",
     z.object({ taskId: id, messageId: id }).strict(),
     async (input) => {
+      if (await sharing?.edit(task(input.taskId), input.messageId, undefined, true)) return;
       const item = task(input.taskId),
         message = editableFollowup(item, input.messageId);
       message.followupState = "cancelled";

@@ -364,7 +364,8 @@ export function TeamWorkspace({
             <strong>Invite access, with clear boundaries.</strong> Invitations
             grant workspace access. Display names in this preview are not
             verified Memtrace team identities. Model credentials, terminal
-            sessions and local analysis are not shared.
+            sessions and local analysis are not shared. Worker conversations,
+            progress and saved review reports are visible to project members.
           </p>
         </div>
       </section>

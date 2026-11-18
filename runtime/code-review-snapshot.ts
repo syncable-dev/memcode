@@ -329,10 +329,12 @@ export async function captureStoryReview(
     }
   }
   const finalSource = await checkSourceBinding(root);
-  if (!sourceBinding || sourceBinding !== finalSource)
+  if (sourceBinding && finalSource && sourceBinding !== finalSource)
     limitations.add(
       "Source changed during capture; this snapshot cannot certify the current code.",
     );
+  else if (sourceBinding && !finalSource)
+    limitations.add("The final source fingerprint is unavailable; this snapshot cannot certify the current code.");
   const commit = await git(root, ["rev-parse", "HEAD"]);
   const journalRevision = digest(
     JSON.stringify(

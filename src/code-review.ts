@@ -222,7 +222,7 @@ export interface StoryReviewRun {
 }
 export interface CodeReviewAPI {
   getCodeReview(taskId: string): Promise<StoryReviewRun | null>;
-  startCodeReview(taskId: string): Promise<StoryReviewRun>;
+  startCodeReview(taskId: string): Promise<StoryReviewRun | null>;
   cancelCodeReview(taskId: string, runId: string): Promise<void>;
   dismissCodeReviewFinding(
     taskId: string,

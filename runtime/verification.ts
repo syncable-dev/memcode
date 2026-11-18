@@ -10,7 +10,9 @@ import type { WorkerCheckResult } from "../src/measurements";
 
 export type CheckResult = WorkerCheckResult;
 const OUTPUT_LIMIT = 262144,
-  FILE_LIMIT = 2_000_000,
+  // This is a whole-project content fingerprint, not a source preview. Normal
+  // vendored archives and screenshots can exceed the 2 MB preview limit.
+  FILE_LIMIT = 8_000_000,
   SOURCE_LIMIT = 32_000_000;
 const count = (value: unknown): value is number =>
   typeof value === "number" &&

@@ -375,7 +375,25 @@ test("source bindings frame filenames and bytes, retain leading whitespace and b
     const bom = await checkSourceBinding(f.root);
     await writeFile(join(f.root, "\ufeffbom.mjs"), "second");
     assert.notEqual(await checkSourceBinding(f.root), bom);
-    await writeFile(join(f.root, "too-large.mjs"), Buffer.alloc(2_000_001));
+    await writeFile(
+      join(f.root, "vendored-archive.tar.gz"),
+      Buffer.alloc(3_000_000),
+    );
+    const archive = await checkSourceBinding(f.root);
+    assert.ok(
+      archive,
+      "A normal vendored asset must not make all review measurements unavailable",
+    );
+    await writeFile(
+      join(f.root, "vendored-archive.tar.gz"),
+      Buffer.alloc(3_000_000, 1),
+    );
+    assert.notEqual(
+      await checkSourceBinding(f.root),
+      archive,
+      "Binary changes remain part of the exact source fingerprint",
+    );
+    await writeFile(join(f.root, "too-large.mjs"), Buffer.alloc(8_000_001));
     assert.equal(await checkSourceBinding(f.root), null);
   } finally {
     await f.close();

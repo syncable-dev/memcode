@@ -465,6 +465,22 @@ test("idle graph retirement cannot run while an implementation or review in that
     await manager.releaseIdleAnalysis(task, f.project);
     assert.equal(retired, 0);
     peer.run.state = "finished";
+    peer.messages.push({
+      id: "pending-next-pass",
+      role: "user",
+      text: "Continue",
+      at: new Date().toISOString(),
+      followupState: "queued",
+      queuedAt: new Date().toISOString(),
+      queueOrder: 1,
+    });
+    await manager.releaseIdleAnalysis(task, f.project);
+    assert.equal(
+      retired,
+      0,
+      "A durable follow-up retains the live epic owner until its next pass",
+    );
+    peer.messages.at(-1)!.followupState = "cancelled";
     peer.codeReview = {
       runId: "review",
       state: "running",

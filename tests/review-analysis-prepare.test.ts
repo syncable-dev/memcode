@@ -115,13 +115,11 @@ function fixture() {
   };
 }
 
-test("private review preparation joins owner retirement, analysis and watch before accepting the exact native certificate", async () => {
+test("private review preparation reuses the live owner without retirement or duplicate analysis", async () => {
   const f = fixture(),
     before = structuredClone(f.project);
   const result = await f.run();
   assert.deepEqual(f.calls, [
-    "release",
-    "analyze:cached",
     "watch",
     "get_query_revision",
   ]);
@@ -135,8 +133,6 @@ test("one real incremental repair completes a known unfinished publication witho
   f.reads.splice(0, 1, f.certificate("partial"), f.certificate());
   assert.equal((await f.run()).repoId, "repo");
   assert.deepEqual(f.calls, [
-    "release",
-    "analyze:cached",
     "watch",
     "get_query_revision",
     "analyze:repair",
@@ -238,12 +234,14 @@ test("watch failure, indexing errors and cancellation cannot turn into a repair 
   await assert.rejects(watch.run(), /watch failed/);
   assert.equal(watch.calls.includes("get_query_revision"), false);
   const index = fixture();
+  delete index.project.repoId;
   index.engine.analyze = async () => {
     throw Error("index failed");
   };
   await assert.rejects(index.run(), /index failed/);
   assert.equal(index.calls.includes("watch"), false);
   const cancel = fixture();
+  delete cancel.project.repoId;
   cancel.afterAnalyze(() => cancel.cancel());
   await assert.rejects(cancel.run(), /cancelled/);
   assert.equal(cancel.calls.includes("watch"), false);

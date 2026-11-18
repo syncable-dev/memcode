@@ -175,6 +175,16 @@ export class MemtraceEngine {
     this.retirements.set(project.id, retirement);
     return retirement;
   }
+  /** Explicit new review/start authority may reopen an idle owner after it drains.
+   * An earlier in-flight query still cannot resurrect a retired binding. */
+  async activateEpic(project: Project, update?: (note: string) => void): Promise<void> {
+    const retirement = this.retirements.get(project.id);
+    if (retirement) {
+      update?.("Finishing the previous epic engine session…");
+      await retirement;
+    }
+    await this.connect(project, update);
+  }
   private async retireEpic(project: Project): Promise<void> {
     await this.opening.get(project.id)?.catch(() => {});
     const store = this.scopes.get(project.id)?.dataDirectory;

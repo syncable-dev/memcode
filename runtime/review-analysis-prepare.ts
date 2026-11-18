@@ -5,7 +5,8 @@ import { verifiedIndexRevision } from "./memtrace-peer-index";
 type Engine = Pick<
   MemtraceEngine,
   "releaseEpic" | "analyze" | "watch" | "call"
->;
+> &
+  Partial<Pick<MemtraceEngine, "activateEpic">>;
 type Json = Record<string, any>;
 const record = (value: unknown): value is Json =>
   !!value && typeof value === "object" && !Array.isArray(value);
@@ -172,6 +173,28 @@ export async function repairReviewPublication(
       return value;
     };
     let value = await read();
+    const deadline = Date.now() + 180000;
+    let delay = 250;
+    while (
+      Date.now() < deadline &&
+      value.repo_id === repoId &&
+      value.branch === selected.branch &&
+      text(value.worktree) &&
+      pathKey(value.worktree) === pathKey(selected.path!) &&
+      value.ready === false &&
+      [
+        "index_write_in_progress",
+        "indexing_in_progress",
+        "graph_materialization_in_progress",
+      ].includes(value.reason)
+    ) {
+      update(
+        "Memtrace is finishing this epic's existing graph write. Following its publication…",
+      );
+      await new Promise((done) => setTimeout(done, delay));
+      delay = Math.min(3000, delay * 2);
+      value = await read();
+    }
     while (
       freshReads < 3 &&
       exactSource(value, selected, repoId) &&
@@ -225,7 +248,7 @@ export async function repairReviewPublication(
   return selected;
 }
 
-/** Reopen a private epic cache, then verify/repair its joined watch publication. */
+/** Reuse the exact epic owner; reopening it creates an unnecessary publication race. */
 export async function prepareReviewAnalysis(
   engine: Engine,
   project: Project,
@@ -234,8 +257,18 @@ export async function prepareReviewAnalysis(
 ): Promise<Project> {
   if (project.analysisCheckout !== "owned-worktree-v1") return project;
   assertActive();
-  await engine.releaseEpic(project);
+  await engine.activateEpic?.(project, update);
   assertActive();
+  // A live checkout is already indexed by the implementation worker. Read its
+  // certificate first. Only the known unfinished-publication path may refresh
+  // incrementally; never tear down a healthy writer to start a review.
+  if (project.repoId)
+    return repairReviewPublication(
+      engine,
+      { ...project },
+      update,
+      assertActive,
+    );
   const repoId = await engine.analyze(project, update);
   assertActive();
   return repairReviewPublication(

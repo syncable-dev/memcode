@@ -71,8 +71,24 @@ test("overlapping epic retirements share the drain and cannot clear its guard be
   assert.equal(stops, 1);
   assert.equal(internal.bindingGenerations.get(project.id), 1);
   await assert.rejects(engine.connect(project), /retiring/);
+  let reconnected = 0;
+  internal.connect = async () => {
+    reconnected++;
+  };
+  const nextReview = engine.activateEpic(project);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(
+    reconnected,
+    0,
+    "A new review cannot open a second owner while the previous store is draining",
+  );
   finish();
-  await Promise.all([first, second]);
+  await Promise.all([first, second, nextReview]);
+  assert.equal(
+    reconnected,
+    1,
+    "An explicitly started review reconnects after the previous owner has released its store",
+  );
   assert.equal(internal.retiring.has(project.id), false);
   await engine.close();
 });

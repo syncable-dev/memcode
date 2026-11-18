@@ -20,49 +20,117 @@ const phases: Record<TeamWorkerPhase, string> = {
 };
 
 export function remoteActivityLabel(owner: Owner) {
-  return owner.activity ? phases[owner.activity.phase] : "Waiting for a worker update";
+  if (owner.session?.state === "finished") return "Worker turn finished";
+  if (owner.session?.state === "failed") return "Worker needs attention";
+  if (owner.session?.state === "stopped") return "Worker stopped";
+  return owner.activity
+    ? phases[owner.activity.phase]
+    : "Waiting for a worker update";
 }
 
 function UpdatedAt({ at }: { at: string }) {
   const date = new Date(at);
   return (
     <time dateTime={at} title={date.toLocaleString()}>
-      {date.toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" })}
+      {date.toLocaleString(undefined, {
+        dateStyle: "short",
+        timeStyle: "short",
+      })}
     </time>
   );
 }
 
-export function RemoteWorker({ owner, offline }: { owner: Owner; offline: boolean }) {
-  const { activity } = owner;
+export function RemoteWorker({
+  owner,
+  offline,
+}: {
+  owner: Owner;
+  offline: boolean;
+}) {
+  const { activity, session } = owner;
+  const harness = session?.harness ?? activity?.harness;
   return (
-    <section className="inspector-section remote-worker" aria-label="Worker on another device">
-      <div className="inspector-label">WORKER ASSIGNMENT <span>TEAM</span></div>
+    <section
+      className="inspector-section remote-worker"
+      aria-label="Worker on another device"
+    >
+      <div className="inspector-label">
+        WORKER ASSIGNMENT <span>TEAM</span>
+      </div>
       <div className="assigned-worker">
-        {activity?.harness ? <HarnessMark id={activity.harness} /> : <Laptop size={19} />}
+        {harness ? <HarnessMark id={harness} /> : <Laptop size={19} />}
         <div>
-          <strong>{activity?.harness ? harnessNames[activity.harness] : "Shared story"}</strong>
-          <span>{owner.name} · {owner.device}</span>
+          <strong>{harness ? harnessNames[harness] : "Shared story"}</strong>
+          <span>
+            {owner.name} · {owner.device}
+          </span>
         </div>
       </div>
       <dl>
         <div>
-          <dt>{activity?.actualModel ? "Confirmed model" : activity?.requestedModel ? "Requested model" : "Model"}</dt>
-          <dd>{activity?.actualModel ?? activity?.requestedModel ?? "Awaiting host confirmation"}</dd>
+          <dt>
+            {session?.actualModel || activity?.actualModel
+              ? "Confirmed model"
+              : session?.requestedModel || activity?.requestedModel
+                ? "Requested model"
+                : "Model"}
+          </dt>
+          <dd>
+            {owner.session?.actualModel ??
+              activity?.actualModel ??
+              owner.session?.requestedModel ??
+              activity?.requestedModel ??
+              "Awaiting host confirmation"}
+          </dd>
         </div>
       </dl>
       <div className="remote-worker-activity" role="status">
         <Clock3 size={14} aria-hidden="true" />
         <div>
-          <strong>{remoteActivityLabel(owner)}</strong>
-          <small>{offline ? "Last synced" : activity ? "Updated" : "Claimed"} <UpdatedAt at={activity?.updatedAt ?? owner.claim.acquiredAt} /></small>
+          <strong>
+            {owner.session && ["finished", "failed", "stopped"].includes(owner.session.state) ? remoteActivityLabel(owner) : owner.session?.activity?.label ?? remoteActivityLabel(owner)}
+          </strong>
+          <small>
+            {offline
+              ? "Last synced"
+              : activity || session
+                ? "Updated"
+                : "Claimed"}{" "}
+            <UpdatedAt
+              at={
+                session?.updatedAt ??
+                activity?.updatedAt ??
+                owner.claim.acquiredAt
+              }
+            />
+          </small>
         </div>
       </div>
-      {offline ? <p>Team Sync is offline. Reconnect to see new activity.</p> :
-        !activity && <p>The host holds the story claim. Open this card there for worker details.</p>}
+      {offline ? (
+        <p>Team Sync is offline. Reconnect to see new activity.</p>
+      ) : (
+        !owner.session &&
+        !activity && (
+          <p>Waiting for this device's first shared session update.</p>
+        )
+      )}
+      {owner.session && (
+        <p>
+          Conversation and review shared with the team. Execution stays on{" "}
+          {owner.device}.
+        </p>
+      )}
       {activity?.recent && activity.recent.length > 1 && (
         <details>
           <summary>Recent activity</summary>
-          <ol>{activity.recent.map((entry, i) => <li key={entry.at + i}><span>{phases[entry.phase]}</span><UpdatedAt at={entry.at} /></li>)}</ol>
+          <ol>
+            {activity.recent.map((entry, i) => (
+              <li key={entry.at + i}>
+                <span>{phases[entry.phase]}</span>
+                <UpdatedAt at={entry.at} />
+              </li>
+            ))}
+          </ol>
         </details>
       )}
     </section>

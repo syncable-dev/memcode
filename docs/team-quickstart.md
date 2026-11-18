@@ -44,7 +44,18 @@ Story discussion belongs in **Comments**. Instructions for a worker belong in **
 | --- | --- |
 | Stories, epics, cycles, runbooks, planning history, authored comments and activity | Source files, local paths and Memtrace graph |
 | Confirmed story claims | Coding-provider credentials and approvals |
-| Files you explicitly publish | Full agent conversations, browser sessions and terminal processes |
+| Worker conversation, actual model, progress and saved review | Raw tool output, approval prompts, browser sessions and terminal processes |
+| Files you explicitly publish | Coding-provider sessions and credentials |
+
+### Continue a shared worker
+
+Open the story on either computer. The card shows who is running it, where it runs, the confirmed model, and the shared conversation. Send a follow-up from the same composer. **Queue** shows whether it is waiting, received by the host, or picked up; the author can edit or cancel it before pickup.
+
+The executing computer keeps the coding session. Teammates do not need that provider installed to send a follow-up or read its saved review. If the host is offline, the request waits for it to return. MemCode never silently starts a second worker on your computer.
+
+In **Code review**, read the same saved measurements and findings, ask a question, or request a new review on the executing computer while the story is in the Code review lane. Missing evidence remains labelled; synchronization does not turn a partial result into a pass. Source-changing actions and approvals remain on the host.
+
+Both apps and the Team service must support shared sessions. An older service shows an update message; sending is not reported as delivered when it is unavailable.
 
 **Git still carries the code.** Fetch, review and integrate teammates' changes using your epic-branch workflow. A current board does not mean your checkout is current. Each computer analyzes its own checkout.
 

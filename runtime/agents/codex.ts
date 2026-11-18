@@ -23,18 +23,18 @@ export function startCodexSession(options: AgentSessionOptions): AgentSession {
 }
 
 /** Same app-server as the worker. Probe only the authenticated catalog; no thread or turn. */
-export async function probeCodexCatalog(command: Command): Promise<CodexCatalog> {
+export async function probeCodexCatalog(command: Command, refresh = false): Promise<CodexCatalog> {
   let catalog: CodexCatalog = { models: [] };
   const probe = runCodexSession({
     command, cwd: tmpdir(), env: childEnv(), model: "", effort: "low", prompt: "", briefPath: "", toolArgs: [],
     onEvent: () => {}, requestInput: async () => ({ cancelled: true }),
-  }, (result) => { catalog = result; });
+  }, (result) => { catalog = result; }, refresh);
   const timer = setTimeout(() => { void probe.stop(); }, 10_000);
   try { await probe.completion; } finally { clearTimeout(timer); }
   return catalog;
 }
 
-function runCodexSession(options: AgentSessionOptions, inspect?: (result: CodexCatalog) => void): AgentSession {
+function runCodexSession(options: AgentSessionOptions, inspect?: (result: CodexCatalog) => void, refreshCatalog = false): AgentSession {
   const mode = options.permissionMode ?? "review";
   const policy = mode === "full-access" ? "never" : "on-request";
   const reviewer = mode === "auto" ? "auto_review" : "user";
@@ -677,7 +677,7 @@ function runCodexSession(options: AgentSessionOptions, inspect?: (result: CodexC
       });
       write({ method: "initialized", params: {} });
       if (!options.localModel) {
-        catalog = await readCodexCatalog(options.command, { ...options.env, ...options.command.env }, (method, params) => request(method, params, 4500));
+        catalog = await readCodexCatalog(options.command, { ...options.env, ...options.command.env }, (method, params) => request(method, params, 4500), refreshCatalog);
         if (inspect) { inspect(catalog); finish({ exitCode: 0 }); return; }
         selected = selectCodexModel(catalog, options.model, !!options.automaticModelTier, options.automaticModelTier);
         const efforts = catalog.models.find(m => m.id === selected)?.efforts;

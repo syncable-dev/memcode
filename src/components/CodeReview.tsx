@@ -40,6 +40,7 @@ import "../styles-code-review.css";
 interface Props {
   task: WorkItem;
   canStartReview: boolean;
+  remoteReview?: { host: string; waiting: boolean; error?: string };
   notify: (text: string) => void;
   onOpenSource: (path: string, line?: number) => void;
   onOpenChanges: (finding?: CodeReviewFinding) => void;
@@ -110,6 +111,7 @@ const outcomeLabel = (run: StoryReviewRun | null) =>
 export function CodeReview({
   task,
   canStartReview,
+  remoteReview,
   notify,
   onOpenSource,
   onOpenChanges,
@@ -219,7 +221,7 @@ export function CodeReview({
     }
   };
   const start = () => {
-    if (!canStartReview) return;
+    if (!canStartReview && !remoteReview) return;
     void action(async () => {
       if (!api.startCodeReview)
         throw Error("The local review service is not connected yet.");
@@ -332,7 +334,7 @@ export function CodeReview({
             {working ? (
               <button
                 className="button secondary small"
-                disabled={busy || !api.cancelCodeReview}
+                disabled={!!remoteReview || busy || !api.cancelCodeReview}
                 onClick={() =>
                   void action(() => api.cancelCodeReview!(task.id, run!.id))
                 }
@@ -344,7 +346,7 @@ export function CodeReview({
               <button
                 className="button primary small"
                 disabled={
-                  !canStartReview ||
+                  (!canStartReview && !remoteReview) || remoteReview?.waiting ||
                   busy ||
                   loading ||
                   activeWorker ||
@@ -360,15 +362,16 @@ export function CodeReview({
                 ) : (
                   <Play size={12} />
                 )}
-                {run ? "Review again" : "Run code review"}
+                {remoteReview?.waiting ? "Review request queued" : remoteReview ? `Review on ${remoteReview.host}` : run ? "Review again" : "Run code review"}
               </button>
             )}
           </div>
-          {!canStartReview && (
+          {(!canStartReview || remoteReview) && (
             <p className="code-review-run-hint">
-              Move this story to Code review to run a new review.
+              {remoteReview ? `This review runs on ${remoteReview.host}. Its progress, measurements and discussion appear here.` : "Move this story to Code review to run a new review."}
             </p>
           )}
+          {remoteReview?.error && <p className="code-review-notice error" role="alert">{remoteReview.error}</p>}
         </header>
         {error && (
           <div className="code-review-notice error" role="alert">
@@ -1150,11 +1153,12 @@ export function CodeReview({
                   <div>
                     <strong>
                       {message.role === "user"
-                        ? "You"
+                        ? message.actor?.name ?? "You"
                         : message.role === "assistant"
                           ? "Reviewer"
                           : "MemCode"}
                     </strong>
+                    {message.actor && <span className="message-origin">{message.actor.device}</span>}
                     <time>
                       {new Date(message.at).toLocaleTimeString([], {
                         hour: "2-digit",

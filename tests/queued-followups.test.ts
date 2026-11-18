@@ -40,6 +40,7 @@ async function fixture(
     preparationFails?: boolean;
     slots?: number;
     pickupGate?: boolean;
+    settlementGate?: boolean;
   } = {},
 ) {
   const root = await mkdtemp(join(tmpdir(), "memcode-queue-")),
@@ -116,9 +117,15 @@ async function fixture(
   const pickupGate = new Promise<void>((resolve) => {
     releasePickup = resolve;
   });
+  let releaseSettlement!: () => void;
+  const settlementGate = new Promise<void>((resolve) => {
+    releaseSettlement = resolve;
+  });
   const manager = new WorkerManager(
     () => state,
     async () => {
+      if (options.settlementGate && tasks[0].run.state === "finished")
+        await settlementGate;
       if (
         options.pickupGate &&
         !pickupHeld &&
@@ -210,9 +217,11 @@ async function fixture(
     release,
     enqueue,
     releasePickup,
+    releaseSettlement,
     releases: () => releases,
     async cleanup() {
       releasePickup();
+      releaseSettlement();
       await manager.close();
       assert.ok(
         within(tmpdir(), root) && basename(root).startsWith("memcode-queue-"),
@@ -221,6 +230,34 @@ async function fixture(
     },
   };
 }
+
+test("a finished provider still occupies its slot until its final contribution has settled", async () => {
+  const f = await fixture(["codex"], { settlementGate: true }),
+    task = f.tasks[0];
+  try {
+    await f.manager.start(task, f.project);
+    await until(
+      async () => (await f.runs(task)).length === 1,
+      "provider started",
+    );
+    await f.release(task, 1);
+    await until(() => task.run.state === "finished", "provider exited");
+    assert.equal(
+      f.manager.implementationStarting(task.id),
+      true,
+      "Review capture must wait for the final journal and drain",
+    );
+    assert.equal(f.manager.implementationCount(), 1);
+    f.releaseSettlement();
+    await until(
+      () => !f.manager.implementationStarting(task.id),
+      "contribution settled",
+    );
+    assert.equal(f.manager.implementationCount(), 0);
+  } finally {
+    await f.cleanup();
+  }
+});
 
 test("all three adapters automatically coalesce busy follow-ups after Fleet cleanup, without duplicate passes", async () => {
   for (const provider of providers) {

@@ -220,6 +220,7 @@ export async function createRuntime(
       terminals,
       undefined,
       {
+        prepareFollowups: (item) => team?.prepareFollowups(item) ?? Promise.resolve(),
         acquire: (taskId, projectId) =>
           team?.acquire(taskId, projectId) ?? Promise.resolve(),
         release: (taskId, projectId) =>
@@ -291,6 +292,26 @@ export async function createRuntime(
     openExternal: (url) => host.call("open_memcode_identity", { url }),
   });
   team = new TeamSyncClient(state, store.dir, changed, {
+    loadReview: (taskId) => codeReviews?.get(taskId) ?? Promise.resolve(null),
+    onSessionCommand: async (item, command) => {
+      if (command.kind === "followup") {
+        let message = item.messages.find(m => m.id === command.id);
+        if (message?.promptedAt || message?.pickedUpAt) return;
+        if (!message) {
+          message = {id: command.id, role: "user", text: command.text, at: command.createdAt,
+            actor: command.author, sourceCommandId: command.id};
+          item.messages.push(message);
+          workers.enqueue(item, message.id);
+        } else { message.text = command.text; message.actor = command.author; }
+        item.updatedAt = command.updatedAt;
+        await changed();
+      } else if (command.kind === "review-start") {
+        if (!isCodeReviewTask(state(), item)) throw Error("Move this story to Code review before starting its review.");
+        await codeReviews.start(item.id);
+      } else {
+        await codeReviews.discuss(item.id, command.reviewRunId!, command.text, {id: command.id, actor: command.author});
+      }
+    },
     onWorkerActivity: () => emit("workspace:state", store.state),
     identityProof: teamIdentity,
     identityAvailable: teamIdentity.available,
@@ -1134,8 +1155,18 @@ export async function createRuntime(
     changed,
     () => preview.publishComments(),
     workers,
+    {
+      remoteSend: (item, body) => team?.remoteSession(item.id) ? team.sendSessionCommand(item.id, "followup", body) : Promise.resolve(undefined),
+      actor: (item) => team?.sessionActor(item.projectId),
+      edit: async (item, messageId, text, cancel) => {
+        if (!team?.remoteSession(item.id) && !item.messages.some(m => m.id === messageId && m.sourceCommandId)) return false;
+        await team!.editSessionCommand(item.id, messageId, text, cancel);
+        return true;
+      },
+    },
   );
   codeReviews = new CodeReviewManager(store.dir, state, engine, changed, {
+    onSaved: (run) => team?.reviewSaved(run),
     actor: (item) =>
       team?.identity(item.projectId) ?? connections.account.current.principal,
     reviewProject: (item, parent) => epicAnalysisProject(parent, item),
@@ -1196,11 +1227,17 @@ export async function createRuntime(
         "Move this story to the Code review lane to run a review or change its outcome.",
       );
   };
-  register("code-review:get", reviewTask, ({ taskId }) =>
-    codeReviews.get(taskId),
-  );
-  register("code-review:start", reviewTask, ({ taskId }) => {
+  register("code-review:get", reviewTask, ({ taskId }) => {
+    const remote = team?.remoteSession(taskId);
+    return remote ? task(taskId).sharedSession?.review ?? (remote.review ? {...remote.review, taskId} : null) : codeReviews.get(taskId);
+  });
+  register("code-review:start", reviewTask, async ({ taskId }) => {
     requireReviewLane(taskId);
+    const remote = team?.remoteSession(taskId);
+    if (remote) {
+      await team!.sendSessionCommand(taskId, "review-start", "Run code review for this story's recorded changes.");
+      return task(taskId).sharedSession?.review ?? null;
+    }
     return codeReviews.start(taskId);
   });
   register("code-review:cancel", reviewRun, ({ taskId, runId }) =>
@@ -1237,7 +1274,12 @@ export async function createRuntime(
   register(
     "code-review:discuss",
     reviewRun.extend({ text: nonempty.max(20000) }).strict(),
-    ({ taskId, runId, text }) => codeReviews.discuss(taskId, runId, text),
+    async ({ taskId, runId, text }) => {
+      const remote = team?.remoteSession(taskId);
+      if (!remote) return codeReviews.discuss(taskId, runId, text);
+      await team!.sendSessionCommand(taskId, "review-question", text, runId);
+      return task(taskId).sharedSession?.review ?? {...remote.review!, taskId};
+    },
   );
   register(
     "code-review:request-fixes",

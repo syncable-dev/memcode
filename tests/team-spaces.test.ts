@@ -260,7 +260,8 @@ test("two devices on one account see only the current claim owner's reported wor
     await waitForPeer(() => peerClaim()?.activity?.phase === "testing", "an open teammate's board receives phase changes without a manual refresh");
     story.run.state = "finished";
     await owner.release(story.id, projectId);
-    await waitForPeer(() => !peerClaim(), "the remote worker disappears automatically when its claim is released");
+    await waitForPeer(() => !peer.status(joined.projectId)?.workspace.claims.some(c => c.storyId === remoteStory.id), "the running claim disappears automatically when released");
+    assert.equal(peerClaim()?.session?.state, "finished", "the finished conversation stays available for teammates to continue");
     await peer.acquire(remoteStory.id, joined.projectId);
     await owner.synchronize(projectId);
     assert.equal(peerClaim()?.activity, undefined);
