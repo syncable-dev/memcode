@@ -1,0 +1,31 @@
+.demo-document-content .source-viewer {
+  min-height: 100%;
+  overflow: auto;
+  background: #fff;
+}
+.demo-document-content .source-code {
+  min-width: 100%;
+  width: max-content;
+  padding: 18px 0;
+  font: 12px/1.8 Consolas, "SFMono-Regular", monospace;
+}
+.demo-document-content .source-line {
+  display: flex;
+  padding-right: 24px;
+}
+.demo-document-content .source-line.active {
+  background: #edf6df;
+}
+.demo-document-content .source-line code {
+  white-space: pre;
+  font: inherit;
+}
+.demo-document-content .source-line-number {
+  min-width: 3.5em;
+  border: 0;
+  border-right: 1px solid #e6ece2;
+  margin-right: 18px;
+  color: #61725b;
+  background: #fafcf9;
+  font: inherit;
+}

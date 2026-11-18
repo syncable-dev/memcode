@@ -1,3 +1,7 @@
+import { fileLink, type FileReference } from '../src/file-reference';
+import { artifactFormat } from '../src/artifact-format';
+import { initializeCodeReviewWorkflow } from '../src/code-review-workflow';
+import { demoReviews, menuChanges, menuSource, menuSourcePath } from './review';
 import { initialState } from '../src/seed';
 import type { AppState, CreateTask, WorkItem, MemCodeAPI, RuntimeInfo, Harness } from '../src/shared';
 
@@ -10,11 +14,18 @@ const project = { ...state.projects[0], id: 'example', name: 'Lumen', descriptio
 const harnesses: Harness[] = ['codex', 'claude', 'cursor'];
 export const runtime: RuntimeInfo = { appVersion: 'Website example', memtraceAvailable: true, dataPath: 'In-memory website example', harnesses: harnesses.map((id) => ({ id, name: { codex: 'Codex', claude: 'Claude Code', cursor: 'Cursor' }[id], available: true, path: `/example/${id}`, models: [{ id: 'configured-model', label: 'Your configured model', tier: 'balanced' } as any] })) };
 Object.assign(state, { projects: [project], activeProjectId: project.id, tasks: state.tasks.slice(0, 6), epics: [], artifacts: [], onboarding: { version: 1, step: 'ready', dismissed: true }, workerConnections: Object.fromEntries(harnesses.map((id) => [id, { harness: id, approvedAt: at, runtimePath: `/example/${id}`, auth: 'authenticated', scopeVersion: 1 }])), storyComments: [], reviewComments: [] });
+initializeCodeReviewWorkflow(state, project.id);
+const reviewWorkflow = state.reviewWorkflows![project.id];
+export const tourTitle = 'Keep focus in the mobile menu';
+export const tourBrief = 'Return focus to the menu button when a reader closes the navigation with Escape.';
+export const tourQuestion = 'Where does focus go when I press Escape?';
+const tourReply = 'Escape closes the menu. I’ll check that focus returns to the menu button, including when the last link is selected.';
 const titles = ['Create a fast documentation search', 'Make navigation work beautifully on mobile', 'Build the documentation landing page', 'Add a readable dark theme', 'Review keyboard navigation', 'Write the getting-started guide'];
 state.tasks.forEach((task, index) => {
   task.identifier = `MC-${String(index + 1).padStart(3, '0')}`; task.id = `demo-${index + 1}`; task.title = titles[index];
   task.description = ['Help readers find the right page quickly. Keep keyboard navigation clear, handle empty results, and add a focused check.', 'Make the table of contents feel natural on a small screen, with a clear open and close action.', 'Build a welcoming first page with clear next steps, a quiet visual hierarchy and an interactive example.', 'Use the project’s existing design tokens to add a calm, readable dark theme.', 'Check focus order, visible states and keyboard shortcuts before marking the work done.', 'Explain the first useful step. Include a small working example and a concise checklist.'][index];
-  task.example = false; task.stage = ['planned', 'planned', 'working', 'working', 'review', 'done'][index] as any;
+  task.example = false; task.stage = (['planned', 'planned', 'working', 'working', 'review', 'done'] as const)[index];
+  task.statusId = task.stage === 'review' ? reviewWorkflow.codeReviewStatusId : `${project.id}:${task.stage}`;
   task.run = { state: index === 2 || index === 3 ? 'running' : index >= 4 ? 'finished' : 'idle', branch: project.branch, ...(index > 1 ? { startedAt: at } : {}) }; task.assignment = 'auto'; task.estimate = [3, 3, 5, 3, 2, 2][index];
   task.checklist = ['Read the relevant project context', 'Build a focused change', 'Review the output and checks'].map((text, i) => ({ id: `${task.id}-${i}`, text, done: task.stage === 'done' || i < (index > 1 ? 2 : 0) }));
   task.messages = [{ id: `${task.id}-brief`, role: 'user', text: task.description, at }, { id: `${task.id}-context`, role: 'tool', text: 'MemCode context · Example source scope\nMatched the page component, navigation styles and existing accessibility checks. All measurements in this walkthrough are illustrative.', at }, { id: `${task.id}-reply`, role: 'assistant', text: 'I’ve kept the change focused on the documentation experience.\n\n### What I’m building\n- A clearer page hierarchy and responsive navigation.\n- Keyboard-friendly interactions using the existing components.\n- A small check for the behavior we changed.\n\nThe **Browser** shows the example app. **Artifacts** keeps the saved report and design output; **Changes** shows the code for review. The **Terminal** shows a simulated dev server.\n\nThis is an interactive example, not a live worker run.', at }];
@@ -44,6 +55,111 @@ function addArtifacts(task: WorkItem) {
 const publish = () => { for (const listener of listeners) listener(structuredClone(state)); };
 const encoded = (text: string) => btoa(String.fromCharCode(...new TextEncoder().encode(text)));
 const taskFor = (id: string) => { const task = state.tasks.find((item) => item.id === id); if (!task) throw Error('Choose an example story.'); return task; };
+function resolveExampleFile(id: string, href: string): FileReference {
+  taskFor(id);
+  const { path, line } = fileLink(href);
+  if (path === menuSourcePath)
+    return { path, relativePath: path, name: 'closeMenu.ts', format: 'text', revision: 'menu-focus-v1', size: menuSource.byteLength, line };
+  const artifact = state.artifacts.find((item) => item.taskId === id && (item.path === path || item.name === path));
+  if (!artifact) throw Error('This walkthrough only includes the recorded source and saved story artifacts.');
+  return {
+    path: artifact.path, relativePath: artifact.name, name: artifact.name, format: artifactFormat(artifact.name),
+    revision: artifact.revision ?? artifact.id, size: 0, artifactId: artifact.id, line,
+  };
+}
+const reviews = demoReviews(taskFor, publish, (task) => { task.statusId = reviewWorkflow.acceptanceStatusId; });
+reviews.ensure(taskFor('demo-5'));
+
+let tourStoryId: string | undefined;
+let submittingTour = false;
+let sendingTourQuestion = false;
+const guidedMessageIds = new Set<string>();
+
+export function prepareTourConversation(id: string) {
+  if (id !== tourStoryId || !guidedMessageIds.size) return;
+  const task = taskFor(id);
+  task.messages = task.messages.filter((message) => !guidedMessageIds.has(message.id));
+  guidedMessageIds.clear();
+  publish();
+}
+
+export function submitTourQuestion(send: () => void) {
+  sendingTourQuestion = true;
+  try { send(); } finally { sendingTourQuestion = false; }
+}
+
+async function sendDemoFollowup(id: string, text: string) {
+  const task = taskFor(id);
+  const messageId = crypto.randomUUID();
+  const replyId = crypto.randomUUID();
+  const queuedAt = new Date().toISOString();
+  if (sendingTourQuestion && id === tourStoryId) {
+    guidedMessageIds.add(messageId);
+    guidedMessageIds.add(replyId);
+  }
+  task.messages.push({ id: messageId, role: 'user', text, at: queuedAt, followupState: 'queued', queuedAt });
+  publish();
+  setTimeout(() => {
+    const queued = task.messages.find((item) => item.id === messageId);
+    if (!queued || queued.followupState !== 'queued') return;
+    queued.followupState = 'included';
+    task.messages.push({
+      id: replyId, role: 'assistant', at: new Date().toISOString(),
+      text: queued.text === tourQuestion ? tourReply : 'Your follow-up is attached to this story. In MemCode, the worker picks up queued follow-ups automatically when ready. This website reply is an example.',
+    });
+    publish();
+  }, 2000);
+  return { messageId };
+}
+
+export function submitTourStory(submit: () => void) {
+  submittingTour = true;
+  try { submit(); } finally { submittingTour = false; }
+}
+
+function createDemoTask(input: CreateTask, guided = false): WorkItem {
+  if (guided && tourStoryId) return taskFor(tourStoryId);
+  const now = new Date().toISOString();
+  const task: WorkItem = {
+    ...input, id: crypto.randomUUID(), identifier: `MC-${String(state.tasks.length + 1).padStart(3, '0')}`,
+    title: input.title || input.description.split(/[\n.!?]/)[0].slice(0, 90), category: 'Experience',
+    stage: 'planned', statusId: `${project.id}:planned`, run: { state: 'idle' }, example: false,
+    createdAt: now, updatedAt: now,
+    messages: [{ id: crypto.randomUUID(), role: 'user', text: input.description, at: now }],
+    checklist: ['Explore the source context', 'Implement a focused change', 'Review the result'].map((text) => ({ id: crypto.randomUUID(), text, done: false })),
+  };
+  if (guided) tourStoryId = task.id;
+  qualify(task);
+  state.tasks.unshift(task);
+  addArtifacts(task);
+  publish();
+  demoEvent('story-created', { storyId: task.identifier });
+  return task;
+}
+
+export function getTourStory(): WorkItem {
+  if (tourStoryId) return taskFor(tourStoryId);
+  return createDemoTask({
+    projectId: project.id, title: tourTitle, description: tourBrief,
+    harness: 'codex', assignment: 'auto', priority: 'medium', kind: 'fix',
+  }, true);
+}
+
+export function setTourLane(id: string, stage: 'planned' | 'working' | 'review') {
+  const task = taskFor(id);
+  const now = new Date().toISOString();
+  task.stage = stage;
+  task.statusId = stage === 'review' ? reviewWorkflow.codeReviewStatusId : `${project.id}:${stage}`;
+  task.updatedAt = now;
+  task.run = stage === 'planned' ? { state: 'idle' } : {
+    state: stage === 'review' ? 'finished' : 'running', branch: project.branch,
+    startedAt: task.run.startedAt ?? now, ...(stage === 'review' ? { finishedAt: now } : {}),
+  };
+  if (stage === 'review') reviews.ensure(task);
+  publish();
+  demoEvent('story-moved', { storyId: task.identifier, stage });
+}
+
 const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="640"><rect width="1000" height="640" fill="#0b2118"/><circle cx="760" cy="310" r="230" fill="#164532"/><circle cx="760" cy="310" r="170" fill="none" stroke="#78ccab" stroke-width="2"/><path d="M580 310h360M760 130v360" stroke="#78ccab"/><text x="72" y="145" fill="#9bd8bb" font-family="sans-serif" font-size="16" letter-spacing="5">LUMEN / DOCUMENTATION</text><text x="72" y="285" fill="#f2f8f1" font-family="sans-serif" font-size="68">A little clarity.</text><text x="72" y="365" fill="#b7ddc5" font-family="sans-serif" font-size="68">A better start.</text><text x="72" y="540" fill="#9ab5a5" font-family="sans-serif" font-size="18">Illustrative design output · MemCode website example</text></svg>`;
 export const designImage = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
 export const report = '# A welcoming first release\n\nThe documentation page now gives readers one clear next step.\n\n## What changed\n\n- A responsive introduction and navigation.\n- Accessible buttons with visible focus states.\n- A concise search empty state.\n\n## Review checklist\n\n- [x] Page hierarchy reviewed\n- [x] Example checks displayed\n- [ ] Human review before marking done\n\n> This is a saved example report. No real repository, test or worker ran on this website.\n\n```tsx\nexport function Welcome() {\n  return <h1>A little clarity. A better start.</h1>;\n}\n```';
@@ -67,6 +183,7 @@ export function installDemo() {
     } });
   }
   const methods: Record<string, any> = {
+    ...reviews.api,
     load: async () => ({ state: structuredClone(state), runtime }),
     onState: (listener: (state: AppState) => void) => { listeners.add(listener); return () => listeners.delete(listener); },
     accountStatus: async () => ({ status: 'unknown', label: 'Interactive website example', detail: 'No account is signed in to this demo.', loginPending: false }),
@@ -76,22 +193,43 @@ export function installDemo() {
     teamsList: async () => ({ teams: [], configured: false, canCreate: false, identityAvailable: false }),
     workerConnectionStatus: async () => harnesses.map((harness) => ({ harness, installed: true, connected: true, runtimePath: `/example/${harness}`, auth: 'authenticated', note: 'Example connection. No installed tool is accessed.', loginCommand: '' })),
     updateOnboarding: async (patch: any) => { Object.assign(state.onboarding!, patch); publish(); return state.onboarding; },
-    updateTask: async (id: string, patch: any) => { const task = taskFor(id); Object.assign(task, patch, { updatedAt: new Date().toISOString() }); publish(); if (patch.stage) { demoEvent('story-moved', { storyId: task.identifier, stage: patch.stage }); } },
-    createTask: async (input: CreateTask) => { const task = { ...structuredClone(state.tasks[0]), ...input, id: crypto.randomUUID(), identifier: `MC-${String(state.tasks.length + 1).padStart(3, '0')}`, title: input.title || input.description.split(/[\n.!?]/)[0].slice(0, 90), stage: 'planned', run: { state: 'idle' }, example: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), messages: [{ id: crypto.randomUUID(), role: 'user', text: input.description, at }], checklist: ['Explore the source context', 'Implement a focused change', 'Review the result'].map((text) => ({ id: crypto.randomUUID(), text, done: false })) } as WorkItem; qualify(task); state.tasks.unshift(task); addArtifacts(task); publish(); demoEvent('story-created', { storyId: task.identifier }); return task; },
+    updateTask: async (id: string, patch: Partial<WorkItem>) => {
+      const task = taskFor(id);
+      Object.assign(task, patch, { updatedAt: new Date().toISOString() });
+      if (patch.stage && !patch.statusId) task.statusId = patch.stage === 'review' ? reviewWorkflow.codeReviewStatusId : `${project.id}:${patch.stage}`;
+      if (patch.statusId === reviewWorkflow.codeReviewStatusId || (patch.stage === 'review' && !patch.statusId)) {
+        setTourLane(id, 'review');
+        return;
+      }
+      publish();
+      if (patch.stage) demoEvent('story-moved', { storyId: task.identifier, stage: patch.stage });
+    },
+    createTask: async (input: CreateTask) => createDemoTask(input, submittingTour),
     qualifyTask: async (id: string) => { qualify(taskFor(id)); publish(); },
     analyzeProject: async () => { demoEvent('context-explained'); },
     refreshIntelligence: async () => state.qualitySnapshots[0],
     queryIntelligence: async (_projectId: string, section: string) => ({ section, title: `Example ${section}`, summary: 'Illustrative project context. MemCode retrieves real evidence from your local Memtrace graph after you connect a project.', items: [{ id: 'example-context', title: 'Documentation workspace', description: 'The example connects navigation, search, styles and their verification targets.', badge: 'Example' }], notes: ['Synthetic example data. No source files are read by this website.'], capturedAt: at, graphRevision: 'example-graph' }),
-    startWorker: async (id: string) => { const task = taskFor(id); task.stage = 'working'; task.run = { state: 'running', startedAt: new Date().toISOString(), branch: project.branch }; publish(); setTimeout(() => { task.run = { state: 'finished', finishedAt: new Date().toISOString(), branch: project.branch }; task.stage = 'review'; task.messages.push({ id: crypto.randomUUID(), role: 'assistant', at: new Date().toISOString(), text: 'The example change is ready for review. Open **Changes**, **Artifacts**, **Browser** or **Terminal** to explore the result.\n\nThis is a scripted walkthrough; no real worker or test ran.' }); publish(); demoEvent('worker-finished'); }, 3000); },
+    startWorker: async (id: string) => {
+      const task = taskFor(id);
+      setTourLane(id, 'working');
+      const run = task.run;
+      setTimeout(() => {
+        if (task.run !== run || run.state !== 'running') return;
+        task.messages.push({ id: crypto.randomUUID(), role: 'assistant', at: new Date().toISOString(), text: 'The example change is ready for code review. Open Code review to inspect the finding, or Changes to read the patch.' });
+        setTourLane(id, 'review');
+        demoEvent('worker-finished');
+      }, 3000);
+    },
     stopWorker: async (id: string) => { taskFor(id).run.state = 'stopped'; publish(); },
-    sendFollowup: async (id: string, text: string) => { const task = taskFor(id); const messageId = crypto.randomUUID(); task.messages.push({ id: messageId, role: 'user', text, at: new Date().toISOString(), followupState: 'queued', queuedAt: new Date().toISOString() }); publish(); setTimeout(() => { const message = task.messages.find((m) => m.id === messageId); if (!message || message.followupState !== 'queued') return; message.followupState = 'included'; task.messages.push({ id: crypto.randomUUID(), role: 'assistant', at: new Date().toISOString(), text: 'Your follow-up is attached to this story. In MemCode, the worker picks up queued follow-ups automatically when ready. This website reply is an example.' }); publish(); }, 2000); return { messageId }; },
+    sendFollowup: sendDemoFollowup,
     cancelQueuedFollowup: async (id: string, messageId: string) => { const message = taskFor(id).messages.find((m) => m.id === messageId); if (message) message.followupState = 'cancelled'; publish(); },
     updateQueuedFollowup: async (id: string, messageId: string, text: string) => { const message = taskFor(id).messages.find((m) => m.id === messageId); if (message) message.text = text; publish(); },
     addMessage: async (id: string, text: string) => { taskFor(id).messages.push({ id: crypto.randomUUID(), role: 'user', text, at: new Date().toISOString() }); publish(); },
     storyCommentIdentity: async () => ({ id: 'example-reader', name: 'You', source: 'local' }),
     readArtifact: async (id: string) => id.endsWith('-design') ? designImage : report,
     readArtifactThumbnail: async (id: string) => id.endsWith('-design') ? ({ kind: 'image', format: 'image', dataUrl: designImage }) : ({ kind: 'document', format: 'markdown', title: 'A welcoming first release', lines: ['A clear documentation experience.', 'Responsive navigation and keyboard controls.', 'Example checks, ready for human review.'] }),
-    workerChanges: async (id: string) => ({ taskId: id, additions: 5, deletions: 1, files: 1, checkpoints: [{ id: 'example-change', runId: 'example-run', taskId: id, agentId: 'example-worker', harness: taskFor(id).harness, branch: project.branch, startedAt: at, at, basis: 'scoped-baseline', files: [{ path: 'src/pages/documentation.tsx', status: 'modified', additions: 5, deletions: 1, binary: false, hunks: [{ oldStart: 1, newStart: 1, lines: [{ kind: 'delete', text: 'export const title = "Documentation";', oldLine: 1 }, ...['export function DocumentationPage() {', '  return <main className="documentation">', '    <h1>A little clarity. A better start.</h1>', '  </main>;', '}'].map((text, i) => ({ kind: 'add', text, newLine: i + 1 }))] }] }] }] }),
+    resolveFile: async (id: string, href: string) => resolveExampleFile(id, href),
+    workerChanges: async (id: string) => (taskFor(id).codeReview || id === tourStoryId) ? menuChanges(taskFor(id)) : ({ taskId: id, additions: 5, deletions: 1, files: 1, checkpoints: [{ id: 'example-change', runId: 'example-run', taskId: id, agentId: 'example-worker', harness: taskFor(id).harness, branch: project.branch, startedAt: at, at, basis: 'scoped-baseline', files: [{ path: 'src/pages/documentation.tsx', status: 'modified', additions: 5, deletions: 1, binary: false, hunks: [{ oldStart: 1, newStart: 1, lines: [{ kind: 'delete', text: 'export const title = "Documentation";', oldLine: 1 }, ...['export function DocumentationPage() {', '  return <main className="documentation">', '    <h1>A little clarity. A better start.</h1>', '  </main>;', '}'].map((text, i) => ({ kind: 'add', text, newLine: i + 1 }))] }] }] }] }),
     onTerminal: (listener: (value: any) => void) => { terminalListeners.add(listener); return () => terminalListeners.delete(listener); },
     terminal: async (taskId: string, request: any) => { if (request.action === 'close') terminalClosed = true; if (request.action === 'start') terminalClosed = false; const result = { sessions: terminalClosed ? [] : [{ ...session, taskId }], shells: [{ id: 'example', name: 'Example shell', command: 'example', args: [] }], session: { ...session, taskId }, chunks: [] as any[] };
       if (request.action === 'observe' && !request.after) result.chunks = [{ seq: 1, data: encoded(terminalText) }];
