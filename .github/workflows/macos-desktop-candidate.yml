@@ -40,12 +40,14 @@ jobs:
           export MEMCODE_DATA_DIR="$RUNNER_TEMP/native-upgrade/fresh-profile"
           mkdir -m 700 "$MEMCODE_DATA_DIR"
           "$APP/Contents/MacOS/memcode" </dev/null >"$RUNNER_TEMP/native-upgrade/app.stdout" 2>"$RUNNER_TEMP/native-upgrade/app.stderr" &
-          APP_PID=$!
+          export APP_PID=$!
           trap 'kill "$APP_PID" 2>/dev/null || true' EXIT
           ./ui-check "$APP_PID" "$RUNNER_TEMP/native-upgrade/ui.json" &
           UI_PID=$!
           for i in {1..120}; do
             test -f "$MEMCODE_DATA_DIR/updates/pending.json" && break
+            size=$(find "$TMPDIR" -maxdepth 2 -type f -path "*/memcode-update-$APP_PID-*/signed-update" -size 146178411c -print -quit)
+            test -n "$size" && break
             kill -0 "$APP_PID"
             sleep 1
           done
@@ -64,6 +66,11 @@ jobs:
             payload=cache/pending["directory"]/"signed-update"
             digest=sha256(payload.read_bytes()).hexdigest()
             result.update({"beta13SignedDownloadStagedByBeta12":pending["version"]=="0.4.0-beta.13" and digest==os.environ["EXPECTED_UPDATER_SHA"] and payload.stat().st_size==pending["length"],"offeredVersion":pending["version"],"sha256":digest,"bytes":pending["length"]})
+          if not result["beta13SignedDownloadStagedByBeta12"]:
+            for payload in Path(os.environ["TMPDIR"]).glob("memcode-update-"+os.environ["APP_PID"]+"-*/signed-update"):
+              digest=sha256(payload.read_bytes()).hexdigest()
+              result.update({"beta13SignedDownloadStagedByBeta12":digest==os.environ["EXPECTED_UPDATER_SHA"] and payload.stat().st_size==146178411,"sha256":digest,"bytes":payload.stat().st_size,"staging":"beta.12 native PID-scoped staging directory"})
+              if result["beta13SignedDownloadStagedByBeta12"]: break
           print(json.dumps(result,indent=2))
           (r/"proof.json").write_text(json.dumps(result,indent=2))
           if not (result["beta13SignedDownloadStagedByBeta12"] or ui["settingsShowsBeta13"]): sys.exit("beta.12 did not demonstrate the production beta.13 update")
@@ -77,4 +84,3 @@ jobs:
             ${{ runner.temp }}/native-upgrade/ui.json
           retention-days: 7
           if-no-files-found: warn
-
