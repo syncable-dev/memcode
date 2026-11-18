@@ -3,6 +3,10 @@ name: Private macOS desktop candidate
 on:
   workflow_dispatch:
     inputs:
+      release_source:
+        description: The exact private release preparation commit containing both reviewed engine pins
+        type: string
+        required: true
       release_mode:
         description: Apple trust requirement (public-release fails without signing and notarization)
         type: choice
@@ -15,9 +19,6 @@ on:
         description: Run real account, fresh project graph and live watch acceptance with a dedicated approved test grant
         type: boolean
         default: false
-  push:
-    branches:
-      - beta/memcode-desktop-candidate
 
 permissions:
   contents: read
@@ -28,7 +29,7 @@ concurrency:
 
 jobs:
   macos-arm64:
-    if: github.repository == 'syncable-dev/memcode' && github.event.repository.private == true && github.ref == 'refs/heads/beta/memcode-desktop-candidate'
+    if: github.repository == 'syncable-dev/memcode' && github.event.repository.private == true && github.ref == 'refs/heads/release/beta13-mac-app-controller'
     runs-on: macos-15
     timeout-minutes: 90
     env:
@@ -45,7 +46,29 @@ jobs:
       - name: Check out the reviewed private candidate
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
+          ref: ${{ inputs.release_source }}
+          fetch-depth: 0
           persist-credentials: false
+      - name: Verify both platform pins and application provenance
+        env:
+          RELEASE_SOURCE: ${{ inputs.release_source }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_SOURCE" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$RELEASE_SOURCE"
+          PREP=0f9cbe5cd45c25de96d32e0dcfe068baca57e96b
+          git merge-base --is-ancestor "$PREP" HEAD
+          test "$(git diff --name-only "$PREP" HEAD)" = 'scripts/memtrace-engine.json'
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import {readFileSync} from 'node:fs';
+          const {bundles} = JSON.parse(readFileSync('scripts/memtrace-engine.json'));
+          assert.deepEqual(Object.keys(bundles).sort(), ['macos-aarch64','windows-x86_64']);
+          for (const bundle of Object.values(bundles)) {
+            assert.equal(bundle.id,'f8bcf4413-beta.1');
+            assert.equal(bundle.engineVersion,'1.2.21');
+          }
+          NODE
 
       - name: Check candidate prerequisites
         id: runtime
@@ -85,7 +108,7 @@ jobs:
         run: npm ci
 
       - name: Check types, behavior and license material
-        timeout-minutes: 5
+        timeout-minutes: 12
         run: |
           npm run typecheck
           node --import tsx --test --test-reporter=tap --test-timeout=90000 tests/*.test.ts
@@ -94,6 +117,38 @@ jobs:
       - name: Verify native Mac discovery fixtures before packaging
         timeout-minutes: 2
         run: node --import tsx scripts/macos-harness-acceptance.mjs
+
+      - name: Recover the digest-verified ONNX notices from the previous shipped Mac updater
+        run: |
+          set -euo pipefail
+          cache="$RUNNER_TEMP/memcode-beta12-notices"
+          mkdir -p "$cache"
+          curl --fail --silent --show-error --location --retry 3 'https://d12b8r6xagt10r.cloudfront.net/releases/memcode/0.4.0-beta.12/macos-aarch64/MemCode.app.tar.gz' -o "$cache/previous.tar.gz"
+          echo '2b46e92c497bb06d35cfbdf9b86e2ce51dc3865bb6d781a20e034497c5ba387b  previous.tar.gz' > "$cache/sha256"
+          (cd "$cache" && shasum -a 256 -c sha256 && tar -xzf previous.tar.gz)
+          cat > "$cache/notices.mjs" <<'JS'
+          import {readFile} from 'node:fs/promises';
+          import {join,resolve} from 'node:path';
+          import {createHash} from 'node:crypto';
+          if(process.argv[1] && resolve(process.argv[1])===resolve('scripts/prepare-retriever-runtime.mjs')) {
+            const bodies=new Map();
+            for(const [name,length,digest] of [
+              ['LICENSE',1073,'2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c'],
+              ['ThirdPartyNotices.txt',326866,'e9e90971a8e75a9a8ac0c6412e29c1202d079998389915aa485f46c816c3b4cc'],
+            ]) {
+              const data=await readFile(join(import.meta.dirname,'MemCode.app/Contents/Resources/retriever-runtime/node_modules/onnxruntime-node',name));
+              if(data.length!==length || createHash('sha256').update(data).digest('hex')!==digest) throw Error('Invalid pinned notice '+name);
+              bodies.set('https://raw.githubusercontent.com/microsoft/onnxruntime/v1.23.2/'+name,data);
+            }
+            const normalFetch=globalThis.fetch.bind(globalThis);
+            globalThis.fetch=(request,options)=>{
+              const body=bodies.get(String(request?.url??request));
+              if(body && (options?.method??request?.method??'GET')==='GET') return Promise.resolve(new Response(body,{status:200,headers:{'content-length':String(body.length)}}));
+              return normalFetch(request,options);
+            };
+          }
+          JS
+          node --check "$cache/notices.mjs"
 
       - name: Build the private app, disk image and signed updater
         env:
@@ -108,7 +163,9 @@ jobs:
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
-        run: node scripts/tauri-package.mjs
+        run: |
+          export NODE_OPTIONS="--import=file://$RUNNER_TEMP/memcode-beta12-notices/notices.mjs"
+          node scripts/tauri-package.mjs
 
       - name: Verify the bundled runtime, application trust and compatibility
         run: |
@@ -189,28 +246,13 @@ jobs:
       - name: Verify downloaded models survive an actual resource-root move and two offline restarts
         timeout-minutes: 25
         run: |
-          node --input-type=module <<'NODE'
-          import {createHash} from 'node:crypto';
-          import {createReadStream,createWriteStream} from 'node:fs';
-          import {mkdir} from 'node:fs/promises';
-          import {join} from 'node:path';
-          import {Readable} from 'node:stream';
-          import {pipeline} from 'node:stream/promises';
-          import {execFileSync} from 'node:child_process';
-          const directory=join(process.env.RUNNER_TEMP,'reviewed-memcode-beta10');
-          await mkdir(directory,{recursive:true});
-          const archive=join(directory,'MemCode.app.tar.gz');
-          const response=await fetch('https://d12b8r6xagt10r.cloudfront.net/releases/memcode/0.4.0-beta.10/macos-aarch64/MemCode.app.tar.gz');
-          if(!response.ok||!response.body)throw Error('Could not fetch the reviewed previous installer');
-          await pipeline(Readable.fromWeb(response.body),createWriteStream(archive,{flags:'wx'}));
-          const hash=createHash('sha256');for await(const chunk of createReadStream(archive))hash.update(chunk);
-          if(hash.digest('hex')!=='54cb1619d1e672242f7e29e33a63410973e6754e0c0fff5e272456f9f112f687')throw Error('Previous installer integrity failed');
-          execFileSync('/usr/bin/tar',['-xzf',archive,'-C',directory]);
-          execFileSync(process.execPath,['scripts/upgrade-models-acceptance.mjs','--previous-resources',join(directory,'MemCode.app/Contents/Resources'),'--resources','src-tauri/target/release/bundle/macos/MemCode.app/Contents/Resources'],{stdio:'inherit'});
-          NODE
+          node scripts/upgrade-models-acceptance.mjs \
+            --previous-resources "$RUNNER_TEMP/memcode-beta12-notices/MemCode.app/Contents/Resources" \
+            --resources src-tauri/target/release/bundle/macos/MemCode.app/Contents/Resources
 
       - name: Verify the updater and collect bounded candidate files
         env:
+          RELEASE_SOURCE: ${{ inputs.release_source }}
           ENGINE_ACCEPTANCE: ${{ github.event_name == 'workflow_dispatch' && inputs.engine_acceptance && 'true' || 'false' }}
         run: |
           node --input-type=module <<'NODE'
@@ -236,7 +278,7 @@ jobs:
           const provenance = {
             product: 'MemCode',
             version: JSON.parse(readFileSync('package.json', 'utf8')).version,
-            source: { repository: process.env.GITHUB_REPOSITORY, commit: process.env.GITHUB_SHA },
+            source: { repository: process.env.GITHUB_REPOSITORY, commit: process.env.RELEASE_SOURCE, buildController: process.env.GITHUB_SHA },
             target: 'aarch64-apple-darwin',
             published: false,
             updaterSignatureVerified: true,
