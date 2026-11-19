@@ -89,15 +89,34 @@ export function exactRevisionSource(
 }
 
 export class StartupPublicationTimeout extends Error {}
+/** The same checkout advanced while its current-source certificate was pending. */
+export class SourcePublicationChanged extends Error {}
 
 /** A worker may refresh only after its exact checkout's previous job has finished. */
-export function completedEpicIndex(result: unknown, project: Project, repoId: string): boolean {
-  const jobs: unknown = Array.isArray(result) ? result : (result as { jobs?: unknown } | null)?.jobs;
-  if (!Array.isArray(jobs) || !project.path || !jobs.every((job) =>
-    job && ["completed", "failed", "cancelled"].includes(job.status))) return false;
-  return jobs.some((job) => job.status === "completed" && job.repo_id === repoId &&
-    typeof jobPath(job) === "string" && pathKey(jobPath(job)) === pathKey(project.path!) &&
-    jobBranch(job) === project.branch);
+export function completedEpicIndex(
+  result: unknown,
+  project: Project,
+  repoId: string,
+): boolean {
+  const jobs: unknown = Array.isArray(result)
+    ? result
+    : (result as { jobs?: unknown } | null)?.jobs;
+  if (
+    !Array.isArray(jobs) ||
+    !project.path ||
+    !jobs.every(
+      (job) => job && ["completed", "failed", "cancelled"].includes(job.status),
+    )
+  )
+    return false;
+  return jobs.some(
+    (job) =>
+      job.status === "completed" &&
+      job.repo_id === repoId &&
+      typeof jobPath(job) === "string" &&
+      pathKey(jobPath(job)) === pathKey(project.path!) &&
+      jobBranch(job) === project.branch,
+  );
 }
 
 /** A saved failure may only be superseded by this checkout's stable native certificate. */
@@ -213,13 +232,24 @@ export function verifyingSourceRevision(
 ): string | undefined {
   if (
     exactRevisionSource(value, project, repoId) &&
-    value?.status === "partial" && value.ready === false &&
-    ["index_write_in_progress", "index_verification_running", "branch_publication_incomplete"].includes(value.reason) &&
-    value.token === null && value.indexing_revision === null &&
-    value.requested_source_matches === true && value.requested_revision_matches === true &&
-    value.retry_query_group === false && usable(value.source_revision) &&
-    value.error === undefined && value._error === undefined && value.error_code === undefined
-  ) return value.source_revision;
+    value?.status === "partial" &&
+    value.ready === false &&
+    [
+      "index_write_in_progress",
+      "index_verification_running",
+      "branch_publication_incomplete",
+    ].includes(value.reason) &&
+    value.token === null &&
+    value.indexing_revision === null &&
+    value.requested_source_matches === true &&
+    value.requested_revision_matches === true &&
+    value.retry_query_group === false &&
+    usable(value.source_revision) &&
+    value.error === undefined &&
+    value._error === undefined &&
+    value.error_code === undefined
+  )
+    return value.source_revision;
 }
 
 /** Counts and a current repository summary are not a source/publication certificate. */
@@ -311,7 +341,8 @@ export async function waitForIndexPublication(
   let reason = "",
     expectedSource: string | undefined,
     delay = pollMs;
-  let first = true, waitingForOwnedPublication = false;
+  let first = true,
+    waitingForOwnedPublication = false;
   while (now() < deadline) {
     assertActive();
     // Allow the first read the native request budget even if the shorter
@@ -350,17 +381,30 @@ export async function waitForIndexPublication(
       throw Error(
         `Memtrace job completed, but current source on branch ${branch} is not verified: Memtrace reported another repository, checkout or branch. Its result was not adopted.`,
       );
-    const writerSource = verifyingSourceRevision(revision, project, repoId) ?? writingSourceRevision(revision, project, repoId);
+    const writerSource =
+      verifyingSourceRevision(revision, project, repoId) ??
+      writingSourceRevision(revision, project, repoId);
     if (
       (revision?.reason === "index_write_in_progress" && !writerSource) ||
       (expectedSource &&
         (!exactRevisionSource(revision, project, repoId) ||
           revision.source_revision !== expectedSource ||
           revision.requested_source_matches === false))
-    )
-      throw Error(
-        "Memtrace could not verify the same source revision while publishing this checkout. Retry analysis for the current files.",
-      );
+    ) {
+      const message =
+        "Memtrace could not verify the same source revision while publishing this checkout. Retry analysis for the current files.";
+      if (
+        expectedSource &&
+        exactRevisionSource(revision, project, repoId) &&
+        usable(revision.source_revision) &&
+        revision.source_revision !== expectedSource &&
+        !revision.error &&
+        !revision._error &&
+        !revision.error_code
+      )
+        throw new SourcePublicationChanged(message);
+      throw Error(message);
+    }
     if (writerSource && !expectedSource) {
       expectedSource = writerSource;
       deadline = hardDeadline;

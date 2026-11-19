@@ -54,6 +54,23 @@ MemCode clone: `owned source retains extra source rows` (Windows, c411 engine,
 2026-11-19 19:04 UTC). No graph reset or manual snapshot repair was used for
 the successful independent-epic run above. This remains an engine release gate.
 
+Windows canonical-folder test on `df766a1`: Codex and Cursor completed while
+sharing the same `:source` graph and unchanged epic checkout. Claude's startup
+correctly refused a certificate for an older source, but unnecessarily failed
+when its peer saved a file during publication. The follow-up patch gives that
+specific source-advance error a typed identity and retries ordinary current-source
+analysis up to eight times. Foreign bindings and all other errors still fail;
+no forced index or certificate relaxation is introduced. Targeted tests (66)
+pass; final-source native repeat is pending.
+
+Engine investigation pointer for Mac (hypothesis, not a confirmed repair):
+`code-intelligence/src/ingestion/replay.rs:current_graph_at_walk_start` disables
+the current-identity set when `node_base_branch != config.branch`. Both real
+failures were on non-main branches. Check whether a managed `CurrentCheckout`
+projection should supply its authenticated current identity set instead of
+using the legacy inferred-main fallback. Preserve unmanaged feature inheritance
+and historical reads; do not merely allow the extra rows or remove the guard.
+
 ## Confirmed Windows failure
 
 Application source `127cf9ce34bac316b9d564a2f517cf29bcef812b` with engine
