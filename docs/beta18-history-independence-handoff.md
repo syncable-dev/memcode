@@ -39,6 +39,34 @@ the approved-account new-project flow, compact Settings/guide layout and the
 original-folder cold connection. Keep both production pins and publication on
 hold until the optimized engine and full two-device flow are cleared.
 
+## Optimized Mac history import and recovery passed, 2026-11-19
+
+The physical Mac built and tested engine
+`1ebcfda21d0a94a9405d7bda0c1c8f3a763332b5` from
+`fix/memcode-replay-retained-store`. The arm64 release build took 1,519 s.
+Executable SHA-256
+`af6bb90343e4dec092e8bf717579ac9f898ea7365a26c928b1384a25e4ca2f0a`.
+Both runs used separate QA stores, the approved short proof and the
+digest-verified pinned sidecar.
+
+- The fresh checkout indexed in 108.032 s and published all 188 episodes
+  in 276.065 s. A direct read at the saved Git time confirmed 25,419
+  nodes and 127,217 relationships with unique identities.
+- The cold copy of the previously failed store reopened and replayed all
+  150 commits in 283.792 s wall time. The engine corrected all 315
+  duplicate closures. The cutoff read confirmed the same unique counts,
+  and the repository API reports `needs_replay: false`. The store ID
+  and exact original 25,893-byte journal prefix survived.
+- The four controlled owned, product, direct and legacy engine checks
+  passed. In the separate review fixture, a read can start before the
+  graph publication appears. Three of four reviews completed on the
+  first run and on the standalone retry. The app's handling of that
+  transition is being corrected.
+
+The Mac retains the exact binary and sanitized evidence. Windows can
+validate this engine commit now against both fresh and retained graphs.
+The production pins and release draft remain unchanged.
+
 ## Retained Mac history recovered in the diagnostic run, 2026-11-19 22:29 UTC
 
 The actual native `replay_history` retry on a cold copy of the failed
