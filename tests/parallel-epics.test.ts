@@ -112,7 +112,7 @@ test("legacy epic rejection explains engine support and preserves the active che
 
 test("missing capability evidence cannot silently select the single-epic compatibility path", async () => {
   const f = await fixture();
-  const engine = Object.create(MemtraceEngine.prototype) as MemtraceEngine;
+  const engine = new MemtraceEngine(() => "protocol-fixture", { checkoutCapabilities: async () => null });
   for (const response of [{}, { error: "Engine is starting" }, { protocol_version: 1, checkout_modes: [] }]) {
     engine.call = async () => response;
     await assert.rejects(engine.ownedWorktreeSupport(f.project), /did not provide valid checkout capabilities/);

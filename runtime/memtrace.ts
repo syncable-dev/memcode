@@ -39,6 +39,7 @@ import {
   sourceChangedBeforePublication,
 } from "../src/local-analysis";
 import { appVersion } from "../src/version";
+import { checkoutCapabilities, readCheckoutCapabilities, type CheckoutCapabilities } from "./memtrace-capabilities";
 
 type Json = Record<string, any>;
 function unwrap(value: unknown): any {
@@ -107,6 +108,7 @@ export class MemtraceEngine {
       environment?: () => Promise<Record<string, string>>;
       privateProject?: () => boolean;
       managedGraphRoot?: string;
+      checkoutCapabilities?: (path: string) => Promise<CheckoutCapabilities | null>;
     } = {},
   ) {}
   scopeFor(projectId: string): MemtraceScopeBinding | null {
@@ -137,17 +139,10 @@ export class MemtraceEngine {
   }
   async ownedWorktreeSupport(project: Project): Promise<boolean> {
     try {
-      const capabilities = await this.call(
-        project,
-        "get_checkout_capabilities",
-        {},
+      const advertised = await (this.options.checkoutCapabilities ?? readCheckoutCapabilities)(this.configuredPath());
+      const capabilities = checkoutCapabilities(
+        advertised ?? await this.call(project, "get_checkout_capabilities", {}),
       );
-      if (capabilities?.protocol_version !== 1 ||
-          typeof capabilities?.owned_worktree_v1 !== "boolean" ||
-          !Array.isArray(capabilities?.checkout_modes))
-        throw new Error(
-          "Memtrace did not provide valid checkout capabilities. Reconnect the bundled Memtrace engine in Settings, then retry. Parallel epic support has not been verified.",
-        );
       return (
         capabilities?.protocol_version === 1 &&
         capabilities?.owned_worktree_v1 === true &&
