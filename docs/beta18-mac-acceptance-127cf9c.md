@@ -4,7 +4,7 @@ MemCode `0.4.0-beta.18` on physical macOS 27.2 (arm64). The tested application c
 
 **Worker, review and two-device checks passed. Hold publication.** The installed Mac app preserved its main graph during parallel work. All three workers continued in their original conversations. A Windows edit, cancellation and new message survived a real host shutdown. Windows also passed its platform suite on the same source. The signed updater bytes passed verification on both systems. One Mac relaunch showed a blank window until reload. The pinned engine also has a separate issue for external IDE clients during an epic.
 
-The [relaunch and signed updater results](beta18-mac-updater-127cf9c.md) cover the foreground launch, the single download across restart, and the remaining production install check.
+The [relaunch and signed updater results](beta18-mac-updater-127cf9c.md) cover the foreground launch, the single download across restart, and the completed installation and automatic relaunch of the regular Mac app.
 
 ## What changed
 
