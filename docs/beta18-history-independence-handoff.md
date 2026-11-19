@@ -3,6 +3,36 @@
 Status: **not cleared for publication**. This branch is the Windows-to-Mac
 handoff. Application changes are now present; native acceptance is in progress.
 
+## Retained Mac history recovered in the diagnostic run, 2026-11-19 22:29 UTC
+
+The actual native `replay_history` retry on a cold copy of the failed
+database completed all 150 commits with engine `1ebcfda2`. The engine
+corrected all 315 late duplicate closes, passed the original cutoff check
+and refreshed its graph cache. A direct read at the saved Git time found
+25,419 nodes and 127,217 relationships with no duplicate identities.
+The repository API reports `needs_replay: false`. The physical store ID
+and its exact 25,893-byte episode journal prefix survived. The recovered
+journal now contains 46,306 bytes.
+
+The binary was a diagnostic build with a 16 MiB Rust thread stack.
+SHA-256 `a213b03feee5593739ab9fac57047a7754a71305173c5cf78f87de89e5bc547a`.
+The first native retry arrived while derived graph work still held the
+store and was refused before replay. The successful request waited for
+graph readiness. The QA wrapper tried to parse the native tool's first
+text summary as JSON. It has been corrected to read the actual JSON
+response. The native log and independent database read establish the
+diagnostic recovery. The optimized recovery build is still compiling.
+
+Test-only follow-up `5d0f0a54ad41e72ea2909e0b90147d874b6e41f4`
+fixes the in-memory closed-row fixture. The 24 documented Mac unit
+gates, 64 projection tests and four source writer tests passed. The 43
+CLI branch tests passed with the diagnostic stack setting after a
+debug test overflowed with its default thread stack.
+
+The installed ad5637b Mac app showed Settings at 1000 × 620, with
+Workers, Dictation and Local retrieval accessible. Save remained visible.
+This used the original published pin and did not exercise a signed update.
+
 ## Retained history recovery candidate, 2026-11-19 22:14 UTC
 
 The ordinary reopen on ef8a preserved the complete episode journal. The
