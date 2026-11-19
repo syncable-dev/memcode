@@ -38,6 +38,7 @@ async function fixture(
     fail?: boolean;
     spawnFails?: boolean;
     preparationFails?: boolean;
+    ownedCheckout?: boolean;
     slots?: number;
     pickupGate?: boolean;
     settlementGate?: boolean;
@@ -143,6 +144,7 @@ async function fixture(
       manager.dispatchQueued();
     },
     {
+      ownedWorktreeSupport: async () => options.ownedCheckout === true,
       analyze: async () => "fixture",
       qualify: async () => {
         if (options.preparationFails) throw Error("Fixture preparation failed");
@@ -155,6 +157,8 @@ async function fixture(
         };
       },
       call: async (_project: unknown, name: string) => {
+        if (name === "fleet_branch_context" && options.ownedCheckout)
+          return { canonicalScope: "file::" + join(repo, "scope-0.ts"), recalled: JSON.stringify({ workspace_scope: repo }) };
         if (name === "fleet_acquire_lease")
           return { state: "granted", lease_id: "queue-lease" };
         if (name === "fleet_release_lease") releases++;
@@ -199,14 +203,14 @@ async function fixture(
   const runs = async (task: WorkItem) =>
     JSON.parse(
       await readFile(
-        join(repo, ".memcode/gates", task.id, "runs.json"),
+        join(task.run.workspace ?? repo, ".memcode/gates", task.id, "runs.json"),
         "utf8",
       ).catch(() => "[]"),
     ) as Array<{ index: number; prompt: string; at: number }>;
   const release = async (task: WorkItem, index: number) => {
-    await mkdir(join(repo, ".memcode/gates", task.id), { recursive: true });
+    await mkdir(join(task.run.workspace ?? repo, ".memcode/gates", task.id), { recursive: true });
     await writeFile(
-      join(repo, ".memcode/gates", task.id, index + ".release"),
+      join(task.run.workspace ?? repo, ".memcode/gates", task.id, index + ".release"),
       "release",
     );
   };
@@ -320,7 +324,7 @@ test("a finished provider still occupies its slot until its final contribution h
 
 test("all three adapters automatically coalesce busy follow-ups after Fleet cleanup, without duplicate passes", async () => {
   for (const provider of providers) {
-    const f = await fixture([provider]),
+    const f = await fixture([provider], { ownedCheckout: true }),
       task = f.tasks[0];
     try {
       await f.manager.start(task, f.project);
@@ -343,7 +347,15 @@ test("all three adapters automatically coalesce busy follow-ups after Fleet clea
         f.releases() > 0,
         "previous Fleet lease released before next pass",
       );
-      const prompt = (await f.runs(task))[1].prompt;
+      const passes = await f.runs(task);
+      assert.notEqual(task.run.workspace, f.repo);
+      for (const { prompt } of passes) {
+        const fleet = JSON.parse(prompt.split("Current Fleet plans and branch context:\n")[1].split("\n")[0]);
+        assert.equal(fleet.engine.canonicalScope, "file::" + join(task.run.workspace!, "scope-0.ts"));
+        assert.equal(JSON.parse(fleet.engine.recalled).workspace_scope, task.run.workspace);
+        assert.ok(!prompt.includes(f.repo), "neither the fresh nor resumed provider prompt exposes the shared base");
+      }
+      const prompt = passes[1].prompt;
       assert.ok(prompt.includes(`Source checkout: ${task.run.workspace}`));
       assert.ok(prompt.includes(join(task.run.workspace!, task.scope![0])));
       assert.ok(prompt.includes(one.text));

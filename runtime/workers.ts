@@ -37,7 +37,7 @@ import { collectedArtifactFiles, reconcileArtifacts } from "./artifact-catalog";
 import { WorkerInputs } from "./worker-input";
 import { startHarnessSession } from "./agents";
 import { WorkerStartupQueue } from "./worker-startup";
-import { workerCheckoutBrief, workerTurnContext } from "./worker-turn";
+import { workerCheckoutBrief, workerContextForPrompt, workerTurnContext } from "./worker-turn";
 import { previousProviderSession, resumableProviderSession } from "./provider-session";
 import { effectivePermissionMode } from "../src/permissions";
 import type { AgentEvent } from "./agents/types";
@@ -987,6 +987,9 @@ export class WorkerManager {
       conversation = claimReviewContext(task.messages, now());
       await this.changed();
       const turn = workerTurnContext(task, conversation, resumeSessionId ? 0 : 8000);
+      const contextForPrompt = (value: unknown) => contextConfig
+        ? workerContextForPrompt(value, workspace, project.path!)
+        : JSON.stringify(value);
       const prompt = [
         "You are implementing a work item in MemCode, a local coding-worker suite.",
         turn.intro,
@@ -1001,7 +1004,7 @@ export class WorkerManager {
         "After a source edit group, call coordinate action checkpoint to record its Fleet episode. Then inspect again before the next source edit. Artifact writes inside your private output folder do not claim shared source ownership.",
         "Use memcode-context terminal for PERSISTENT user-visible processes: dev servers, watchers, interactive REPLs and running apps. Start the actual program with its argument array (for example program=node, args=[tools/server.mjs]); do not detach it or redirect its output. The card shows the same PTY, live output and user input. Observe using sessionId and after=last seq. Reuse a running session instead of starting duplicates. Sessions remain available after your turn. Short grep/read/test tool commands remain native tool history, not card terminals. Never report a private detached process as a shared terminal.",
         "Current Fleet plans and branch context:\n" +
-          JSON.stringify(fleetContext),
+          contextForPrompt(fleetContext),
         "If a tool or test command is denied, report that exact blocker and continue independent work. Do not repeatedly try equivalent commands or change permission settings to get around it.",
         task.checklist.length
           ? "Runbook:\n" +
@@ -1011,10 +1014,10 @@ export class WorkerManager {
           : "",
         initialContext
           ? "Initial host context (read constraint continuations before editing):\n" +
-            JSON.stringify(initialContext)
+            contextForPrompt(initialContext)
           : task.evidence
             ? "Memtrace evidence (may be incomplete):\n" +
-              JSON.stringify(task.evidence)
+              contextForPrompt(task.evidence)
             : "Memtrace context is not attached. Read and qualify the relevant source before changing it.",
         turn.history,
         turn.current,
