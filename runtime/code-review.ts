@@ -890,7 +890,9 @@ export class CodeReviewManager {
     const linked =
       check &&
       check.linked &&
-      capture.implementationRunIds.includes(check.runId) &&
+      // A completed follow-up can verify this story's earlier edits without
+      // producing another edit checkpoint. The current pass, changes revision
+      // and exact captured source bind its check; edit run IDs are provenance.
       check.runId === task.run.changeRunId &&
       check.revision === task.changesRevision &&
       task.run.finishedSourceBinding === capture.sourceBinding &&

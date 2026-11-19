@@ -272,13 +272,20 @@ async function fixture(onSourceCheck?: () => void) {
 test("a failed graph preparation preserves the verified story patch, linked checks and immutable AST comparison after reopening", async () => {
   const f = await fixture();
   const failure = "The epic graph could not be verified.";
-  const client = f.manager({ prepare: async () => { throw Error(failure); } });
+  const client = f.manager({
+    prepare: async () => {
+      throw Error(failure);
+    },
+  });
   const reopened = f.manager();
   try {
     const path = "src/main.ts";
-    const before = "export function main(value: number) {\n  return value;\n}\n";
-    const after = "export function main(value: number) {\n  if (value < 0) return 0;\n  return Math.floor(value);\n}\n";
-    const sha = (source: string) => createHash("sha256").update(source).digest("hex");
+    const before =
+      "export function main(value: number) {\n  return value;\n}\n";
+    const after =
+      "export function main(value: number) {\n  if (value < 0) return 0;\n  return Math.floor(value);\n}\n";
+    const sha = (source: string) =>
+      createHash("sha256").update(source).digest("hex");
     const patch = createTwoFilesPatch("a/" + path, "b/" + path, before, after);
     const limitation = "An earlier edit has no verified source contents.";
     f.capture.patch = patch;
@@ -286,26 +293,49 @@ test("a failed graph preparation preserves the verified story patch, linked chec
     f.capture.limitations.push(limitation);
     Object.assign(f.capture.snapshot, {
       patchHash: sha(patch),
-      files: [{ path, beforeHash: sha(before), afterHash: sha(after), attribution: "native-edit" }],
+      files: [
+        {
+          path,
+          beforeHash: sha(before),
+          afterHash: sha(after),
+          attribution: "native-edit",
+        },
+      ],
       additions: 2,
       deletions: 1,
     });
     f.intercept((name, args) => {
-      if (name === "get_checkout_capabilities") return { source_quality_v1: true };
-      if (name !== "get_function_quality_metrics") throw Error("Unexpected graph query: " + name);
+      if (name === "get_checkout_capabilities")
+        return { source_quality_v1: true };
+      if (name !== "get_function_quality_metrics")
+        throw Error("Unexpected graph query: " + name);
       const src = args.source_content;
       assert.ok(src === before || src === after);
       return {
         _workflow: "immutable_source_quality_v1",
-        source_sha256: sha(src), source_bytes: Buffer.byteLength(src), file_path: path,
-        metrics_version: 3, quality_metrics_version: 1, matches: 1, truncated: false,
-        functions: [{
-          name: "main", scope_path: "main", kind: "Function", file_path: path,
-          start_line: 1, end_line: src === before ? 3 : 4,
-          metrics_v: 3, quality_metrics_v: 1, complexity_source: "ast",
-          cognitive_complexity: src === before ? 0 : 1,
-          complexity: src === before ? 1 : 2, max_nesting: src === before ? 0 : 1,
-        }],
+        source_sha256: sha(src),
+        source_bytes: Buffer.byteLength(src),
+        file_path: path,
+        metrics_version: 3,
+        quality_metrics_version: 1,
+        matches: 1,
+        truncated: false,
+        functions: [
+          {
+            name: "main",
+            scope_path: "main",
+            kind: "Function",
+            file_path: path,
+            start_line: 1,
+            end_line: src === before ? 3 : 4,
+            metrics_v: 3,
+            quality_metrics_v: 1,
+            complexity_source: "ast",
+            cognitive_complexity: src === before ? 0 : 1,
+            complexity: src === before ? 1 : 2,
+            max_nesting: src === before ? 0 : 1,
+          },
+        ],
       };
     });
     await client.start(f.task.id);
@@ -320,7 +350,13 @@ test("a failed graph preparation preserves the verified story patch, linked chec
     assert.deepEqual(run.snapshot, f.capture.snapshot);
     assert.equal(run.checks[0].state, "passed");
     assert.equal(run.qualityComparison?.filesMeasured, 1);
-    assert.deepEqual(f.requests.filter(r => r.name === "get_function_quality_metrics").map(r => r.args.source_content).sort(), [before, after].sort());
+    assert.deepEqual(
+      f.requests
+        .filter((r) => r.name === "get_function_quality_metrics")
+        .map((r) => r.args.source_content)
+        .sort(),
+      [before, after].sort(),
+    );
     assert.equal(run.metrics[0].symbol, "main");
     assert.equal(run.metrics[0].comparison?.status, "matched");
     assert.equal(run.metrics[0].comparison?.beforeSourceHash, sha(before));
@@ -733,6 +769,26 @@ test("unlinked, forged-source and traversal graph anchors cannot expand a story 
   }
 });
 
+test("a read-only follow-up can verify the story's earlier edits without changing their attribution", async () => {
+  const f = await fixture();
+  try {
+    f.task.run.changeRunId = "follow-up";
+    f.task.run.checks!.runId = "follow-up";
+    await f.instance.start("t");
+    const run = await f.settled();
+    assert.deepEqual(run.implementationRunIds, ["implementation"]);
+    assert.equal(run.checks[0].state, "passed");
+    assert.equal(run.checks[0].detail, "4 passed · 0 failed");
+    assert.ok(
+      !run.coverage.limitations.some((note) =>
+        /Verification is missing/.test(note),
+      ),
+    );
+  } finally {
+    await f.close();
+  }
+});
+
 test("a changed publication, missing metric, incomplete impact or old check cannot yield a green review", async (t) => {
   for (const [label, mutate] of Object.entries({
     publication: (f: Awaited<ReturnType<typeof fixture>>) => {
@@ -749,6 +805,12 @@ test("a changed publication, missing metric, incomplete impact or old check cann
     },
     check: (f: Awaited<ReturnType<typeof fixture>>) => {
       f.task.run.checks!.revision = "old";
+    },
+    "earlier pass": (f: Awaited<ReturnType<typeof fixture>>) => {
+      f.task.run.changeRunId = "follow-up";
+    },
+    "different source": (f: Awaited<ReturnType<typeof fixture>>) => {
+      f.task.run.finishedSourceBinding = "other-source";
     },
     absent: (f: Awaited<ReturnType<typeof fixture>>) => {
       f.answers.detect_changes.changed_files = [];
@@ -852,7 +914,15 @@ test("review conversations are clearly deterministic and never call an implement
       "t",
       run.id,
       "Explain the impact and change every source file now.",
-      {id: "remote-question", actor: {memberId: "member-b", name: "Bob", deviceId: "device-b", device: "Mac"}},
+      {
+        id: "remote-question",
+        actor: {
+          memberId: "member-b",
+          name: "Bob",
+          deviceId: "device-b",
+          device: "Mac",
+        },
+      },
     );
     assert.equal(reply.messages.at(-2)?.role, "user");
     assert.equal(reply.messages.at(-2)?.id, "remote-question");
@@ -888,7 +958,9 @@ test("a separate real-model adapter supplies advisory conversation without chang
         assert.equal(input.task.harness, "cursor");
         assert.equal(input.patch, f.capture.patch);
         assert.equal(input.review.coverage.complete, true);
-        assert.ok(input.review.phases.every((phase) => phase.state === "complete"));
+        assert.ok(
+          input.review.phases.every((phase) => phase.state === "complete"),
+        );
         assert.equal(input.review.checks[0].state, "passed");
         return {
           harness: "cursor",
@@ -919,15 +991,29 @@ test("a separate real-model adapter supplies advisory conversation without chang
 test("reviewer progress replaces the connection message while its answer is pending", async () => {
   const f = await fixture();
   let entered!: () => void, finish!: () => void;
-  const started = new Promise<void>(resolve => { entered = resolve; });
-  const held = new Promise<void>(resolve => { finish = resolve; });
-  const client = f.manager({ reviewer: { ask: async input => {
-    input.onModel?.("reported-model");
-    input.onProgress?.("Reading the captured patch, findings and function measurements.");
-    entered();
-    await held;
-    return { harness: "cursor", model: "reported-model", text: "Review advice." };
-  } } });
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const held = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const client = f.manager({
+    reviewer: {
+      ask: async (input) => {
+        input.onModel?.("reported-model");
+        input.onProgress?.(
+          "Reading the captured patch, findings and function measurements.",
+        );
+        entered();
+        await held;
+        return {
+          harness: "cursor",
+          model: "reported-model",
+          text: "Review advice.",
+        };
+      },
+    },
+  });
   try {
     await client.start("t");
     await started;

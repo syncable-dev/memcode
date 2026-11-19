@@ -3,6 +3,28 @@
 Status: **not cleared for publication**. This branch is the Windows-to-Mac
 handoff. Application changes are now present; native acceptance is in progress.
 
+## Follow-up verification binding, 2026-11-19 22:56 UTC
+
+Windows reproduced a real review issue on MC-007 after its read-only provider
+continuation. The newly recorded native TAP check had 30 passes, zero failures,
+the current run ID and changes revision, and exactly the captured source hash.
+Review still rejected it because the continuation made no new edit checkpoint:
+the patch's provenance correctly named the earlier implementation run.
+
+Check linkage now uses the current completed pass, current changes revision and
+exact captured source binding. Earlier edit run IDs remain unchanged as patch
+provenance. Tests prove a read-only continuation can verify its existing edits;
+checks from an earlier pass or different source remain unavailable. The focused
+review, concurrency, verification and Mac transition tests passed: 105 tests.
+The real native review is being repeated with this patch. Please pull it before
+the final Mac review checks; do not reuse the preceding review result as proof.
+
+The optimized Windows engine from production source `1ebcfda2` built locally.
+SHA-256 `25c0cf2581e63f568ba01feb5aad1eb648a7d7cc24d9831b76a01527e252e67b`.
+Only the isolated QA app will use it until native fresh/retained-store checks
+pass. The test-only fixture correction `5d0f0a54` is checked out for the graph
+suite; its production source is identical to the built `1ebcfda2` binary.
+
 ## Setup polish and cold CLI connection, 2026-11-19 22:51 UTC
 
 The guide now presents Connect, Build and Review, with optional local tools
