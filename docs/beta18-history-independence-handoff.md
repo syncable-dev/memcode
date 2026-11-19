@@ -3,6 +3,48 @@
 Status: **not cleared for publication**. This branch is the Windows-to-Mac
 handoff. Application changes are now present; native acceptance is in progress.
 
+## Mac pairing and replay diagnosis, 2026-11-19 21:26 UTC
+
+The installed Mac app sent `MAC-PAIR-MC-004-1119`, `MAC-PAIR-MC-005-1119`
+and `MAC-PAIR-MC-006-1119`. All three existing sessions resumed on the
+Windows device and returned the requested marker and passing test result to
+the Mac. The Mac added a separate queued item on MC-005, edited it and
+cancelled it before pickup. The shared conversation showed **Queue cancelled**
+beside the edited text.
+
+| Story | Actual model on Windows | Shared session | Measured functions on Mac |
+| --- | --- | --- | --- |
+| MC-004 | gpt-6.2-sol | `1377867b-c40f-4c2b-aeb9-440ebf77efaf` | 20 |
+| MC-005 | claude-opus-5-5 | `a74a9061-3d64-454b-8504-fbef4db07198` | 8 |
+| MC-006 | composer-2.5 | `9d8e1d04-3009-4142-88bc-698d80c5c93b` | 20 |
+
+The MC-004 reviewer on Windows answered a question sent from the Mac. Its
+answer matched the saved line 44 values, with cognitive 1, cyclomatic 2,
+nesting 1 and maintainability 50.672079291806675. The callback was added, so
+the before measurements are unavailable. The three shared reviews remain
+incomplete. MC-007 did not expose its separate report on the Mac during the
+pairing. The Windows reviewer timeout and its retest remain open.
+
+Two optimized runs reproduced the large native replay failure, at 344.649 s
+and 302.168 s for Phase 2. The debug build also reproduced it with the same
+private QA access and store configuration in 730.444 s. A bounded read of
+the failed optimized store found 127,532 source edge rows at the exact Git
+cutoff for 127,217 identities. The 315 repeated rows began at the same
+commit time. Sample predecessors closed during the structural index, hours
+after that cutoff. Today's graph had one source row per identity. Its
+additional derived API link has matching store, branch and endpoint
+provenance.
+
+The cause is the post-write convergence pass's wall-clock close time when
+two versions start at the same instant. Engine commit
+`ef8a5b521b7efa21b97675c35e02b2d023c4576a` on
+`fix/memcode-replay-cutoff-duplicates` closes a losing same-time row at that
+instant. The focused reproduction fails before the change and passes after.
+It retains the Windows stateless capability command from `48cd3741`.
+The optimized Mac build and the crate checks are running. Fresh native
+replay and retained-store recovery still need acceptance. The application
+pins, updater feed and draft release have not been promoted.
+
 ## Windows pairing result and final app patch, 2026-11-19 21:24 UTC
 
 All three Mac follow-ups were automatically included by the existing Windows
