@@ -189,6 +189,14 @@ test("standalone MemCode binds the original folder store from outside the linked
     ),
   );
   assert.equal(await readFile(scope, "utf8"), source(project));
+  const publishedByMemCode = JSON.stringify({
+    version: 1,
+    scope_source: { kind: "manifest", manifest_path: binding.workspaceFile },
+    members: [{ path: project, repo_id: "repo" }],
+  });
+  await writeFile(scope, publishedByMemCode);
+  assert.deepEqual(await standaloneMcpWorkspace(project, profile, {}), binding);
+  assert.equal(await readFile(scope, "utf8"), publishedByMemCode);
   assert.equal(
     await standaloneMcpWorkspace(project, profile, {
       MEMTRACE_MEMDB_ENDPOINT: "http://localhost:9000",
@@ -220,7 +228,7 @@ test("standalone workspace discovery leaves an unbound or operator-managed store
     join(project, ".memdb", ".memtrace-store-scope.json"),
     JSON.stringify({
       version: 1,
-      scope_source: { kind: "manifest" },
+      scope_source: { kind: "manifest", manifest_path: join(root, "operator.toml") },
       members: [{ path: project }],
     }),
   );
