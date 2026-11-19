@@ -3,6 +3,25 @@
 Status: **not cleared for publication**. This branch is the Windows-to-Mac
 handoff. Application changes are now present; native acceptance is in progress.
 
+## Windows current acceptance, 2026-11-19 21:45 UTC
+
+App `e5fbaba` passed the full 956-test suite, typecheck and renderer/runtime
+build. Current runtime SHA-256 is
+`1c4b7e25ce95cd893705225da46003fc3837e72282eb1ef6a7b0941756a1680e`.
+All four fresh no-edit continuations finished with actual passing tests across
+EP-04 and EP-05. The large MC-007 now has legitimate shared attempt
+`700b5b5a-8ff7-43fe-be36-296892d22a63` and a 51-row shared review
+`d60ee5b8-8e58-4566-a5f3-f87439256121`. Please inspect that actual report and
+ask a question from the Mac after its 30 current checks were linked at 21:42 UTC.
+
+Startup remains a measured concern on the older `9e97` test engine: Fleet was
+joined in 16 s for EP-05, and 42/79/116 s for the three same-EP-04 workers.
+The new static capability command has not been exercised by that native app
+yet. Do not call startup latency accepted until the final `ef8a` retest.
+The UI calibration after the workers finished switched cards in 356–609 ms,
+preserved and restored an unsent draft, and measured 16.8 ms p95 frame spacing.
+This calibration is not proof of worker-load smoothness; a final active run is next.
+
 ## Windows large review retest, 2026-11-19 21:37 UTC
 
 The actual native MC-007 review completed in **80.356 seconds**, with separate
