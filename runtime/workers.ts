@@ -818,6 +818,11 @@ export class WorkerManager {
       const workspace = task.run.workspace!;
       const resumeSessionId = await resumableProviderSession(previousProvider, task, workspace);
       continuing();
+      // Graph preparation and Fleet admission are serialized within an epic.
+      // Brief retrieval and provider startup are per-worker reads: holding the
+      // checkout queue through those stalls every other story unnecessarily.
+      releaseCheckout?.();
+      releaseCheckout = undefined;
       this.preparations.set(task.id, {
         cancel: async () => {
           cancelledPreparation.abort();

@@ -1301,6 +1301,16 @@ export class CodeReviewManager {
           this.saved.get(task.id) !== saved
         )
           return;
+        const progress = (note: string, model?: string) => {
+          void this.exclusive(task.id, async () => {
+            if (!this.closed && !controller.signal.aborted &&
+                this.saved.get(task.id) === saved && run.reviewer?.state === "running") {
+              if (model) run.reviewer.model = model;
+              run.reviewer.note = note;
+              await this.persist(saved);
+            }
+          }).catch(() => {});
+        };
         const result = await reviewer.ask({
           task,
           review: clone(run),
@@ -1308,19 +1318,8 @@ export class CodeReviewManager {
           patch: saved.patch,
           patchTruncated: saved.patchTruncated,
           signal: controller.signal,
-          onModel: (model) => {
-            void this.exclusive(task.id, async () => {
-              if (
-                !this.closed &&
-                !controller.signal.aborted &&
-                this.saved.get(task.id) === saved &&
-                run.reviewer
-              ) {
-                run.reviewer.model = model;
-                await this.persist(saved);
-              }
-            }).catch(() => {});
-          },
+          onModel: (model) => progress("Reviewing the captured patch and measured evidence.", model),
+          onProgress: (note) => progress(note),
         });
         await this.exclusive(task.id, async () => {
           if (

@@ -3,6 +3,29 @@
 Status: **not cleared for publication**. This branch is the Windows-to-Mac
 handoff. Application changes are now present; native acceptance is in progress.
 
+## Windows pairing result and final app patch, 2026-11-19 21:24 UTC
+
+All three Mac follow-ups were automatically included by the existing Windows
+workers: MC-004 `gpt-6.2-sol`, MC-005 `claude-opus-5-5`, MC-006 `composer-2.5`.
+Their additional assertions passed with exit 0. Mac also edited and cancelled
+the separate Claude queue probe. Please preserve your own native observations
+of returned replies, provider sessions and actor/device attribution in the report.
+
+The MC-007 review measured 51 functions, with all five numeric cells present in
+the actual native table. Its separate Codex model reviewer timed out after
+three minutes. This is **not a full review pass**. This host's global Codex
+reasoning effort is `max`; the review adapter had inherited it. The next app
+patch explicitly chooses an advertised interactive review effort (medium when
+offered) and reports evidence-reading/answer-writing progress. Native retest is
+next; 30 actual TAP checks are now linked to MC-007's current contribution.
+
+The app patch also releases an owned epic's preparation queue after graph and
+Fleet admission, before per-worker brief retrieval and provider connection.
+One slow brief no longer blocks the next story in that epic. The new regression
+and 66 focused checks passed, followed by the reviewer-progress test and typecheck.
+Windows is briefly restarting only its QA app for the actual review retest.
+The large fresh beta-proof replay failure remains a separate release blocker.
+
 ## LIVE WINDOWS PAIRING NOW, 2026-11-19 21:10 UTC
 
 Mac agent: Windows sent a real coding continuation to MC-004 (Codex), MC-005

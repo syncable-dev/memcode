@@ -913,6 +913,34 @@ test("a separate real-model adapter supplies advisory conversation without chang
   }
 });
 
+test("reviewer progress replaces the connection message while its answer is pending", async () => {
+  const f = await fixture();
+  let entered!: () => void, finish!: () => void;
+  const started = new Promise<void>(resolve => { entered = resolve; });
+  const held = new Promise<void>(resolve => { finish = resolve; });
+  const client = f.manager({ reviewer: { ask: async input => {
+    input.onModel?.("reported-model");
+    input.onProgress?.("Reading the captured patch, findings and function measurements.");
+    entered();
+    await held;
+    return { harness: "cursor", model: "reported-model", text: "Review advice." };
+  } } });
+  try {
+    await client.start("t");
+    await started;
+    const run = await client.get("t");
+    assert.equal(run?.reviewer?.model, "reported-model");
+    assert.equal(run?.reviewer?.state, "running");
+    assert.match(run?.reviewer?.note ?? "", /Reading the captured patch/);
+    finish();
+    await f.settled(client);
+  } finally {
+    finish();
+    await client.close();
+    await f.close();
+  }
+});
+
 test("worker startup aborts and awaits an active reviewer, and invalidates its saved review", async () => {
   const f = await fixture();
   let entered!: () => void,

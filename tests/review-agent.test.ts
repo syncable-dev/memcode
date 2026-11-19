@@ -47,7 +47,7 @@ if(harness==='claude' && record.args[record.args.indexOf('--input-format')+1]===
  if(p.method==='initialize')send({id:p.id,result:harness==='cursor'?{authMethods:[]}:{}});
  if(p.method==='config/read')send({id:p.id,result:{config:{mcp_servers:{}}}});
  if(p.method==='account/read')send({id:p.id,result:{account:{type:'chatgpt',id:'fixture'}}});
- if(p.method==='model/list')send({id:p.id,result:{data:[{model:'requested-model',isDefault:true}]}});
+ if(p.method==='model/list')send({id:p.id,result:{data:[{model:'requested-model',isDefault:true,...(scenario==='no-efforts'?{}:{supportedReasoningEfforts:[{reasoningEffort:'max'},{reasoningEffort:'medium'}]})}]}});
  if(p.method==='thread/start')send({id:p.id,result:{thread:{id:'codex-thread'},model:'actual-codex',approvalPolicy:'never',sandbox:{type:scenario==='writable'?'workspaceWrite':'readOnly'}}});
  if(p.method==='mcpServerStatus/list')send({id:p.id,result:{data:scenario==='mcp'?[{name:'mutator',tools:{write:{}}}]:[],nextCursor:null}});
  if(p.method==='turn/start'){record.prompted=true;record.contextRead=fs.readFileSync('review-context.json','utf8').includes('snapshot');save();send({id:p.id,result:{turn:{id:'turn'}}});send({id:'evidence-probe',method:'item/tool/call',params:{tool:'read_review_evidence',arguments:{}}});}
@@ -140,6 +140,8 @@ test("Codex review requires a native readOnly handshake and denies file-change a
         .sandbox,
       "read-only",
     );
+    assert.equal(record.requests.find((p: any) => p.method === "thread/start").params.config.model_reasoning_effort, "medium");
+    assert.equal(record.requests.find((p: any) => p.method === "turn/start").params.effort, "medium");
     assert.equal(
       record.replies.find((p: any) => p.id === "write-probe").result.decision,
       "decline",
@@ -148,6 +150,20 @@ test("Codex review requires a native readOnly handshake and denies file-change a
       (await readdir(join(f.profile, "code-reviews", "agent-context"))).length,
       0,
     );
+  } finally {
+    await f.close();
+  }
+});
+
+test("review effort is not invented when an older Codex catalog does not advertise it", async () => {
+  const f = await fixture("codex", "no-efforts");
+  const progress: string[] = [];
+  try {
+    await f.agent.ask({ task: f.task, review: f.review, question: "Explain", onProgress: note => progress.push(note) });
+    const record = await f.record();
+    assert.equal(record.requests.find((p: any) => p.method === "turn/start").params.effort, undefined);
+    assert.equal(record.requests.find((p: any) => p.method === "thread/start").params.config.model_reasoning_effort, undefined);
+    assert.ok(progress.some(note => note.includes("Reading the captured patch")));
   } finally {
     await f.close();
   }

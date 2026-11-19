@@ -39,6 +39,7 @@ export interface ReadonlyReviewQuestion {
   patchTruncated?: boolean;
   signal?: AbortSignal;
   onModel?(model: string): void;
+  onProgress?(note: string): void;
 }
 export interface ReadonlyReviewAnswer {
   harness: Harness;
@@ -372,6 +373,7 @@ async function codexQuestion(
   let evidenceRead: ReadonlyReviewAnswer["evidenceRead"];
   let catalog: CodexCatalog = { models: [] };
   let attemptedModel = "";
+  let writingAnswer = false;
   const modelFailure = (error: unknown) => {
     if (attemptedModel) recordCodexModelFailure(catalog, attemptedModel, error);
   };
@@ -389,6 +391,7 @@ async function codexQuestion(
     if (method === "item/tool/call" && params.tool === "read_review_evidence") {
       const source = await readReviewFile(cwd, "review-context.json");
       evidenceRead = { method: "read_review_evidence", sha256: digest(source) };
+      input.onProgress?.("Reading the captured patch, findings and function measurements.");
       return {
         success: true,
         contentItems: [
@@ -408,11 +411,16 @@ async function codexQuestion(
   };
   rpc.onNotification = (method, params) => {
     if (threadId && params.threadId && params.threadId !== threadId) return;
-    if (method === "item/agentMessage/delta")
+    if (method === "item/agentMessage/delta") {
+      if (!writingAnswer) {
+        writingAnswer = true;
+        input.onProgress?.("Writing the review response from the captured evidence.");
+      }
       messages.set(
         params.itemId,
         (messages.get(params.itemId) ?? "") + text(params.delta),
       );
+    }
     if (method === "item/completed" && params.item?.type === "agentMessage")
       messages.set(
         params.item.id,
@@ -463,6 +471,11 @@ async function codexQuestion(
       );
     }
     attemptedModel = requested;
+    // Review is an interactive, bounded evidence-reading turn. Do not inherit
+    // a global maximum-effort coding preference. Use only advertised values.
+    const efforts = catalog.models.find((entry) => entry.id === requested)?.efforts;
+    const effort = ["medium", "low", "high", "minimal", "none", "xhigh", "max"]
+      .find((candidate) => efforts?.includes(candidate));
     const started = await rpc.request("thread/start", {
       cwd,
       ...(requested ? { model: requested } : {}),
@@ -485,6 +498,7 @@ async function codexQuestion(
         },
       ],
       config: {
+        ...(effort ? { model_reasoning_effort: effort } : {}),
         mcp_servers: {},
         web_search: "disabled",
         project_doc_max_bytes: 0,
@@ -526,6 +540,7 @@ async function codexQuestion(
         threadId,
         cwd,
         input: [{ type: "text", text: prompt }],
+        ...(effort ? { effort } : {}),
         approvalPolicy: "never",
         sandboxPolicy: { type: "readOnly" },
       },
