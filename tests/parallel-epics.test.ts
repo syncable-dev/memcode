@@ -9,6 +9,7 @@ import { epicAnalysisProject } from "../runtime/epic-checkout";
 import { assertEpicDependencies, assertPrerequisitesComplete } from "../runtime/epic-dependencies";
 import { WorkerChangeJournal } from "../runtime/changes";
 import { initialState } from "../src/seed";
+import { MemtraceEngine } from "../runtime/memtrace";
 import type { Epic, WorkItem } from "../src/shared";
 
 async function fixture() {
@@ -98,6 +99,28 @@ test("only explicit prerequisites block a story, regardless of cycle or epic", a
   assertPrerequisitesComplete(f.state, f.b);
   f.a.projectId = "different-project";
   assert.throws(() => assertPrerequisitesComplete(f.state, f.b), /no longer available/);
+});
+
+test("legacy epic rejection explains engine support and preserves the active checkout", async () => {
+  const f = await fixture();
+  f.a.run.state = "running";
+  const before = await git(f.root, ["branch", "--show-current"]);
+  await assert.rejects(f.workspaces.activate(f.b, f.project), /connected Memtrace engine does not support parallel epic checkouts/);
+  assert.equal(await git(f.root, ["branch", "--show-current"]), before);
+  assert.equal(f.a.run.state, "running");
+});
+
+test("missing capability evidence cannot silently select the single-epic compatibility path", async () => {
+  const f = await fixture();
+  const engine = Object.create(MemtraceEngine.prototype) as MemtraceEngine;
+  for (const response of [{}, { error: "Engine is starting" }, { protocol_version: 1, checkout_modes: [] }]) {
+    engine.call = async () => response;
+    await assert.rejects(engine.ownedWorktreeSupport(f.project), /did not provide valid checkout capabilities/);
+  }
+  engine.call = async () => ({ protocol_version: 1, owned_worktree_v1: true, checkout_modes: ["owned-worktree-v1"] });
+  assert.equal(await engine.ownedWorktreeSupport(f.project), true);
+  engine.call = async () => { throw Error("Unknown tool get_checkout_capabilities"); };
+  assert.equal(await engine.ownedWorktreeSupport(f.project), false, "a positively identified older engine retains explicit compatibility");
 });
 
 test("parallel epics share Git storage, isolate files and graph IDs, and retain the user's checkout", async () => {

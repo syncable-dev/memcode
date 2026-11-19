@@ -45,8 +45,8 @@ export function epicBranch(epic: Epic): string {
   );
 }
 
-// One checkout can host many story workers on the same epic branch.
-// Switching that checkout to another epic is serialized and requires a quiet fleet.
+// Supported engines give every epic its own checkout. Only the compatibility
+// path below switches a single shared checkout and requires a quiet fleet.
 export class EpicWorkspace {
   private locks = new Map<string, Promise<unknown>>();
   constructor(
@@ -114,7 +114,7 @@ export class EpicWorkspace {
     );
     if (peers.some((peer) => peer.epicId !== epic.id))
       throw new Error(
-        "Another epic has active workers in this project. Stop or finish that fleet before switching epic branches.",
+        "The connected Memtrace engine does not support parallel epic checkouts. Reconnect the bundled Memtrace engine in Settings, then retry. Your running workers and their changes have been preserved.",
       );
     // Local runtime stores are not source changes. Install these exclusions
     // before checking whether it is safe to switch an otherwise clean project.
