@@ -12,10 +12,13 @@ of that evidence are recognized. A real Claude answer copied the exact metrics
 of a function near the end of the large report. Mac validation must include
 these latest fixes from `feat/shared-worker-sessions` before packaging.
 
-The [beta.18 Mac acceptance report](beta18-mac-acceptance.md) records the
+The [initial beta.18 Mac acceptance report](beta18-mac-acceptance.md) records the
 installed-app results and unsigned package hashes. The Mac reproduced failures
-in first-time review preparation and Codex follow-up continuity. Live
-two-device acceptance is pending.
+in first-time review preparation and Codex follow-up continuity. The
+[Mac retest at 7d64216](beta18-mac-validation-7d64216.md) confirmed real Windows
+follow-ups and cancellation on the original Mac host. Three simultaneous
+follow-ups needed manual recovery, and a resumed Claude worker requested a write
+to the base checkout. The newer integrated source requires its own acceptance.
 
 The [continuation integration checks](beta18-integration-checks.md) record the
 Windows integration of the subsequent Mac fixes. The original uploaded packages
