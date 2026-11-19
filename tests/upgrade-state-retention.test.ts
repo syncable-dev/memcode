@@ -3,12 +3,12 @@ import assert from "node:assert/strict";
 import { constants } from "node:fs";
 import { createHash } from "node:crypto";
 import {
-  chmod,
   copyFile,
   mkdir,
   mkdtemp,
   readFile,
   rm,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
@@ -189,8 +189,10 @@ test("an approved workspace survives an app resource move and two restarts with 
   );
   for (const host of [oldHost, newHost]) {
     await mkdir(join(host, ".."), { recursive: true });
-    await copyFile(process.execPath, host, constants.COPYFILE_FICLONE);
-    if (process.platform !== "win32") await chmod(host, 0o755);
+    // Homebrew Node must resolve its shared libraries from its installation.
+    if (process.platform === "win32")
+      await copyFile(process.execPath, host, constants.COPYFILE_FICLONE);
+    else await symlink(process.execPath, host);
   }
   const identities = Object.fromEntries(
     harnesses.map((h) => [h, join(root, "providers", h, "cli.mjs")]),

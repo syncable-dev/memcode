@@ -2169,3 +2169,9 @@ kbd {
     scroll-behavior: auto !important;
   }
 }
+/* Shared sessions use the same quiet conversation chrome as local workers. */
+.shared-session-status { display:flex; align-items:center; gap:8px; padding:10px 4px; color:var(--muted); font-size:11px; }
+.shared-session-status strong { color:var(--ink); font-weight:500; }
+.shared-session-status > span:last-child { margin-left:auto; max-width:55%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.shared-session-error { margin:0 0 8px; font-size:11px; color:#986a34; }
+.message-origin { font-size:10px; color:var(--muted); font-weight:400; }

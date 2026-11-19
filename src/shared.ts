@@ -96,6 +96,10 @@ export type RunState =
   | "finished";
 
 export interface Message {
+  actor?: import("./team-session").SessionActor;
+  sourceCommandId?: string;
+  deliveryState?: import("./team-session").SessionCommand["state"];
+  deliveryError?: string;
   streamId?: string;
   pickedUpAt?: string;
   id: string;
@@ -152,6 +156,8 @@ export interface Evidence {
   measuredAt: string;
 }
 export interface WorkItem extends TaskPlanningFields {
+  /** Read-only projection; never grants this device execution authority. */
+  sharedSession?: import("./team-session").TeamSession;
   id: string;
   identifier: string;
   projectId: string;
@@ -190,6 +196,8 @@ export interface WorkItem extends TaskPlanningFields {
     exitCode?: number;
     error?: string;
     sessionId?: string;
+    /** Device-local provenance for sessionId, including across failed preparations. */
+    sessionBinding?: { harness: Harness; workspace: string; branch?: string; epicId?: string | null };
     changeRunId?: string;
     nativeEditCapture?: boolean;
     measurements?: import("./measurements").WorkerMeasurements;
@@ -251,6 +259,9 @@ export interface CreateEpic {
 }
 /** Public collaboration state. Invitation and member credentials never enter renderer state. */
 export interface TeamWorkspaceState {
+  sessions?: import("./team-session").TeamSession[];
+  sessionCommands?: import("./team-session").SessionCommand[];
+  sessionsError?: string;
   projectId: string;
   teamId?: string;
   teamName?: string;

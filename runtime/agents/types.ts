@@ -33,6 +33,8 @@ export interface AgentSessionOptions {
   model: string;
   effort: ReasoningEffort;
   automaticModelTier?: import("../../src/shared").ModelTier;
+  /** Device-local provider session to continue for this story and checkout. */
+  resumeSessionId?: string;
   prompt: string;
   briefPath: string;
   contextConfig?: string;

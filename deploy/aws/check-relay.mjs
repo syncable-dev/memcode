@@ -10,7 +10,7 @@ const request = (path, options = {}) => fetch(origin + path, { ...options, redir
 const response = await request('/v1/service');
 assert.equal(response.status, 200);
 const service = await response.json();
-for (const [key, value] of Object.entries({ version: 1, selfServiceTeams: true, accountTeamLimit: 3, workflowRoles: 1, workerActivity: 1 })) {
+for (const [key, value] of Object.entries({ version: 1, selfServiceTeams: true, accountTeamLimit: 3, workflowRoles: 1, workerActivity: 1, workerSessions: 1 })) {
   assert.equal(service[key], value, `Unexpected Team service capability: ${key}`);
 }
 assert.match(response.headers.get('strict-transport-security') ?? '', /max-age=31536000/);

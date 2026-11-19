@@ -14,6 +14,7 @@ import {
 } from "../src/code-review";
 import type { StoryAuthor } from "../src/story-comments";
 import {
+  attributedReviewPaths,
   captureStoryReview,
   type StoryReviewCapture,
 } from "./code-review-snapshot";
@@ -29,6 +30,7 @@ import { isCodeReviewTask } from "../src/code-review-workflow";
 import { ReviewAdmission, type ReviewWait } from "./review-admission";
 
 interface ReviewHooks {
+  onSaved?(run: StoryReviewRun): void;
   queueFixes(taskId: string, text: string): Promise<void>;
   accept(taskId: string): Promise<void>;
   reviewProject?(task: WorkItem, project: Project): Project;
@@ -40,6 +42,7 @@ interface ReviewHooks {
     project: Project,
     update: (note: string) => void,
     assertActive: () => void,
+    capturedPaths: string[],
   ): Promise<Project>;
   repairPublication?(
     task: WorkItem,
@@ -247,6 +250,7 @@ export class CodeReviewManager {
       join(directory, "latest.json.next"),
       join(directory, "latest.json"),
     );
+    this.hooks.onSaved?.(clone(saved.run));
     const task = this.state().tasks.find(
       (item) => item.id === saved.run.taskId,
     );
@@ -576,9 +580,13 @@ export class CodeReviewManager {
       });
     };
     const work = (async () => {
-      // An idle cached graph need not stay resident while a review waits. Await
-      // retirement before admission can reopen it, including overlapping starts.
-      await this.settleGraph(saved);
+      // Reuse a live graph when this review can start now. Only queued work
+      // retires its idle owner while waiting for writers, its epic or capacity.
+      const task = this.task(taskId), key = this.project(task).id;
+      const canStart = this.quiet(task) && !this.admission.busy(key) &&
+        (this.hooks.implementationCount?.() ?? this.state().tasks.filter(t => !t.example && isActive(t)).length) +
+          this.admission.occupied() < Math.max(1, this.state().settings.maxWorkers);
+      if (!canStart) await this.settleGraph(saved);
       if (
         this.closed ||
         saved.run.state === "cancelled" ||
@@ -719,6 +727,7 @@ export class CodeReviewManager {
               void phase("review", note).catch(() => {});
             },
             assertActive,
+            attributedReviewPaths(capture),
           );
           assertActive();
           reviewProject = project;
@@ -1171,6 +1180,7 @@ export class CodeReviewManager {
     taskId: string,
     runId: string,
     input: string,
+    author?: {id: string; actor: import("../src/team-session").SessionActor},
   ): Promise<StoryReviewRun> {
     const saved = await this.exclusive(taskId, async () => {
       const text = input.trim();
@@ -1187,8 +1197,9 @@ export class CodeReviewManager {
         );
       await this.stale(saved);
       saved.run.messages.push({
-        id: randomUUID(),
+        id: author?.id ?? randomUUID(),
         role: "user",
+        actor: author?.actor,
         at: timestamp(),
         text,
       });

@@ -168,11 +168,19 @@ export class WorkerChangeJournal {
       });
   }
   private async snapshot(root: string, task: WorkItem): Promise<Snapshot> {
-    const scope = exactScope(task);
-    if (!scope.length) return new Map();
-    for (const path of scope)
-      if (!within(root, resolve(root, path)))
-        throw Error("Change scope is outside the project.");
+    const declared = exactScope(task);
+    if (!declared.length) return new Map();
+    const checkout = resolve(task.run.workspace ?? root);
+    if (checkout !== root && (await realpath(checkout)) !== root)
+      throw Error("The worker checkout moved during change capture.");
+    // Git and the journal use paths relative to the physical checkout. Graph
+    // evidence can name the same file through the checkout selected by the user.
+    const scope = declared.map((path) => {
+      const target = resolve(checkout, path);
+      const base = within(checkout, target) ? checkout : root;
+      if (!within(base, target)) throw Error("Change scope is outside the project.");
+      return relative(base, target).replaceAll("\\", "/") || ".";
+    });
     const tracked = (
       await git(root, [
         "ls-files",

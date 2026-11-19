@@ -9,7 +9,7 @@ Start with the [team quickstart](team-quickstart.md) for the shortest path from 
 ## Start with one project
 
 1. Open the project you already use. In **Team**, choose **Create a team**, give it a name and complete the Memtrace approval in your browser.
-2. Choose **Share with your team**. Check the project and repository shown. Its current planning is shared; your local source folder and private worker sessions stay on your computer.
+2. Choose **Share with your team**. Check the project and repository shown. Planning and worker conversations become visible to project members. Source checkout, provider credentials and execution stay on their owner's computer.
 3. Choose **Invite teammate**. Optionally restrict the invitation to their verified email, then copy the link and send it privately. Your teammate sees the team and project before accepting.
 
 One team can have several projects. Existing personal projects stay available and separate. Creating a team does not start a worker.
@@ -47,13 +47,13 @@ A shared checkout already used by another active local project cannot be rebound
 
 Publish a saved report or artifact from Team when it is ready. This uploads the selected file, up to **5 MiB**. Teammates can download and view that exact saved output. Markdown, PDF, images and self-contained Office documents are useful first tests.
 
-A published HTML file does not bundle its linked assets or share its running development server. Browser sessions, terminal processes, model credentials, local analysis and full agent conversations stay local. Descriptions and comments are shared text, so include only information intended for the team.
+A published HTML file does not bundle its linked assets or share its running development server. Browser sessions, terminal processes, raw tool output, approval prompts, model credentials and local analysis stay local. Worker conversation, confirmed model, progress, and saved review reports sync with project members. Include only information intended for the team in prompts and comments.
 
 ## Stay in sync
 
 The connection indicator, queued-change count and unread activity describe different things. Accepted planning changes are journaled, retried operations are deduplicated, and reconnecting clients catch up from their last received event.
 
-Current clients use an additional authenticated history channel to preserve original story dates, runbooks, archive state, workflow configuration, planning events, cycle baselines and historical checkpoints when an existing project is first shared. The import is owner-only and retry-safe. Future shared planning history is derived from accepted service events, giving each computer the same recorded chronology. This does not upload private worker conversations, terminals or the Memtrace graph.
+Current clients use an additional authenticated history channel to preserve original story dates, runbooks, archive state, workflow configuration, planning events, cycle baselines and historical checkpoints when an existing project is first shared. The import is owner-only and retry-safe. Future shared planning history is derived from accepted service events, giving each computer the same recorded chronology. Shared worker conversations use a separate authenticated session channel; terminals and the Memtrace graph stay local.
 
 The Team screen reports history sync separately from the current board. An older service can still sync its supported board fields, but cannot confirm historical planning transfer; update it before relying on matching charts. Older clients can keep using the original board protocol, while an updated client is required to display the preserved history.
 

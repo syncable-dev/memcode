@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, realpath, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { MemtraceEngine } from "../runtime/memtrace";
@@ -71,8 +71,24 @@ test("overlapping epic retirements share the drain and cannot clear its guard be
   assert.equal(stops, 1);
   assert.equal(internal.bindingGenerations.get(project.id), 1);
   await assert.rejects(engine.connect(project), /retiring/);
+  let reconnected = 0;
+  internal.connect = async () => {
+    reconnected++;
+  };
+  const nextReview = engine.activateEpic(project);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(
+    reconnected,
+    0,
+    "A new review cannot open a second owner while the previous store is draining",
+  );
   finish();
-  await Promise.all([first, second]);
+  await Promise.all([first, second, nextReview]);
+  assert.equal(
+    reconnected,
+    1,
+    "An explicitly started review reconnects after the previous owner has released its store",
+  );
   assert.equal(internal.retiring.has(project.id), false);
   await engine.close();
 });
@@ -133,7 +149,7 @@ createInterface({input:process.stdin}).on('line',line=>{
     assert.equal(environment.MEMTRACE_SKIP_EMBED, "1");
     assert.equal(
       scope.directory.replaceAll("\\", "/").toLowerCase(),
-      source.replaceAll("\\", "/").toLowerCase(),
+      (await realpath(source)).replaceAll("\\", "/").toLowerCase(),
     );
     await writeFile(owner, "tracked-headless-owner");
     await probe();

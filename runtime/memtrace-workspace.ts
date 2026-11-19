@@ -69,6 +69,24 @@ async function managedProjectDirectory(root: string, checkout: string) {
   return join(await realpath(root), key);
 }
 
+async function ensureProjectManifest(workspaceFile: string, expected: string) {
+  try {
+    await writeFile(workspaceFile, expected, { flag: "wx", mode: 0o600 });
+    return;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  }
+  await rejectRedirectedGraphPath(workspaceFile);
+  if ((await readFile(workspaceFile, "utf8")) !== expected)
+    throw Error(
+      "The MemCode project workspace manifest has changed. Review its repository membership before reconnecting.",
+    );
+}
+
+function singleMemberManifest(directory: string, ownedWorktree = false) {
+  return `version = 1\n${ownedWorktree ? 'checkout_mode = "owned-worktree-v1"\n' : ""}name = "MemCode project"\nmembers = [${JSON.stringify(directory.replaceAll("\\", "/"))}]\n`;
+}
+
 export async function projectMcpWorkspace(
   projectPath: string,
   options: {
@@ -89,7 +107,7 @@ export async function projectMcpWorkspace(
   const workspaceFile = join(anchor, "workspace.toml");
   const dataDirectory = join(anchor, ".memdb");
   const jobDirectory = join(anchor, ".memtrace");
-  const expected = `version = 1\n${ownedWorktree ? 'checkout_mode = "owned-worktree-v1"\n' : ""}name = "MemCode project"\nmembers = [${JSON.stringify(directory.replaceAll("\\", "/"))}]\n`;
+  const expected = singleMemberManifest(directory, ownedWorktree);
   if (managedRoot) {
     for (const path of [
       graphDirectory,
@@ -103,24 +121,98 @@ export async function projectMcpWorkspace(
   }
   await mkdir(anchor, { recursive: true, mode: 0o700 });
   if (managedRoot) await mkdir(dataDirectory, { recursive: true, mode: 0o700 });
-  let existing: string | null = null;
-  try {
-    existing = await readFile(workspaceFile, "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-  }
-  if (existing !== null && existing !== expected)
-    throw new Error(
-      "The MemCode project workspace manifest has changed. Review its repository membership before reconnecting.",
-    );
-  if (existing === null)
-    await writeFile(workspaceFile, expected, { flag: "wx" });
+  await ensureProjectManifest(workspaceFile, expected);
   return {
     directory,
     workspaceFile,
     dataDirectory,
     jobDirectory,
   };
+}
+
+const connectionOverrides = [
+  "MEMTRACE_MEMDB_DATA_DIR",
+  "MEMTRACE_DATA_DIR",
+  "MEMTRACE_MEMDB_MODE",
+  "MEMTRACE_MEMDB_ENDPOINT",
+  "MEMTRACE_MEMDB_ENDPOINTS",
+  "MEMTRACE_MEMDB_DB",
+  "MEMTRACE_HOSTED_MODE",
+  "MEMTRACE_WORKSPACE_ROOT",
+  "CURSOR_WORKSPACE_ROOT",
+  "VSCODE_WORKSPACE_FOLDER",
+  "WORKSPACE_FOLDER_PATHS",
+];
+
+async function hasSingleFolderMember(directory: string, scopeFile: string) {
+  const bytes = await readFile(scopeFile, "utf8").catch(
+    (error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return null;
+      throw error;
+    },
+  );
+  if (bytes === null) return false;
+  const scope = JSON.parse(bytes);
+  if (
+    scope?.version !== 1 ||
+    scope.scope_source?.kind !== "folder" ||
+    !Array.isArray(scope.members) ||
+    scope.members.length !== 1
+  )
+    return false;
+  const member = scope.members[0]?.path;
+  if (
+    typeof member !== "string" ||
+    admissionPath(member) !== admissionPath(directory)
+  )
+    throw Error(
+      "The standalone Memtrace store belongs to a different checkout.",
+    );
+  return true;
+}
+
+async function assertProfileOutsideGit(directory: string) {
+  for (let path = directory; ; path = dirname(path)) {
+    if (
+      await lstat(join(path, ".git")).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return null;
+        throw error;
+      })
+    )
+      throw Error(
+        "The standalone Memtrace workspace needs a profile folder outside source repositories.",
+      );
+    if (dirname(path) === path) return;
+  }
+}
+
+/** Keep both physical store and job history when an epic opens a linked worktree. */
+export async function standaloneMcpWorkspace(
+  directory: string,
+  profileRoot: string,
+  env: Record<string, string>,
+) {
+  if (connectionOverrides.some((key) => env[key])) return null;
+  const jobDirectory = join(directory, ".memtrace");
+  if (
+    !(await lstat(join(directory, ".git")).catch(() => null))?.isDirectory() ||
+    (await isKind(join(jobDirectory, "team.toml"), "file"))
+  )
+    return null;
+  const dataDirectory = join(directory, ".memdb");
+  const scopeFile = join(dataDirectory, ".memtrace-store-scope.json");
+  for (const path of [dataDirectory, jobDirectory, scopeFile])
+    await rejectRedirectedGraphPath(path);
+  if (!(await hasSingleFolderMember(directory, scopeFile))) return null;
+  const bindingRoot = await managedProjectDirectory(profileRoot, directory);
+  // The native stdio client elects owners by its working directory. Its
+  // launch folder must not resolve to the canonical Git checkout of an epic.
+  await assertProfileOutsideGit(bindingRoot);
+  await rejectRedirectedGraphPath(bindingRoot);
+  await mkdir(bindingRoot, { recursive: true, mode: 0o700 });
+  const workspaceFile = join(bindingRoot, "standalone-workspace.toml");
+  await ensureProjectManifest(workspaceFile, singleMemberManifest(directory));
+  return { workspaceFile, dataDirectory, jobDirectory };
 }
 
 export class MemtraceAdmissionError extends Error {}

@@ -32,7 +32,7 @@ async function discoverOne(id: Harness, refresh: boolean): Promise<HarnessRuntim
   let models: ModelOption[] = [];
   let allModelsDenied = false;
   if (command && id === "codex") {
-    const catalog = await probeCodexCatalog(command);
+    const catalog = await probeCodexCatalog(command, refresh);
     models = catalog.models;
     allModelsDenied = catalog.allModelsDenied === true;
   }

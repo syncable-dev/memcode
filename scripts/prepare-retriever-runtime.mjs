@@ -2,8 +2,8 @@
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
-import {cp, mkdir, readFile, readdir, rm, writeFile, lstat, access} from 'node:fs/promises';
-import {join, resolve, relative, sep, dirname} from 'node:path';
+import {cp, mkdir, readFile, readdir, realpath, rm, writeFile, lstat, access} from 'node:fs/promises';
+import {basename, delimiter, join, resolve, relative, sep, dirname} from 'node:path';
 import {unzipSync} from 'fflate';
 import {build} from 'esbuild';
 
@@ -22,6 +22,13 @@ assert.equal(metadata.dependencies['@huggingface/transformers'],'4.3.2');
 let npm;
 for(const path of [process.env.npm_execpath,join(dirname(process.execPath),'node_modules/npm/bin/npm-cli.js'),resolve(dirname(process.execPath),'../lib/node_modules/npm/bin/npm-cli.js')].filter(Boolean)){
  try{await access(path);npm=path;break;}catch{}
+}
+// Homebrew can link npm into its prefix separately from the Node executable.
+if (!npm && process.platform !== 'win32') {
+ for (const directory of (process.env.PATH ?? '').split(delimiter).filter(Boolean)) {
+  const candidate = await realpath(join(directory, 'npm')).catch(() => undefined);
+  if (candidate && basename(candidate) === 'npm-cli.js') { npm = candidate; break; }
+ }
 }
 assert.ok(npm,'The build-time Node installation must include npm; end users never need npm.');
 // This dependency tree is isolated from the application and user projects.
@@ -77,8 +84,8 @@ for(const entry of await readdir(join(output,'node_modules'),{withFileTypes:true
 // Microsoft's published npm archives omit their original project notices.
 // Retain the exact upstream originals beside both packages, not a paraphrase.
 for(const [name,bytes,checksum]of [['LICENSE',1073,'2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c'],['ThirdPartyNotices.txt',326866,'e9e90971a8e75a9a8ac0c6412e29c1202d079998389915aa485f46c816c3b4cc']]){
- const response=await fetch(`https://raw.githubusercontent.com/microsoft/onnxruntime/v1.23.2/${name}`,{redirect:'error',signal:AbortSignal.timeout(30000)});
- assert.equal(response.status,200);const body=Buffer.from(await response.arrayBuffer());assert.equal(body.length,bytes);assert.equal(sha(body),checksum);
+ const body=await readFile(join(source,'notices','onnxruntime-1.23.2',name));
+ assert.equal(body.length,bytes);assert.equal(sha(body),checksum);
  for(const pkg of ['onnxruntime-node','onnxruntime-common']){
   const path=join(output,'node_modules',pkg);assert.equal(JSON.parse(await readFile(join(path,'package.json'),'utf8')).version,'1.23.2');await writeFile(join(path,name),body);
  }

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -40,12 +40,19 @@ input.on('line',async line=>{
  const message=JSON.parse(line); trace({in:message});
  if(!message.method){const resolve=pending.get(message.id);pending.delete(message.id);resolve?.(message);return;}
  const p=message.params??{};
- if(message.method==='initialize')return answer(message.id,{protocolVersion:1,authMethods:[{id:'cursor_login'}]});
+ if(message.method==='initialize')return answer(message.id,{protocolVersion:1,agentCapabilities:{loadSession:process.env.CASE!=='resume-unsupported',...(process.env.CASE==='resume-fast'?{sessionCapabilities:{resume:{}}}:{})},authMethods:[{id:'cursor_login'}]});
  if(message.method==='authenticate')return answer(message.id,{});
+ if(message.method==='session/load'||message.method==='session/resume'){
+  if(typeof p.cwd!=='string'||!Array.isArray(p.mcpServers))throw Error('Missing resume context');
+  if(process.env.CASE==='resume-missing')return send({jsonrpc:'2.0',id:message.id,error:{code:-32602,message:'Cannot find '+p.sessionId}});
+  update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:'history from an earlier turn'}});
+  return answer(message.id,{...(process.env.CASE==='resume-wrong'?{sessionId:'other-session'}:{}),configOptions:configOptions(),modes:{currentModeId:'agent'}});
+ }
  if(message.method==='session/new')return answer(message.id,{sessionId:'session-fixture',configOptions:configOptions(),models:{currentModelId:selected},modes:{currentModeId:'agent',availableModes:[{id:'agent'}]}});
  if(message.method==='session/set_config_option'){if(p.configId==='model-choice')selected=p.value;if(p.configId==='thought')effort=p.value;return answer(message.id,{configOptions:configOptions()});}
  if(message.method==='session/cancel')return;
  if(message.method!=='session/prompt')return send({jsonrpc:'2.0',id:message.id,error:{code:-32601,message:'Unknown fixture method'}});
+ if(process.env.CASE.startsWith('resume'))return answer(message.id,{stopReason:'end_turn'});
  if(process.env.CASE==='early'){process.stderr.write('Native fixture stopped unexpectedly');process.exit(2);}
  update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:'I will '}});
  update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:'check the project.'}});
@@ -151,6 +158,7 @@ async function fixture(kind = "normal") {
       signal?: AbortSignal,
     ) => Promise<WorkerInputResponse>,
     permissionMode?: PermissionMode,
+    resumeSessionId?: string,
   ) =>
     startCursorSession({
       command: { command: process.execPath, prefix: [program] },
@@ -181,6 +189,7 @@ async function fixture(kind = "normal") {
       onEvent: (event) => events.push(event),
       requestInput,
       permissionMode,
+      resumeSessionId,
     });
   return {
     root,
@@ -408,3 +417,25 @@ test(
     assert.match(result.error ?? "", /Native fixture stopped unexpectedly/);
   },
 );
+
+for (const scenario of ["resume", "resume-fast", "resume-unsupported", "resume-missing", "resume-wrong"]) {
+  test(`Cursor ${scenario} keeps a follow-up on its original conversation`, async () => {
+    const run = await fixture(scenario);
+    try {
+      const session = run.start(async () => ({ cancelled: true }), "review", "session-fixture");
+      const result = await session.completion;
+      const sent = (await run.trace()).map((line) => line.in).filter(Boolean);
+      assert.ok(!sent.some((p) => p.method === "session/new"));
+      assert.equal(sent.find((p) => p.method === (scenario === "resume-fast" ? "session/resume" : "session/load"))?.params.sessionId,
+        scenario === "resume-unsupported" ? undefined : "session-fixture");
+      assert.equal(sent.find((p) => p.method === "session/prompt")?.params.sessionId,
+        ["resume", "resume-fast"].includes(scenario) ? "session-fixture" : undefined);
+      assert.ok(!run.events.some((e) => e.type === "message" && e.text.includes("history from an earlier turn")));
+      if (["resume", "resume-fast"].includes(scenario)) assert.equal(result.exitCode, 0);
+      else {
+        assert.match(result.error ?? "", /previous Cursor|original Cursor/i);
+        assert.ok(!result.error!.includes("session-fixture"));
+      }
+    } finally { await rm(run.root, { recursive: true, force: true }); }
+  });
+}

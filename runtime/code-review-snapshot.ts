@@ -66,6 +66,13 @@ export interface StoryReviewCapture {
   sourceBinding: string | null;
 }
 
+export function attributedReviewPaths(capture: StoryReviewCapture): string[] {
+  return capture.snapshot.files
+    .filter((file) => Object.hasOwn(capture.baseFiles, file.path) && !file.projection &&
+      ["reservation", "native-edit", "verified-edits"].includes(file.attribution))
+    .map((file) => file.path);
+}
+
 type ContinuousAttribution = Exclude<ReviewFileAttribution, "discontinuous">;
 function combineAttribution(
   previous: ContinuousAttribution | undefined,
@@ -78,6 +85,7 @@ function combineAttribution(
 /** Compose only the edits attributed to this story. */
 export async function captureStoryReview(
   task: WorkItem,
+  runId?: string,
 ): Promise<StoryReviewCapture> {
   if (!task.run.workspace)
     throw Error("This story has no execution workspace to review.");
@@ -89,6 +97,9 @@ export async function captureStoryReview(
     );
   const sourceBinding = await checkSourceBinding(root);
   const changes = await readWorkerChanges(task);
+  const checkpoints = runId
+    ? changes.checkpoints.filter((checkpoint) => checkpoint.runId === runId)
+    : changes.checkpoints;
   const blobs = resolve(
     root,
     ".memcode",
@@ -119,7 +130,7 @@ export async function captureStoryReview(
     limitations.add(
       "The full source snapshot could not be verified within the capture limits.",
     );
-  for (const checkpoint of changes.checkpoints) {
+  for (const checkpoint of checkpoints) {
     if (checkpoint.taskId !== task.id || checkpoint.branch !== branch) {
       limitations.add(
         "Some earlier checkpoints belong to another execution branch and were excluded.",
@@ -329,16 +340,18 @@ export async function captureStoryReview(
     }
   }
   const finalSource = await checkSourceBinding(root);
-  if (!sourceBinding || sourceBinding !== finalSource)
+  if (sourceBinding && finalSource && sourceBinding !== finalSource)
     limitations.add(
       "Source changed during capture; this snapshot cannot certify the current code.",
     );
+  else if (sourceBinding && !finalSource)
+    limitations.add("The final source fingerprint is unavailable; this snapshot cannot certify the current code.");
   const commit = await git(root, ["rev-parse", "HEAD"]);
   const journalRevision = digest(
     JSON.stringify(
       changes.unverifiedEdits
-        ? [changes.checkpoints, changes.unverifiedRevision]
-        : changes.checkpoints,
+        ? [checkpoints, changes.unverifiedRevision]
+        : checkpoints,
     ),
   );
   const patchHash = digest(patch);
@@ -368,7 +381,7 @@ export async function captureStoryReview(
     baseFiles,
     sourceBinding: finalSource,
     implementationRunIds: [
-      ...new Set(changes.checkpoints.map((checkpoint) => checkpoint.runId)),
+      ...new Set(checkpoints.map((checkpoint) => checkpoint.runId)),
     ],
     limitations: [...limitations],
   };

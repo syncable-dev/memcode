@@ -17,6 +17,7 @@ export interface PeerIndexWaitOptions {
   pollMs?: number;
   publicationMs?: number;
   requireCertificate?: boolean;
+  completedJob?: boolean;
   signal?: AbortSignal;
   isCancelled?: () => boolean;
   now?: () => number;
@@ -87,6 +88,18 @@ export function exactRevisionSource(
   );
 }
 
+export class StartupPublicationTimeout extends Error {}
+
+/** A worker may refresh only after its exact checkout's previous job has finished. */
+export function completedEpicIndex(result: unknown, project: Project, repoId: string): boolean {
+  const jobs: unknown = Array.isArray(result) ? result : (result as { jobs?: unknown } | null)?.jobs;
+  if (!Array.isArray(jobs) || !project.path || !jobs.every((job) =>
+    job && ["completed", "failed", "cancelled"].includes(job.status))) return false;
+  return jobs.some((job) => job.status === "completed" && job.repo_id === repoId &&
+    typeof jobPath(job) === "string" && pathKey(jobPath(job)) === pathKey(project.path!) &&
+    jobBranch(job) === project.branch);
+}
+
 /** A saved failure may only be superseded by this checkout's stable native certificate. */
 export function certifiedPublication(
   value: Json | undefined,
@@ -129,6 +142,52 @@ export function incompletePublication(value: Json | undefined) {
   );
 }
 
+/** Bind the checkout, its complete file inventory and the native publication boundary. */
+function matchedOwnedPublication(
+  value: Json,
+  project: Project,
+  repoId: string,
+  status: "partial" | "published",
+) {
+  const boundary = value?._meta?.graph_revision;
+  const published = status === "published";
+  return (
+    project.analysisCheckout === "owned-worktree-v1" &&
+    exactRevisionSource(value, project, repoId) &&
+    value.ready === published &&
+    value.status === (published ? "complete" : "partial") &&
+    value.reason === undefined &&
+    value.requested_source_matches === true &&
+    value.requested_revision_matches === true &&
+    value.source_unchanged_during_observation === true &&
+    value.default_branch_matches === true &&
+    value.ambiguous_indexed_files === false &&
+    value.retry_query_group === false &&
+    value.mismatched_files === 0 &&
+    Array.isArray(value.mismatched_paths) &&
+    value.mismatched_paths.length === 0 &&
+    Number.isSafeInteger(value.source_file_count) &&
+    value.source_file_count >= 0 &&
+    value.indexed_file_count === value.source_file_count &&
+    usable(value.source_revision) &&
+    usable(value.indexing_revision) &&
+    usable(value.token) &&
+    value.publication?.status === status &&
+    usable(value.publication.token) &&
+    boundary?.token === value.publication.token &&
+    (boundary.status === status ||
+      (published && boundary.status === undefined)) &&
+    boundary.publication_unchanged_during_call === published &&
+    value._meta.stale !== true &&
+    Object.keys(boundary).every((key) =>
+      ["status", "token", "publication_unchanged_during_call"].includes(key),
+    ) &&
+    ["error", "_error", "error_code", "message"].every(
+      (key) => value[key] === undefined,
+    )
+  );
+}
+
 /** Native contention responses carry the digest of the source the writer observed. */
 export function writingSourceRevision(
   value: Json | undefined,
@@ -144,6 +203,23 @@ export function writingSourceRevision(
     usable(value.source_revision)
   )
     return value.source_revision;
+}
+
+/** Native early envelopes are progress, never evidence that a graph is ready. */
+export function verifyingSourceRevision(
+  value: Json | undefined,
+  project: Project,
+  repoId: string,
+): string | undefined {
+  if (
+    exactRevisionSource(value, project, repoId) &&
+    value?.status === "partial" && value.ready === false &&
+    ["index_write_in_progress", "index_verification_running", "branch_publication_incomplete"].includes(value.reason) &&
+    value.token === null && value.indexing_revision === null &&
+    value.requested_source_matches === true && value.requested_revision_matches === true &&
+    value.retry_query_group === false && usable(value.source_revision) &&
+    value.error === undefined && value._error === undefined && value.error_code === undefined
+  ) return value.source_revision;
 }
 
 /** Counts and a current repository summary are not a source/publication certificate. */
@@ -235,7 +311,7 @@ export async function waitForIndexPublication(
   let reason = "",
     expectedSource: string | undefined,
     delay = pollMs;
-  let first = true;
+  let first = true, waitingForOwnedPublication = false;
   while (now() < deadline) {
     assertActive();
     // Allow the first read the native request budget even if the shorter
@@ -274,7 +350,7 @@ export async function waitForIndexPublication(
       throw Error(
         `Memtrace job completed, but current source on branch ${branch} is not verified: Memtrace reported another repository, checkout or branch. Its result was not adopted.`,
       );
-    const writerSource = writingSourceRevision(revision, project, repoId);
+    const writerSource = verifyingSourceRevision(revision, project, repoId) ?? writingSourceRevision(revision, project, repoId);
     if (
       (revision?.reason === "index_write_in_progress" && !writerSource) ||
       (expectedSource &&
@@ -289,11 +365,28 @@ export async function waitForIndexPublication(
       expectedSource = writerSource;
       deadline = hardDeadline;
     }
+    if (
+      options.completedJob &&
+      !expectedSource &&
+      matchedOwnedPublication(revision, project, repoId, "partial")
+    ) {
+      expectedSource = revision.source_revision;
+      waitingForOwnedPublication = true;
+      deadline = Math.min(
+        hardDeadline,
+        started + (options.publicationMs ?? 120_000),
+      );
+    }
     const verify =
       options.requireCertificate || expectedSource
         ? certifiedPublication
         : verifiedIndexRevision;
-    if (verify(revision, project, repoId)) return repoId;
+    if (
+      verify(revision, project, repoId) &&
+      (!waitingForOwnedPublication ||
+        matchedOwnedPublication(revision, project, repoId, "published"))
+    )
+      return repoId;
     reason =
       typeof revision?.reason === "string" ? revision.reason.slice(0, 200) : "";
     update(
@@ -524,7 +617,7 @@ export async function waitForPeerIndex(
     await sleep(Math.min(pollMs, Math.max(0, waitUntil - now())));
   }
   if (!current && backgroundObserved)
-    throw Error(
+    throw new StartupPublicationTimeout(
       "Memtrace's startup graph has not finished verifying this checkout and branch. Retry to follow its publication; no duplicate index was queued.",
     );
   if (!current)
@@ -549,6 +642,7 @@ export async function waitForPeerIndex(
       // only after the engine independently certifies this exact branch/source.
       return waitForIndexPublication(client, project, repoId!, update, {
         ...options,
+        completedJob: true,
         now,
         sleep,
         pollMs,

@@ -23,6 +23,7 @@ export function sameDisplayedMessage(a: Message, b: Message) {
     a.followupState === b.followupState &&
     a.pickedUpAt === b.pickedUpAt &&
     a.reviewText === b.reviewText &&
+    JSON.stringify(a.actor) === JSON.stringify(b.actor) &&
     JSON.stringify(a.commentIds) === JSON.stringify(b.commentIds) &&
     JSON.stringify(a.references) === JSON.stringify(b.references)
   );

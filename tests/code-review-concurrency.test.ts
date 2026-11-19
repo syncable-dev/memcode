@@ -317,6 +317,7 @@ test("a queued review retires its idle graph before admission can prepare the ex
   const f = await fixture(),
     retirement = gate();
   let retired = false;
+  f.aPeer.run.state = "running";
   const client = f.make({
     settled: async () => {
       await retirement.promise;
@@ -334,6 +335,7 @@ test("a queued review retires its idle graph before admission can prepare the ex
     assert.equal(f.prepared.length, 0);
     assert.equal(f.captures.length, 0);
     retirement.resolve();
+    f.aPeer.run.state = "finished";
     assert.equal((await f.settled(client)).state, "completed");
     assert.deepEqual(f.prepared, ["owned-a"]);
   } finally {
@@ -360,14 +362,18 @@ test("queueing a second story never retires an admitted peer's graph and preserv
   try {
     await f.manager.start("a");
     await until(() => began);
-    assert.equal(f.retired.length, 1);
+    assert.equal(
+      f.retired.length,
+      0,
+      "an immediately admitted review reuses its live graph",
+    );
     await f.manager.start("a-peer");
     await until(async () =>
       /earlier review/.test((await f.manager.get("a-peer"))?.note ?? ""),
     );
     assert.equal(
       f.retired.length,
-      1,
+      0,
       "The waiting story cannot evict the graph held by an admitted review",
     );
     assert.deepEqual(f.captures, ["a"]);
@@ -380,7 +386,11 @@ test("queueing a second story never retires an admitted peer's graph and preserv
       "A completed review must not retain its queued waiting message",
     );
     assert.deepEqual(f.captures, ["a", "a-peer"]);
-    assert.equal(f.retired.length, 3);
+    assert.equal(
+      f.retired.length,
+      2,
+      "each completed review retires once; no cold reopen before the first review",
+    );
   } finally {
     held.resolve();
     await f.close();

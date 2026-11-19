@@ -852,8 +852,11 @@ test("review conversations are clearly deterministic and never call an implement
       "t",
       run.id,
       "Explain the impact and change every source file now.",
+      {id: "remote-question", actor: {memberId: "member-b", name: "Bob", deviceId: "device-b", device: "Mac"}},
     );
     assert.equal(reply.messages.at(-2)?.role, "user");
+    assert.equal(reply.messages.at(-2)?.id, "remote-question");
+    assert.equal(reply.messages.at(-2)?.actor?.name, "Bob");
     assert.match(reply.messages.at(-1)!.text, /No model is connected/);
     assert.equal(f.requests.length, before);
     assert.equal(f.fixes.length, 0);
