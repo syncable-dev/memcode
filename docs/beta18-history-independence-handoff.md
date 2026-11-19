@@ -34,6 +34,28 @@ on that copy. Verify its historical rows separately before calling
 retained history repaired. The production pins, packages and feed
 remain at their previous state.
 
+## Windows setup flow and final engine, 2026-11-19 22:04 UTC
+
+The final optimized ef8a Windows engine built locally. SHA-256:
+`f153060e34034c8f9ff0ee3408be5b83cd593e119e9ea29e1456bf8580c2e0a1`.
+It is staged only in the private QA directory. Its exact graph tests and
+native retained-store/fresh-history acceptance are next; pins remain unchanged.
+
+The user has also requested first-launch/account onboarding, explicit worker
+permission defaults, and discovery of optional dictation and Qwen retrieval.
+This application patch passed typecheck and all 958 Windows Node tests. It
+adds Settings sections and a session-local sign-in reminder, reuses the
+official browser/account flow, keeps valid existing CLI sessions approved,
+and never downloads models just because a guide is opened. Native UI checks
+are pending. No native Rust source changed since e5bea70.
+
+Mac: include this application patch before final packaging. The live Windows
+QA app is being gracefully reopened with it and the ef8a candidate. Existing
+shared conversations and all history are preserved. Please rerun MC-007's
+review after its latest linked 30-check verification: the earlier shared
+review was captured before that new check run, so its unavailable check is
+expected for that snapshot. Do not reuse it as the current check receipt.
+
 ## Mac application and shared review, 2026-11-19 21:50 UTC
 
 Mac app source `e5fbaba7bcb72a0945b5a6dc88b294b01f674459` passed

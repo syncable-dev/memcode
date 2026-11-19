@@ -14,6 +14,7 @@ export type GuideDestination =
   | "activity"
   | "team"
   | "settings"
+  | "retrieval"
   | "account";
 export interface GuideArticle {
   id: string;
@@ -39,13 +40,23 @@ export const guideArticles: GuideArticle[] = [
     steps: [
       "Choose Add a project from the project selector. Start from an idea or select an existing folder.",
       "The project’s setup guide confirms its purpose and local source. Connect Memtrace, then let its local code analysis finish.",
-      "Choose an installed worker. Review what MemCode may use and explicitly approve the connection. Setup does not start it.",
+      "Connect an installed worker and choose its default permissions. Smart auto handles routine approvals where supported; Standard follows the harness’s normal rules; Full access bypasses tool approvals and supported sandboxes. Stories can override your default.",
+      "Choose optional local tools: Whisper dictation for speaking prompts and Qwen 2.5 Coder for planning code searches. Setup downloads only what you choose. Find them later in Settings → Dictation and Local retrieval.",
       "Give your first epic an outcome and write a story with one clear result. Open its card and choose Story guide for a walkthrough of the tabs. You choose when to start the worker.",
       "After the first change, move the story to Code review. Start the review from its tab, inspect the findings and decide whether to request a fix or accept the work.",
     ],
     note: "Skip for now saves your place in this project. To return, open Docs and choose Guide me through. Choose Watch product tour whenever you want a quick look around.",
     destination: "project",
-    related: ["projects", "workers", "epics", "stories", "review"],
+    related: [
+      "account",
+      "projects",
+      "workers",
+      "dictation",
+      "retrieval",
+      "epics",
+      "stories",
+      "review",
+    ],
   },
   {
     id: "projects",
@@ -76,6 +87,7 @@ export const guideArticles: GuideArticle[] = [
       "Install and sign in to Codex, Claude Code or Cursor using its own official CLI setup.",
       "Open Workers and choose Connect. Read the local execution and configured-model access explanation.",
       "Approve the connection. MemCode checks the existing CLI sign-in without starting a coding session.",
+      "Set Default permissions on the worker card. You can change the same connections and defaults from Settings → Workers. They apply across projects on the next worker pass; stories can override them.",
       "Create a story and send work when you are ready. Disconnect an adapter from Workers when its sessions are stopped.",
     ],
     note: "Cloud models follow your coding tool’s configuration. Local execution does not mean cloud inference is disabled; Codex local-model mode is available in Settings.",
@@ -141,7 +153,8 @@ export const guideArticles: GuideArticle[] = [
     id: "workspace",
     group: "Your workspace",
     title: "Workspace and board",
-    summary: "Follow a story from planning through implementation, code review and acceptance.",
+    summary:
+      "Follow a story from planning through implementation, code review and acceptance.",
     image: "workspace",
     caption: "Each board lane scrolls independently.",
     steps: [
@@ -282,9 +295,11 @@ export const guideArticles: GuideArticle[] = [
     id: "changes",
     group: "Working with agents",
     title: "Read a story’s changes",
-    summary: "Inspect the edits recorded for this worker and leave feedback on a specific line.",
+    summary:
+      "Inspect the edits recorded for this worker and leave feedback on a specific line.",
     image: "changes",
-    caption: "The line numbers and plus and minus signs identify exactly what changed.",
+    caption:
+      "The line numbers and plus and minus signs identify exactly what changed.",
     steps: [
       "Open Changes on a story and choose a file. Read the green additions and red deletions together with the surrounding lines. Scroll sideways for longer lines.",
       "Select the lines you want to discuss and save a comment. Add it to a follow-up when you want the worker to act.",
@@ -295,7 +310,8 @@ export const guideArticles: GuideArticle[] = [
     id: "review",
     group: "Working with agents",
     title: "Code review",
-    summary: "Decide what needs a fix and what is ready to accept. Each review follows one story’s recorded changes.",
+    summary:
+      "Decide what needs a fix and what is ready to accept. Each review follows one story’s recorded changes.",
     image: "review-overview",
     caption: "Explore a captured example of a change to a sign-in flow.",
     steps: [
@@ -404,13 +420,31 @@ export const guideArticles: GuideArticle[] = [
     caption:
       "Set up the small local model once, then dictate from the composer.",
     steps: [
-      "Open Settings → Local dictation. Choose Set up local dictation and approve the runtime/model download.",
+      "Open Settings → Dictation. Choose Set up local dictation and approve the runtime/model download.",
       "After setup, use the microphone in a project brief or story composer. Allow microphone access when the system asks.",
       "Speak, then stop the recording. MemCode transcribes locally and adds the result to the draft.",
       "Read and edit the text before sending. Recording never sends a worker prompt by itself.",
     ],
     note: "The default small model supports multiple languages. Advanced settings can use an existing local Whisper server. The microphone and downloads start only after your action.",
     destination: "settings",
+  },
+  {
+    id: "retrieval",
+    group: "Start here",
+    title: "Add a local retrieval assistant",
+    summary:
+      "An optional Qwen 2.5 Coder model helps plan focused code searches on this computer.",
+    image: "dictation",
+    caption:
+      "Local retrieval is separate from the coding model assigned to a story.",
+    steps: [
+      "Open Settings → Local retrieval and enable Use a local retrieval assistant.",
+      "Choose Set up local retrieval. MemCode downloads and checks the small Qwen 2.5 Coder model and its runtime once, with progress shown here.",
+      "When ready, the assistant helps plan searches. Memtrace supplies code facts, impact and Fleet coordination. Your selected coding worker still implements the story.",
+      "You can disable assistance at any time. Memtrace retrieval also works without this model. Downloads and preferences stay on this computer across app updates.",
+    ],
+    destination: "retrieval",
+    related: ["routing", "dictation", "workers"],
   },
   {
     id: "account",
@@ -421,6 +455,7 @@ export const guideArticles: GuideArticle[] = [
     image: "account",
     caption: "Connect Memtrace separately from approving a coding worker.",
     steps: [
+      "If you are signed out, MemCode offers sign-in when it opens. Choose Sign in or create account; first-time users create a free Memtrace account in that same browser flow. Approval returns you to MemCode automatically.",
       "Open Settings or the account control in the top bar, then choose Connect Memtrace beta.",
       "Approve the intended account in the official browser flow. The Mac and Windows installers include Memtrace and Node.js; MemCode verifies and prepares its private local engine after approval.",
       "Choose Change account to approve a different account. Cancel stops a pending sign-in. Finish active workers before changing their engine access.",

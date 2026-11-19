@@ -1,0 +1,85 @@
+.settings-navigation {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 0 28px 16px;
+  border-bottom: 1px solid var(--line, #e0e8dc);
+}
+.settings-navigation button {
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  color: #718273;
+}
+.settings-navigation button:hover {
+  background: #f0f6ef;
+}
+.settings-navigation button[aria-current="page"] {
+  color: #204d3b;
+  background: #e5f1e9;
+}
+.settings-setup-link {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  padding: 18px 0;
+}
+.settings-setup-link span {
+  flex: 1;
+}
+.settings-setup-link strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+}
+.settings-setup-link small {
+  display: block;
+  font-size: 11px;
+  line-height: 1.7;
+  color: #7c8d7d;
+  margin-top: 6px;
+}
+.settings-engine-advanced {
+  color: #7c8d7d;
+  font-size: 11px;
+  padding: 16px 0;
+}
+.settings-engine-advanced summary {
+  cursor: pointer;
+}
+.settings-body .worker-connection-grid {
+  grid-template-columns: 1fr;
+}
+.settings-body .worker-connection-card {
+  padding: 18px;
+}
+.settings-body .worker-connections > header {
+  align-items: flex-start;
+}
+.sign-in-welcome-brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 0 22px;
+  font-size: 13px;
+  color: #2a513e;
+}
+.sign-in-welcome-brand small {
+  display: block;
+  color: #7e9180;
+  font-size: 11px;
+  margin-top: 6px;
+}
+.sign-in-welcome > p {
+  color: #7a8c7b;
+  line-height: 1.8;
+  font-size: 11px;
+  margin: 16px 0;
+}
+.sign-in-welcome > small {
+  display: block;
+  font-size: 10px;
+  color: #8c9b8a;
+  line-height: 1.7;
+  margin-top: 10px;
+}

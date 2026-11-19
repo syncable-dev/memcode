@@ -113,6 +113,8 @@ export interface MemtracePrincipal {
 }
 export interface MemtraceAccount {
   status: "connected" | "needs-sign-in" | "unavailable" | "unknown";
+  /** A valid existing CLI session, even before a project owner is running. */
+  sessionVerified?: boolean;
   label: string;
   detail: string;
   checkedAt?: string;

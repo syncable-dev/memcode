@@ -129,6 +129,7 @@ export class MemtraceAccountManager {
       authMode: managedBy.length ? "environment" : "session",
       managedBy,
       signedOut: this.signedOut,
+      sessionVerified: !this.signedOut && !this.reconnectRequired && this.sessionVerified,
       reconnectRequired: this.reconnectRequired,
       // A cached workspace owner is not proof of the newly chosen person.
       ...(this.signedOut || this.reconnectRequired ? { principal: undefined, organizationId: undefined } : {}),

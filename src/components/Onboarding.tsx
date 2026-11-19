@@ -22,6 +22,8 @@ import type {
 import { Modal } from "./Dialogs";
 import { InstallWelcome } from "./InstallWelcome";
 import { BetaAccess } from "./BetaAccess";
+import { LocalToolsGuide } from "./LocalToolsGuide";
+import { previousGuideStep } from "../onboarding";
 import "../styles-onboarding.css";
 
 const copy = {
@@ -35,39 +37,45 @@ const copy = {
   memtrace: {
     number: 2,
     title: "Understand the code first.",
-    body: "Memtrace analyzes this project locally so workers can retrieve relevant code and measure a change’s complexity and impact.",
+    body: "Sign in with your Memtrace account, then analyze this project locally. Workers use that context to find relevant code and measure complexity and impact.",
     button: "Analyze this project",
     target: "[data-guide=project-picker]",
   },
   worker: {
     number: 3,
     title: "Choose a worker you trust.",
-    body: "Connect an installed coding tool and approve its access. Your provider account and permission settings stay yours.",
+    body: "Connect a coding tool, then choose its default permissions below. They apply across projects; each story can override them.",
     button: "Choose a worker",
     target: "[data-guide=worker-connections]",
   },
-  epic: {
+  "local-tools": {
     number: 4,
+    title: "Make it work your way.",
+    body: "Want to talk through an idea or use a small local retrieval model? Choose either, both, or continue without them.",
+    button: "Continue to your first work",
+  },
+  epic: {
+    number: 5,
     title: "What would you like to build?",
     body: "An epic groups an outcome; a story describes one useful change. Write your own when you’re ready, or finish setup with an empty board.",
     button: "Write an epic",
     target: "[data-guide=new-epic]",
   },
   story: {
-    number: 4,
+    number: 5,
     title: "One clear request is enough.",
     body: "Describe the outcome, useful context and what success looks like. Creating a story saves your brief; starting its worker is a separate choice.",
     button: "Write a story",
     target: "[data-guide=new-story]",
   },
   ready: {
-    number: 4,
+    number: 5,
     title: "Explore your story.",
     body: "Take a tour inside the card. See where to talk to the worker, inspect its edits and open what it built.",
     button: "Tour the story tabs",
   },
   "code-review": {
-    number: 5,
+    number: 6,
     title: "Review what changed.",
     body: "When the work is ready, move the story to the Code review lane. Open its Code review tab and start the review there.",
     button: "Open the illustrated guide",
@@ -111,7 +119,9 @@ export function Onboarding({
           `[data-work-item="${CSS.escape(progress.storyId)}"]`
         : step === "code-review"
           ? laneId && `[data-work-group="${CSS.escape(laneId)}"]`
-          : copy[step].target;
+          : "target" in copy[step]
+            ? (copy[step].target as string)
+            : undefined;
     if (!selector) {
       setBounds(undefined);
       return;
@@ -204,6 +214,7 @@ export function Onboarding({
               { icon: Folder, label: "Your project" },
               { icon: Code2, label: "Code context" },
               { icon: Plug, label: "Your worker" },
+              { icon: Sparkles, label: "Local extras" },
               { icon: MessageSquare, label: "Your first work" },
               { icon: ScanLine, label: "Code review" },
             ].map(({ icon: Icon, label }, index) => (
@@ -292,8 +303,8 @@ export function Onboarding({
             <X size={14} />
           </button>
         </header>
-        <div className="guide-progress" aria-label={`Step ${item.number} of 5`}>
-          {[1, 2, 3, 4, 5].map((number) => (
+        <div className="guide-progress" aria-label={`Step ${item.number} of 6`}>
+          {[1, 2, 3, 4, 5, 6].map((number) => (
             <i
               key={number}
               className={number <= item.number ? "complete" : ""}
@@ -302,7 +313,8 @@ export function Onboarding({
         </div>
         <div className="guide-step-copy" key={step}>
           <small>
-            STEP {item.number} OF 5{item.number === 4 ? " · OPTIONAL" : ""}
+            STEP {item.number} OF 6
+            {[4, 5].includes(item.number) ? " · OPTIONAL" : ""}
           </small>
           <h2>{item.title}</h2>
           <p>{item.body}</p>
@@ -379,6 +391,16 @@ export function Onboarding({
                 </>
               )}
             </>
+          ) : step === "local-tools" ? (
+            <>
+              <LocalToolsGuide hidden={hidden} onAction={onAction} />
+              <button
+                className="button primary"
+                onClick={() => onUpdate({ step: "epic" })}
+              >
+                {item.button} <ArrowRight size={13} />
+              </button>
+            </>
           ) : step === "code-review" ? (
             <>
               <div className="guide-review-advice">
@@ -429,13 +451,24 @@ export function Onboarding({
               Use {project.name}
             </button>
           )}
+          {step === "worker" && (
+            <div className="guide-review-advice">
+              <Plug size={16} aria-hidden />
+              <p>
+                Smart auto handles routine approvals where supported. Standard
+                asks using the tool’s normal rules. Full access bypasses tool
+                approvals and supported sandboxes. Your default is saved for
+                future stories.
+              </p>
+            </div>
+          )}
           {step === "worker" && connected && (
             <button
               className="guide-use-existing"
-              onClick={() => onUpdate({ step: "epic" })}
+              onClick={() => onUpdate({ step: "local-tools" })}
             >
               <Check size={12} />
-              Worker approved · continue
+              Worker connected · continue
             </button>
           )}
           {step === "epic" && selectedEpic && (
@@ -516,7 +549,13 @@ export function Onboarding({
           <p>Optional usage reports are off by default.</p>
         </details>
         <footer>
-          <button onClick={pause}>Skip for now</button>
+          {previousGuideStep(step) ? (
+            <button onClick={() => onUpdate({ step: previousGuideStep(step) })}>
+              Back
+            </button>
+          ) : (
+            <button onClick={pause}>Skip for now</button>
+          )}
           <button onClick={onDocs}>
             Quick start <ArrowRight size={10} />
           </button>
