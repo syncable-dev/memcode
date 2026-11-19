@@ -1048,3 +1048,162 @@ test("cancellation or checkout/branch changes stop background publication adopti
     );
   }
 });
+
+const pendingOwnedPublication = {
+  ...nativeOwnedRevision,
+  ready: false,
+  status: "partial",
+  publication: { status: "partial", token: "pending" },
+  _meta: {
+    graph_revision: {
+      status: "partial",
+      token: "pending",
+      publication_unchanged_during_call: false,
+    },
+  },
+};
+
+test("a completed owned index with every source file matched waits for the same publication past 30 seconds", async () => {
+  let elapsed = 0;
+  const names = new Set<string>();
+  await waitForIndexPublication(
+    {
+      call: async (_project, name, args) => {
+        names.add(name);
+        if (elapsed > 0)
+          assert.equal(
+            args.expected_source_revision,
+            nativeOwnedRevision.source_revision,
+          );
+        return elapsed < 45_000 ? pendingOwnedPublication : nativeOwnedRevision;
+      },
+    },
+    nativeOwnedProject,
+    "fixture",
+    () => {},
+    {
+      completedJob: true,
+      now: () => elapsed,
+      sleep: async (ms) => {
+        elapsed += ms;
+      },
+    },
+  );
+  assert.deepEqual([...names], ["get_query_revision"]);
+  assert.ok(elapsed >= 45_000 && elapsed < 50_000);
+});
+
+test("only an exact current source and a recognized partial publication extend a completed job wait", async () => {
+  for (const [completedJob, change] of [
+    [false, {}],
+    [true, { reason: "unrecognized" }],
+    [true, { mismatched_paths: ["a.ts"] }],
+    [true, { mismatched_files: 1 }],
+    [true, { source_revision: null }],
+    [true, { error: "failed" }],
+    [true, { graph_scope: "canonical_graph" }],
+    [true, { _meta: { ...pendingOwnedPublication._meta, stale: true } }],
+    [true, { publication: { status: "partial", token: "different" } }],
+  ] as const) {
+    let elapsed = 0;
+    await assert.rejects(
+      waitForIndexPublication(
+        {
+          call: async () => ({ ...pendingOwnedPublication, ...change }),
+        },
+        nativeOwnedProject,
+        "fixture",
+        () => {},
+        {
+          completedJob,
+          now: () => elapsed,
+          sleep: async (ms) => {
+            elapsed += ms;
+          },
+        },
+      ),
+    );
+    assert.equal(elapsed, 30_000);
+  }
+});
+
+test("a source change while a completed owned index publishes interrupts the wait", async () => {
+  let elapsed = 0;
+  await assert.rejects(
+    waitForIndexPublication(
+      {
+        call: async () =>
+          elapsed === 0
+            ? pendingOwnedPublication
+            : { ...nativeOwnedRevision, source_revision: "other" },
+      },
+      nativeOwnedProject,
+      "fixture",
+      () => {},
+      {
+        completedJob: true,
+        now: () => elapsed,
+        sleep: async (ms) => {
+          elapsed += ms;
+        },
+      },
+    ),
+    /same source revision/,
+  );
+});
+
+test("a completed-job wait cannot adopt an older publication or wait through cancellation", async () => {
+  let elapsed = 0;
+  await assert.rejects(
+    waitForIndexPublication(
+      {
+        call: async () =>
+          elapsed === 0
+            ? pendingOwnedPublication
+            : {
+                ...nativeOwnedRevision,
+                _meta: {
+                  stale: true,
+                  graph_revision: nativeOwnedRevision._meta.graph_revision,
+                },
+              },
+      },
+      nativeOwnedProject,
+      "fixture",
+      () => {},
+      {
+        completedJob: true,
+        now: () => elapsed,
+        sleep: async (ms) => {
+          elapsed += ms;
+        },
+        isCancelled: () => elapsed >= 35_000,
+      },
+    ),
+    /cancelled/,
+  );
+  assert.ok(elapsed < 40_000);
+});
+
+test("matched files alone do not start a worker and cannot renew its publication budget", async () => {
+  let elapsed = 0;
+  await assert.rejects(
+    waitForIndexPublication(
+      {
+        call: async () => pendingOwnedPublication,
+      },
+      nativeOwnedProject,
+      "fixture",
+      () => {},
+      {
+        completedJob: true,
+        now: () => elapsed,
+        sleep: async (ms) => {
+          elapsed += ms;
+        },
+      },
+    ),
+    /still verifying/,
+  );
+  assert.equal(elapsed, 120_000);
+});

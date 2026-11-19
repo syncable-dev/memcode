@@ -956,7 +956,7 @@ export class MemtraceEngine {
           throw new Error(
             "The index completed without a verified repository identity. Reconnect before planning workers.",
           );
-        return waitForIndexPublication(this, project, repoId, update, wait);
+        return waitForIndexPublication(this, project, repoId, update, { ...wait, completedJob: true });
       }
     }
     throw new Error(

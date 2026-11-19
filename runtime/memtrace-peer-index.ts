@@ -17,6 +17,7 @@ export interface PeerIndexWaitOptions {
   pollMs?: number;
   publicationMs?: number;
   requireCertificate?: boolean;
+  completedJob?: boolean;
   signal?: AbortSignal;
   isCancelled?: () => boolean;
   now?: () => number;
@@ -129,6 +130,52 @@ export function incompletePublication(value: Json | undefined) {
   );
 }
 
+/** Bind the checkout, its complete file inventory and the native publication boundary. */
+function matchedOwnedPublication(
+  value: Json,
+  project: Project,
+  repoId: string,
+  status: "partial" | "published",
+) {
+  const boundary = value?._meta?.graph_revision;
+  const published = status === "published";
+  return (
+    project.analysisCheckout === "owned-worktree-v1" &&
+    exactRevisionSource(value, project, repoId) &&
+    value.ready === published &&
+    value.status === (published ? "complete" : "partial") &&
+    value.reason === undefined &&
+    value.requested_source_matches === true &&
+    value.requested_revision_matches === true &&
+    value.source_unchanged_during_observation === true &&
+    value.default_branch_matches === true &&
+    value.ambiguous_indexed_files === false &&
+    value.retry_query_group === false &&
+    value.mismatched_files === 0 &&
+    Array.isArray(value.mismatched_paths) &&
+    value.mismatched_paths.length === 0 &&
+    Number.isSafeInteger(value.source_file_count) &&
+    value.source_file_count >= 0 &&
+    value.indexed_file_count === value.source_file_count &&
+    usable(value.source_revision) &&
+    usable(value.indexing_revision) &&
+    usable(value.token) &&
+    value.publication?.status === status &&
+    usable(value.publication.token) &&
+    boundary?.token === value.publication.token &&
+    (boundary.status === status ||
+      (published && boundary.status === undefined)) &&
+    boundary.publication_unchanged_during_call === published &&
+    value._meta.stale !== true &&
+    Object.keys(boundary).every((key) =>
+      ["status", "token", "publication_unchanged_during_call"].includes(key),
+    ) &&
+    ["error", "_error", "error_code", "message"].every(
+      (key) => value[key] === undefined,
+    )
+  );
+}
+
 /** Native contention responses carry the digest of the source the writer observed. */
 export function writingSourceRevision(
   value: Json | undefined,
@@ -235,7 +282,7 @@ export async function waitForIndexPublication(
   let reason = "",
     expectedSource: string | undefined,
     delay = pollMs;
-  let first = true;
+  let first = true, waitingForOwnedPublication = false;
   while (now() < deadline) {
     assertActive();
     // Allow the first read the native request budget even if the shorter
@@ -289,11 +336,28 @@ export async function waitForIndexPublication(
       expectedSource = writerSource;
       deadline = hardDeadline;
     }
+    if (
+      options.completedJob &&
+      !expectedSource &&
+      matchedOwnedPublication(revision, project, repoId, "partial")
+    ) {
+      expectedSource = revision.source_revision;
+      waitingForOwnedPublication = true;
+      deadline = Math.min(
+        hardDeadline,
+        started + (options.publicationMs ?? 120_000),
+      );
+    }
     const verify =
       options.requireCertificate || expectedSource
         ? certifiedPublication
         : verifiedIndexRevision;
-    if (verify(revision, project, repoId)) return repoId;
+    if (
+      verify(revision, project, repoId) &&
+      (!waitingForOwnedPublication ||
+        matchedOwnedPublication(revision, project, repoId, "published"))
+    )
+      return repoId;
     reason =
       typeof revision?.reason === "string" ? revision.reason.slice(0, 200) : "";
     update(
@@ -549,6 +613,7 @@ export async function waitForPeerIndex(
       // only after the engine independently certifies this exact branch/source.
       return waitForIndexPublication(client, project, repoId!, update, {
         ...options,
+        completedJob: true,
         now,
         sleep,
         pollMs,
