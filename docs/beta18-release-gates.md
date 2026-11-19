@@ -12,11 +12,10 @@ of that evidence are recognized. A real Claude answer copied the exact metrics
 of a function near the end of the large report. Mac validation must include
 these latest fixes from `feat/shared-worker-sessions` before packaging.
 
-Mac installed-app and two-device results remain pending. Return a sanitized,
-tracked validation summary with the tested source commit, engine hash, actual
-Improve refresh and MC-039 review-tab results, real harness outcomes, and
-candidate artifact hashes. Keep private receipts, credentials, profiles and
-engine binaries outside Git. Preserve failed and skipped gates honestly.
+The [beta.18 Mac acceptance report](beta18-mac-acceptance.md) records the
+installed-app results and unsigned package hashes. The Mac reproduced failures
+in first-time review preparation and Codex follow-up continuity. Live
+two-device acceptance is pending.
 
 After both platforms pass on the final source, integrate through the required
 approved PRs, verify both version-bound production updater signatures, publish
