@@ -71,6 +71,47 @@ projection should supply its authenticated current identity set instead of
 using the legacy inferred-main fallback. Preserve unmanaged feature inheritance
 and historical reads; do not merely allow the extra rows or remove the guard.
 
+### Windows final application acceptance, 2026-11-19
+
+The peer-save retry passed the physical Windows same-epic repeat: real Codex
+`gpt-6.2-sol`, Claude Code `claude-opus-5-5` and Cursor `composer-2.5` workers
+all completed on the same selected folder and `:source` graph. The primary
+history store was kept separate and was not reset. All three subsequent
+reviews completed their capture, deterministic checks, quality and impact
+phases, and separate read-only provider reviewers ran. Some anonymous-function
+impact coverage is genuinely incomplete. Peer edits after another worker's
+finish correctly prevented linking checks to that older whole-source snapshot;
+these are reported unavailable, never converted into passed checks.
+
+A larger real Codex task extracted three presentation components from the
+existing WorkDetail. Its native Code review contains 51 measured functions
+across four attributed files, including all numeric per-function cells. The
+matched WorkDetail function changed from cognitive 361 to 273 and cyclomatic
+245 to 174. Its native MI remains a measured zero; new components have nonzero
+MI values. The separate read-only `gpt-6.2-sol` reviewer completed. A native
+`task:verify` run links 30 passing assertions to this exact captured source.
+This is a disposable QA contribution, not a production refactor to merge.
+
+That task also exposed a Class B post-checkpoint bug: a normal directory scope
+was treated as if it had to be one file. The follow-up application patch
+expands directories using literal Git inventory, retains root/symlink checks
+and bounds rereads to 20 files with explicit truncation. The actual attributed
+checkpoint had already been saved before the old reread error. Regression
+tests cover its preservation, new extracted files, literal folder names,
+bounded coverage and rejection of outside-directory links.
+
+Final local application checks: typecheck and build passed; 942 tests passed,
+zero failed. The installed Windows QA app was reopened with this runtime and
+retained its seven stories, attributed patches, checks, provider sessions and
+saved reviews. The native shell remains the staged beta.18 native source; final
+release resources and the final Mac engine must still be rebuilt and packaged.
+
+No new Mac engine fix or acknowledgement was present on the shared Git refs at
+19:58 UTC. Mac: fetch this handoff branch, preserve your existing fixes and push
+your exact source/test receipt back to Git. The c411 large-history replay
+failure remains a release gate. Do not publish beta.18 until the full Mac flow,
+two-device continuation and final updater signatures pass.
+
 ## Confirmed Windows failure
 
 Application source `127cf9ce34bac316b9d564a2f517cf29bcef812b` with engine
