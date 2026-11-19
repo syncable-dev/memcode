@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { initialState } from "../src/seed";
 import { settleFollowupQueue } from "../runtime/followup-queue";
-import { claimReviewContext } from "../runtime/review-context";
+import { claimReviewContext, markReviewContext } from "../runtime/review-context";
 import type { AppState, Harness } from "../src/shared";
 import type { StoryReviewRun } from "../src/code-review";
 import { TeamSyncClient } from "../runtime/team/client";
@@ -427,6 +427,78 @@ test("resuming a paused follow-up seals the peer's latest edit and skips their c
   } finally {
     await f.close();
   }
+});
+
+for (const harness of ["claude", "codex", "cursor"] as const)
+  test(`${harness} retry seals a paused remote follow-up before consuming it`, async () => {
+    const f = await fixture();
+    try {
+      const task = await f.start(harness);
+      const id = await f.b.sendSessionCommand(task.id, "followup", "Before retry");
+      await f.b.synchronize("B");
+      await f.a.synchronize("A");
+      assert.equal(settleFollowupQueue(task, "paused"), true);
+      task.run.state = "failed";
+      await f.b.synchronize("B");
+      await f.b.editSessionCommand(task.id, id, "Edited while preparation was paused");
+      await f.restartA();
+      await f.a.prepareFollowups(task);
+      const snapshot = claimReviewContext(task.messages, "2026-11-18T19:01:00.000Z");
+      markReviewContext(task.messages, snapshot, "2026-11-18T19:01:01.000Z");
+      await f.a.synchronize("A");
+      await f.b.synchronize("B");
+      const command = f.b.status("B")!.sessionCommands!.find(c => c.id === id)!;
+      assert.equal(command.state, "picked-up");
+      assert.equal(task.messages.find(m => m.id === id)!.text, command.text);
+      assert.equal(command.text, "Edited while preparation was paused");
+      assert.equal(f.received.filter(value => value === id).length, 1);
+      await assert.rejects(f.b.editSessionCommand(task.id, id, "Too late"), /picked up/);
+      await assert.rejects(f.b.editSessionCommand(task.id, id, undefined, true), /picked up/);
+    } finally { await f.close(); }
+  });
+
+test("a host restart repairs a consumed follow-up receipt without delivering it again", async () => {
+  const f = await fixture();
+  try {
+    const task = await f.start("claude");
+    const id = await f.b.sendSessionCommand(task.id, "followup", "Already answered on the host");
+    await f.b.synchronize("B");
+    await f.a.synchronize("A");
+    // Earlier versions consumed a locally paused request without sealing its remote receipt.
+    task.messages.find(m => m.id === id)!.followupState = "paused";
+    const snapshot = claimReviewContext(task.messages, "2026-11-18T19:01:00.000Z");
+    markReviewContext(task.messages, snapshot, "2026-11-18T19:01:01.000Z");
+    await f.restartA();
+    await f.a.synchronize("A");
+    await f.b.synchronize("B");
+    const command = f.b.status("B")!.sessionCommands!.find(c => c.id === id)!;
+    assert.equal(command.state, "picked-up");
+    assert.equal(f.received.filter(value => value === id).length, 1);
+    assert.ok(task.messages.find(m => m.id === id)!.promptedAt);
+    await assert.rejects(f.b.editSessionCommand(task.id, id, "Too late"), /picked up/);
+  } finally { await f.close(); }
+});
+
+test("a consumed receipt cannot acknowledge text edited after an older app's unsealed pickup", async () => {
+  const f = await fixture();
+  try {
+    const task = await f.start("claude");
+    const id = await f.b.sendSessionCommand(task.id, "followup", "Original consumed wording");
+    await f.b.synchronize("B");
+    await f.a.synchronize("A");
+    const snapshot = claimReviewContext(task.messages, "2026-11-18T19:01:00.000Z");
+    markReviewContext(task.messages, snapshot, "2026-11-18T19:01:01.000Z");
+    await f.b.synchronize("B");
+    await f.b.editSessionCommand(task.id, id, "Different wording not sent to the worker");
+    await f.restartA();
+    await f.a.synchronize("A");
+    await f.b.synchronize("B");
+    const command = f.b.status("B")!.sessionCommands!.find(c => c.id === id)!;
+    assert.equal(command.state, "received");
+    assert.equal(command.text, "Different wording not sent to the worker");
+    assert.equal(task.messages.find(m => m.id === id)!.text, "Original consumed wording");
+    assert.equal(f.received.filter(value => value === id).length, 1);
+  } finally { await f.close(); }
 });
 
 test("cancel received input, recover an offline outbox and lost ACK without duplicate worker input", async () => {

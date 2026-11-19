@@ -582,6 +582,31 @@ export class TeamSessionSync {
             t.projectId === connection.projectId,
         );
       if (!task || !this.options.deliver) continue;
+      // Earlier versions could consume a paused input on retry without advancing
+      // its remote receipt. Repair only the exact input this host already sent.
+      const consumed = command.kind === "followup" && task.messages.some(
+        (message) =>
+          message.role === "user" &&
+          message.sourceCommandId === command.id &&
+          message.promptedAt &&
+          message.text === command.text,
+      );
+      if (consumed) {
+        this.accept(
+          connection,
+          await this.options.request<SessionCommand>(
+            connection,
+            "/v1/session-commands/receipt",
+            {
+              workspaceId: connection.credential.workspaceId,
+              id: command.id,
+              state: "picked-up",
+            },
+          ),
+        );
+        changed = true;
+        continue;
+      }
       if (command.kind !== "followup") {
         if (this.executing.has(command.id)) continue;
         const report = this.reviews.get(task.id);
