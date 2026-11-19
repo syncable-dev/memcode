@@ -25,6 +25,10 @@ const fixtureScript = `
 import fs from 'node:fs';import readline from 'node:readline';
 const [harness,scenario,recordPath]=process.argv.slice(2,5);const record={args:process.argv.slice(5),requests:[],replies:[],prompted:false};
 const save=()=>fs.writeFileSync(recordPath,JSON.stringify(record));const send=p=>console.log(JSON.stringify(p));save();
+if(harness==='codex' && record.args.some((arg,i)=>arg==='in_app_chat' && record.args[i-1]==='--disable'))process.exit(1);
+if(harness==='claude' && scenario!=='safe' && scenario!=='writable' && (record.args.includes('--restricted') || (scenario==='unsupported' && record.args.includes('--safe-mode')))){
+ const flag=record.args.includes('--restricted')?'--restricted':'--safe-mode';process.stderr.write("error: unknown option '"+flag+"'\\n");process.exit(1);
+}
 if(harness==='claude' && record.args[record.args.indexOf('--input-format')+1]==='stream-json'){
  const lines=readline.createInterface({input:process.stdin});
  lines.on('line',line=>{const p=JSON.parse(line);if(p.request?.subtype==='initialize')send({type:'control_response',response:{subtype:'success',request_id:p.request_id,response:{models:[{value:'requested-model'}]}}});});
@@ -123,6 +127,7 @@ test("Codex review requires a native readOnly handshake and denies file-change a
     assert.equal(result.model, "actual-codex");
     const record = await f.record();
     assert.equal(record.contextRead, true);
+    assert.ok(record.args.includes("features.in_app_chat=false"));
     assert.equal(
       record.requests.find((p: any) => p.method === "thread/start").params
         .sandbox,
@@ -222,6 +227,34 @@ test("Claude read-only tools and strict empty MCP override writable worker defau
     assert.ok(record.args.includes("--strict-mcp-config"));
     assert.equal(value("--setting-sources"), "");
     assert.equal(value("--mcp-config"), '{"mcpServers":{}}');
+  } finally {
+    await f.close();
+  }
+});
+
+test("Claude uses safe mode on versions that dropped the restricted flag", async () => {
+  const f = await fixture("claude", "safe-mode");
+  try {
+    const result = await f.agent.ask({ task: f.task, review: f.review, question: "Explain" });
+    const record = await f.record();
+    assert.equal(result.evidenceRead?.method, "claude-native-read-tool");
+    assert.ok(record.args.includes("--safe-mode"));
+    assert.ok(!record.args.includes("--permission-prompts"));
+    assert.equal(record.args[record.args.indexOf("--permission-mode") + 1], "dontAsk");
+    assert.ok(record.args.includes("--strict-mcp-config"));
+  } finally {
+    await f.close();
+  }
+});
+
+test("Claude without either isolation mode reports how to recover without accepting an answer", async () => {
+  const f = await fixture("claude", "unsupported");
+  try {
+    await assert.rejects(
+      f.agent.ask({ task: f.task, review: f.review, question: "Explain" }),
+      /Update Claude Code.*read-only reviews/,
+    );
+    assert.equal((await f.record()).prompted, false);
   } finally {
     await f.close();
   }

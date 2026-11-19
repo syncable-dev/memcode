@@ -303,7 +303,8 @@ async function codexQuestion(
   const args = [
     "app-server",
     "--stdio",
-    ...disabled.flatMap((feature) => ["--disable", feature]),
+    // Config overrides also work on releases where a feature name is unregistered.
+    ...disabled.flatMap((feature) => ["-c", `features.${feature}=false`]),
     "-c",
     'web_search="disabled"',
     "-c",
@@ -690,6 +691,8 @@ async function cursorQuestion(
   }
 }
 
+class UnsupportedClaudeReviewFlag extends Error {}
+
 async function claudeQuestion(
   command: Command,
   cwd: string,
@@ -703,6 +706,32 @@ async function claudeQuestion(
     if (input.signal?.aborted) throw Error("Review conversation was cancelled.");
   }
   const evidenceHash = digest(await readReviewFile(cwd, "review-context.json"));
+  const run = (mode: "--restricted" | "--safe-mode") =>
+    runClaudeReview(command, cwd, prompt, requested, input, options, evidenceHash, mode);
+  try {
+    return await run("--restricted");
+  } catch (error) {
+    if (!(error instanceof UnsupportedClaudeReviewFlag) || input.signal?.aborted) throw error;
+  }
+  try {
+    return await run("--safe-mode");
+  } catch (error) {
+    if (error instanceof UnsupportedClaudeReviewFlag)
+      throw Error("Update Claude Code to a version with --safe-mode or --restricted to use read-only reviews.");
+    throw error;
+  }
+}
+
+function runClaudeReview(
+  command: Command,
+  cwd: string,
+  prompt: string,
+  requested: string,
+  input: ReadonlyReviewQuestion,
+  options: ReviewAgentOptions,
+  evidenceHash: string,
+  mode: "--restricted" | "--safe-mode",
+): Promise<ReadonlyReviewAnswer> {
   const readCalls = new Set<string>();
   let evidenceRead: ReadonlyReviewAnswer["evidenceRead"];
   const child = (options.spawn ?? spawn)(
@@ -715,7 +744,7 @@ async function claudeQuestion(
       "stream-json",
       "--input-format",
       "text",
-      "--restricted",
+      mode,
       "--no-chrome",
       "--disable-slash-commands",
       "--tools",
@@ -726,8 +755,7 @@ async function claudeQuestion(
       "Bash,PowerShell,Edit,Write,NotebookEdit,Agent,Task,mcp__*",
       "--permission-mode",
       "dontAsk",
-      "--permission-prompts",
-      "none",
+      ...(mode === "--restricted" ? ["--permission-prompts", "none"] : []),
       "--strict-mcp-config",
       "--mcp-config",
       '{"mcpServers":{}}',
@@ -868,12 +896,20 @@ async function claudeQuestion(
       if (answer.length > 50000)
         finish(Error("The reviewer exceeded its answer limit."));
     });
-    child.stderr.on("data", () => {});
+    // Retry only command-line parse errors before the provider produces any protocol output.
+    // Keep stderr private. Provider logs can include account or workspace details.
+    let startupError = "";
+    child.stderr.on("data", (chunk: Buffer) => {
+      if (!bytes && startupError.length < 256)
+        startupError += chunk.toString("utf8", 0, 256 - startupError.length);
+    });
     child.stdin.on("error", finish);
     child.on("error", finish);
     child.on("close", (code) => {
       lines.close();
-      if (code !== 0 || !acknowledged || !result || !model || !answer)
+      if (code === 1 && !bytes && /^error: unknown option ['"]--(?:restricted|safe-mode|permission-prompts)['"]$/m.test(startupError))
+        finish(new UnsupportedClaudeReviewFlag());
+      else if (code !== 0 || !acknowledged || !result || !model || !answer)
         finish(
           Error("Claude did not complete a verified read-only review answer."),
         );
