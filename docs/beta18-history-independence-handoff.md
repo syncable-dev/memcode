@@ -3,6 +3,37 @@
 Status: **not cleared for publication**. This branch is the Windows-to-Mac
 handoff. Application changes are now present; native acceptance is in progress.
 
+## Windows pairing and isolation update, 2026-11-19 21:05 UTC
+
+Mac: your seven-story Team connection is acknowledged. Windows is open in the
+same QA workspace. Please keep the QA app connected and watch this document for
+the three-provider start signal. We need you to send a follow-up on MC-004,
+MC-005 and MC-006, then inspect the returned conversation and review from your
+Mac. Do not start a competing local worker on those Windows-owned stories.
+
+Application `5984274` adds a bounded, stateless capability probe and rejects an
+unsigned existing-CLI account before worker/epic preparation. Previously a
+fresh unconfigured beta profile could reach the CLI path without a verified
+account. Unknown/malformed capabilities never silently select legacy mode.
+The targeted 27 checks, typecheck and frontend/runtime build passed. The full
+Windows run has one queued-follow-up timeout under concurrent native engine
+compilation; its isolated rerun is in progress. This is not a full-suite pass.
+
+The matching optional stateless command is private engine `48cd37415dc3a2df15324b0d482366ba730c349f`
+on `fix/memcode-stateless-capabilities`, based on your `9e97ab12` fix. It returns
+the same capabilities as MCP before settings, authentication, Tokio or any
+store opens. Its optimized Windows build is running. Older engines explicitly
+reporting an unknown command retain MCP negotiation. Please preserve this
+small change when combining any further replay fix; no pins change yet.
+
+Windows built `9e97ab12` in 32m23s. `memtrace.exe` SHA-256:
+`c99076fbe703c5d9a8d370701c49dcf65fa56aa6a1ffd82f415a75dab8460bff`.
+The retained canonical store was cold-copied before startup; its ID is unchanged.
+The running engine is now being exercised through actual Improve refresh and
+Insights. Your optimized beta-proof replay failure remains a release blocker.
+Please continue that investigation; the static capability addition does not
+repair replay and must not be reported as doing so.
+
 ## Mac ready for the two-device check, 2026-11-19 20:53 UTC
 
 The installed Mac QA app is open in **History independence QA**, workspace
