@@ -84,6 +84,9 @@ const timestamp = () => new Date().toISOString();
 const terminal = (run: StoryReviewRun) =>
   !["queued", "running"].includes(run.state);
 const clone = <T>(value: T): T => structuredClone(value);
+const hasCompleteEvidence = (run: StoryReviewRun) =>
+  !run.coverage.limitations.length && run.impact.complete &&
+  run.checks.length > 0 && run.checks.every((check) => check.state === "passed");
 const findingEvidenceHash = ({
   evidenceHash: _prior,
   ...finding
@@ -789,6 +792,15 @@ export class CodeReviewManager {
           "verification",
           "Linking actual checks to this exact worker contribution and source snapshot.",
         );
+        // The model explains the completed deterministic evidence. Its own
+        // pending answer must not make linked, finished checks appear pending.
+        await this.exclusive(taskId, async () => {
+          assertActive();
+          for (const item of run.phases)
+            if (item.state === "running") item.state = "complete";
+          run.coverage.complete = hasCompleteEvidence(run);
+          await this.persist(saved);
+        });
 
         if (this.hooks.reviewer) {
           await this.reviewAnswer(
@@ -826,11 +838,7 @@ export class CodeReviewManager {
         } else {
           final.state = "completed";
           final.coverage.limitations = [...new Set(final.coverage.limitations)];
-          final.coverage.complete =
-            !final.coverage.limitations.length &&
-            final.impact.complete &&
-            final.checks.length > 0 &&
-            final.checks.every((check) => check.state === "passed");
+          final.coverage.complete = hasCompleteEvidence(final);
           final.outcome ??=
             final.findings.length ||
             final.checks.some((check) => check.state === "failed")

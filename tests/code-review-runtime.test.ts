@@ -887,6 +887,9 @@ test("a separate real-model adapter supplies advisory conversation without chang
         input.onModel?.("actual-review-model");
         assert.equal(input.task.harness, "cursor");
         assert.equal(input.patch, f.capture.patch);
+        assert.equal(input.review.coverage.complete, true);
+        assert.ok(input.review.phases.every((phase) => phase.state === "complete"));
+        assert.equal(input.review.checks[0].state, "passed");
         return {
           harness: "cursor",
           model: "actual-review-model",

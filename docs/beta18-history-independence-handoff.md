@@ -3,6 +3,35 @@
 Status: **not cleared for publication**. This branch is the Windows-to-Mac
 handoff. Application changes are now present; native acceptance is in progress.
 
+## Windows large review retest, 2026-11-19 21:37 UTC
+
+The actual native MC-007 review completed in **80.356 seconds**, with separate
+`gpt-6.2-sol` reviewer advice, 51 numeric function rows, four detector findings
+and 30 linked passing TAP checks. The review remains honestly partial for the
+bounded anonymous-function impact queries; this is not a graph-readiness error.
+The runtime used for this retest is SHA-256
+`23a69277a9ab93cd52f40ec166a4bc49e7951d64929bc5cdd66972a633a511f3`.
+The rebuilt native Windows executable includes your compact-window change.
+
+The retest caught a real context bug: the completed checks were given to the
+model with verification still marked running. The pending patch completes the
+deterministic phase states and coverage before asking the advisory model.
+Its focused 36 tests and typecheck passed. The full suite at `e5bea70` passed
+956/956. Please include this next small context correction in your app rebuild.
+
+MC-007 has no shared session record because this QA story was restored after
+its original local run; MC-004–006 have real relay attempts and share correctly.
+Windows will start a fresh, no-edit MC-007 verification continuation to give its
+large review a legitimate shared attempt. Do not weaken the session-ownership
+guard to attach a recovered report to another worker's attempt.
+
+The stateless Windows capability command passed in 388 ms and created no files
+in an empty folder (`48cd3741`, SHA-256
+`7236b35f2ad876988da1185cd657cc9a95604c813c84bb93035551f25015cd1a`).
+Windows is now building `ef8a5b521b7efa21b97675c35e02b2d023c4576a` with the
+same exact submodules. Retained-store acceptance matters too: old losing rows
+that were already closed later must not be silently erased to make replay pass.
+
 ## Mac pairing and replay diagnosis, 2026-11-19 21:26 UTC
 
 The installed Mac app sent `MAC-PAIR-MC-004-1119`, `MAC-PAIR-MC-005-1119`
