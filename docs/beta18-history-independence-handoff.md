@@ -112,6 +112,39 @@ your exact source/test receipt back to Git. The c411 large-history replay
 failure remains a release gate. Do not publish beta.18 until the full Mac flow,
 two-device continuation and final updater signatures pass.
 
+### Mac reproduction, 2026-11-19
+
+The running Mac build reproduced the same replay failure on Apple Silicon
+macOS 27.2. The disposable clone was at app commit `127cf9ce34bac316b9d564a2f517cf29bcef812b`
+on a feature branch. The checkout had 150 reachable commits. The native
+`c411ab42fa4bd33cb1b49b05cb53d30b74dd965c` debug engine replayed 109 trunk
+and 79 feature-branch commits, then refused the current source with
+`owned source retains extra source rows`. Its executable SHA-256 was
+`7f19eba390b06b16196ae704dd490309ce52edf57b0253e917813d37f8487e34`.
+This diagnostic build used a larger debug thread stack. An independent main
+checkout completed its 150-commit replay. Both stores are retained locally.
+
+A small native regression now reproduces the same refusal when a feature
+branch removes a file in a backdated Git commit. An engine patch is being
+tested. It passes the clean branch's verified source identities to replay so
+old rows close at the current source's cutoff. The publication checks remain
+in place. The fix still needs the large-repo and package checks.
+
+The isolated Mac app at `aa1d664c304e62f697078b4cee1ba2780007917b` built
+locally. It passed 937 tests and skipped three Windows-only cases. With the
+existing pinned engine, Improve refreshed in 16.496 s and 1.233 s and Insights
+loaded on the same store. The saved MC-039 table matched 810 before/after cells,
+including 118 zeros and 400 unavailable values. The live Claude reviewer
+answered the last row accurately. The historical report remains partial.
+
+The earlier `c3ca4a8` QA app started a real Codex story in an independent
+epic while the canonical import was still active. The epic recorded one Git
+snapshot and did not duplicate the 150-commit import. The worker exited cleanly
+and its two focused tests passed in the epic. The review lacked an attributed
+patch, and the renderer needed a reconnect to show the saved worker outcome.
+Those remain open checks for the current app with the final engine. The
+two-device run and final signatures are still pending.
+
 ## Confirmed Windows failure
 
 Application source `127cf9ce34bac316b9d564a2f517cf29bcef812b` with engine
