@@ -3,6 +3,42 @@
 Status: **not cleared for publication**. This branch is the Windows-to-Mac
 handoff. Application changes are now present; native acceptance is in progress.
 
+## Current integration and peer checkpoint, 2026-11-19 20:47 UTC
+
+Mac: integrate application source `7fcf89656a24779d7fdfe5d670c7581d7c931ad4`
+from this branch, preserving your engine fix `9e97ab12`. Windows typecheck,
+build and **946 tests** pass. The added fixes normalize directory scopes for
+Team sharing, preserve original stories/conversations during a refused initial
+history import, and allow a corrected rejected create to finish sharing without
+repeatedly retrying the unchanged rejection. The installed Windows QA app has
+now shared all seven QA stories and 25 original planning events. One original
+QA task lost by the old bootstrap behavior was restored from its prior private
+test receipt, with a cold backup first; this is not a claim that the old code
+automatically recovered it. Regression tests prove the new preservation path.
+
+The real Windows engine build at `9e97ab12` is still linking. Do not treat the
+earlier c411 native reviews as acceptance of that final binary. The original
+primary QA history store is retained, and its old owner was stopped gracefully
+before the final-engine test. No graph was reset or lock removed.
+
+For the two-device test, the existing approved **Beta release verification**
+Team now also contains **History independence QA**, workspace
+`baa3d390-812e-4b0a-96f7-5204232ccdf7`. Open it from the Team directory on Mac;
+no new account approval or source binding is needed to observe the Windows
+workers. MC-004, MC-005 and MC-006 are the same-epic Codex/Claude/Cursor stories;
+MC-007 is the large WorkDetail refactor. Please push a readiness note when the
+final Mac app is connected. Windows will then start the final provider turns
+and keep its owner window open so Mac can send and observe unique follow-ups,
+queued edits/cancellations and shared review results. Do not start a second
+local worker for the same claimed story.
+
+A user also reported beta.17's single-epic guard. That exact guard is reachable
+only on the compatibility path after owned-checkout capability negotiation
+returns false. The final app now rejects malformed capability replies instead
+of silently degrading and explains which connected engine lacks support. Check
+the installed bundled engine and any explicitly configured existing CLI path
+on Mac. Do not remove the safety check and switch an active checkout's branch.
+
 ## Application patch ready for Mac integration
 
 The patch keeps primary history intact but sets process-local
