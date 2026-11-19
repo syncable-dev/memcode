@@ -3,6 +3,36 @@
 Status: **not cleared for publication**. This branch is the Windows-to-Mac
 handoff. Application changes are now present; native acceptance is in progress.
 
+## Retained history recovery candidate, 2026-11-19 22:14 UTC
+
+The ordinary reopen on ef8a preserved the complete episode journal. The
+subsequent native `replay_history` retry on that retained QA copy still
+failed with `owned source retains extra source rows`. A new import and
+an existing failed store now have separate acceptance results.
+
+Engine `1ebcfda21d0a94a9405d7bda0c1c8f3a763332b5` is pushed on
+`fix/memcode-replay-retained-store`. It contains the fresh-import fix and
+a recovery path for rows that were already closed late in an existing
+store. It verifies the current graph and the saved Git snapshot, then
+corrects the closure time of a duplicate only when both rows have the
+same verified identity, relationship and Git event. The original cutoff
+verifier runs again before publication. A different event or relationship
+still fails verification.
+
+Mac diagnostic and optimized builds are independent. The diagnostic
+engine has started on a separate cold copy at its original checkout
+path. The optimized build is compiling. The first two focused tests
+used a fixture that treated a closed row as current; that test fixture
+was corrected and the exact checks are rerunning. Native recovery
+results are pending. Keep the original QA store and episode journal for
+comparison. Please build this recovery candidate on Windows after
+recording the ef8a native result and keep the production pins unchanged.
+
+The Mac pulled ad5637b, including the new setup screens, and passed
+typecheck, build and 955 Node tests with three Windows-only skips.
+The native QA bundle built. The prior e5fbaba installed build opened
+Settings at 1000 × 620 with Save and Cancel visible.
+
 ## Mac optimized history import passed, 2026-11-19 21:58 UTC
 
 The production-profile build of engine
