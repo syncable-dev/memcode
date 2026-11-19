@@ -1069,6 +1069,7 @@ export class WorkerManager {
         task.run.changeRunId,
       );
       const observeActivity = trackTurnActivity();
+      const messageStreamScope = task.run.changeRunId ?? randomUUID();
       const onEvent = (event: AgentEvent) => {
         if (settled) return;
         if (event.type === "raw") {
@@ -1095,9 +1096,11 @@ export class WorkerManager {
           task.run.sessionBinding = { harness: launchedHarness, workspace, branch: task.run.branch, epicId: task.epicId };
         }
         if (event.type === "message") {
-          const existing = event.messageId
+          // ACP message counters can restart when the native conversation resumes.
+          const streamId = event.messageId ? `${messageStreamScope}:${event.messageId}` : undefined;
+          const existing = streamId
             ? task.messages.find(
-                (message) => message.streamId === event.messageId,
+                (message) => message.streamId === streamId,
               )
             : event.delta && task.messages.at(-1)?.role === event.role
               ? task.messages.at(-1)
@@ -1108,8 +1111,8 @@ export class WorkerManager {
             ).slice(-30000);
           else if (event.text) {
             this.message(task, event.role, event.text);
-            if (event.messageId)
-              task.messages.at(-1)!.streamId = event.messageId;
+            if (streamId)
+              task.messages.at(-1)!.streamId = streamId;
           }
         }
         if (event.type === "error") {

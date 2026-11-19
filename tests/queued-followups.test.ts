@@ -41,6 +41,7 @@ async function fixture(
     slots?: number;
     pickupGate?: boolean;
     settlementGate?: boolean;
+    repeatedStreamId?: boolean;
   } = {},
 ) {
   const root = await mkdtemp(join(tmpdir(), "memcode-queue-")),
@@ -187,6 +188,11 @@ async function fixture(
     (harness, session) => {
       resumedSessions.push(session.resumeSessionId);
       session.onEvent({ type: "session", sessionId: "fixture-provider-session" });
+      if (options.repeatedStreamId) {
+        for (const text of [`Reply for turn ${resumedSessions.length}`, " is complete."])
+          session.onEvent({type: "message", role: "assistant", text, delta: true,
+            messageId: "cursor:fixture-provider-session:1"});
+      }
       return startPrintFixtureSession(harness, session);
     },
   );
@@ -254,6 +260,32 @@ test("a follow-up can reuse a verified older save, but never an unverified provi
       assert.deepEqual(f.resumedSessions, [undefined, source === "matching legacy" ? "original-local-session" : undefined]);
       await f.release(task, 2);
       await until(() => task.run.state === "finished", "queued pass finished");
+    } finally { await f.cleanup(); }
+  }
+});
+
+test("resumed provider streams cannot append a reply to an earlier worker pass", async () => {
+  for (const provider of providers) {
+    const f = await fixture([provider], { repeatedStreamId: true }), task = f.tasks[0];
+    try {
+      await f.manager.start(task, f.project);
+      await until(async () => (await f.runs(task)).length === 1, "first stream");
+      const first = task.messages.find(message => message.text === "Reply for turn 1 is complete.");
+      assert.ok(first);
+      const firstAt = first.at;
+      const followup = f.enqueue(task, "Continue the same native conversation.");
+      await f.release(task, 1);
+      await until(async () => (await f.runs(task)).length === 2, "resumed stream");
+      assert.equal(first.text, "Reply for turn 1 is complete.");
+      assert.equal(first.at, firstAt);
+      const second = task.messages.find(message => message.text === "Reply for turn 2 is complete.");
+      assert.ok(second);
+      assert.notEqual(second.id, first.id);
+      assert.notEqual(second.streamId, first.streamId);
+      assert.ok(task.messages.indexOf(second) > task.messages.indexOf(followup));
+      assert.deepEqual(f.resumedSessions, [undefined, "fixture-provider-session"]);
+      await f.release(task, 2);
+      await until(() => task.run.state === "finished", "resumed stream finished");
     } finally { await f.cleanup(); }
   }
 });
