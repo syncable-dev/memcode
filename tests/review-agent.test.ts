@@ -6,6 +6,7 @@ import {
   readFile,
   mkdir,
   readdir,
+  symlink,
   rm,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -57,6 +58,9 @@ async function fixture(harness: Harness, scenario = "safe") {
     record = join(root, "record.json"),
     profile = join(root, "profile");
   await writeFile(script, fixtureScript);
+  const physicalProfile = join(root, "physical-profile");
+  await mkdir(physicalProfile);
+  await symlink(physicalProfile, profile, process.platform === "win32" ? "junction" : "dir");
   const state = initialState();
   state.settings.workerPermissionDefaults = {
     codex: "full-access",

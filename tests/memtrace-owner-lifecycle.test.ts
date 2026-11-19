@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, realpath, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { MemtraceEngine } from "../runtime/memtrace";
@@ -149,7 +149,7 @@ createInterface({input:process.stdin}).on('line',line=>{
     assert.equal(environment.MEMTRACE_SKIP_EMBED, "1");
     assert.equal(
       scope.directory.replaceAll("\\", "/").toLowerCase(),
-      source.replaceAll("\\", "/").toLowerCase(),
+      (await realpath(source)).replaceAll("\\", "/").toLowerCase(),
     );
     await writeFile(owner, "tracked-headless-owner");
     await probe();

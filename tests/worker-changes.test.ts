@@ -1,11 +1,32 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile, readFile, realpath, rm, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { initialState } from "../src/seed";
 import { WorkerChangeJournal, readWorkerChanges } from "../runtime/changes";
 import { git } from "../runtime/local";
+
+test("absolute scope from a checkout alias captures a single relative file", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "memcode-journal-alias-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const checkout = join(root, "checkout"), alias = join(root, "alias");
+  await mkdir(checkout);
+  await symlink(await realpath(checkout), alias, "junction");
+  await git(checkout, ["init", "--initial-branch=main"]);
+  const state = initialState();
+  const project = { ...state.projects[0], path: alias, example: false };
+  const task = {
+    ...state.tasks[0], id: "aliased-scope", scope: [join(alias, "new.ts")],
+    run: { state: "running" as const, branch: "main", workspace: alias },
+  };
+  const journal = new WorkerChangeJournal();
+  await journal.begin(project, task);
+  await writeFile(join(checkout, "new.ts"), "export const answer = 42;\n");
+  await journal.release(project, task);
+  const changes = await readWorkerChanges(task);
+  assert.deepEqual(changes.checkpoints[0].files.map(file => file.path), ["new.ts"]);
+});
 
 test("same-file Fleet handoff assigns each interval only to its owning worker", async () => {
   const root = await mkdtemp(join(tmpdir(), "memcode-change-journal-"));

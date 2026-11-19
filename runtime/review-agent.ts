@@ -923,6 +923,10 @@ export function createReadonlyReviewAgent(
           "The review context must stay inside MemCode's private profile.",
         );
       await mkdir(directory, { recursive: true, mode: 0o700 });
+      // Providers report process.cwd() with aliases such as macOS /var resolved.
+      const capsule = await realpath(directory);
+      if (!within(await realpath(dataDir), capsule))
+        throw Error("The review context must stay inside MemCode's private profile.");
       const measured = input.task.run.measurements?.modelId;
       // Cursor reports the family in telemetry, but routes keep the selected variant.
       const cursorVariant = harness === "cursor" && input.task.route?.model.split("[")[0] === measured
@@ -998,7 +1002,7 @@ export function createReadonlyReviewAgent(
           codex: codexQuestion,
           claude: claudeQuestion,
           cursor: cursorQuestion,
-        }[harness](command, directory, prompt, requested, input, {
+        }[harness](command, capsule, prompt, requested, input, {
           ...options, modelPinned: !!explicit, localModel: harness === "codex" && !!settings?.localModel,
         });
       } finally {
