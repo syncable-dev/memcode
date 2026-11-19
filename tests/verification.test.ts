@@ -144,6 +144,46 @@ test("managed checks bind the exact finished worker source and consume full raw 
   }
 });
 
+test("PTY titles never hide a complete TAP header or supply machine-report content", async () => {
+  const tap =
+    "TAP version 13\r\n# tests 8\r\n# pass 8\r\n# fail 0\r\n# cancelled 0\r\n# skipped 0\r\n# todo 0\r\n";
+  for (const title of [
+    "\x1b]0;C:\\Tools\\node.exe\x07",
+    "\x1b]2;node test\x1b\\",
+    "\x9d0;node test\x9c",
+  ]) {
+    assert.deepEqual(parseCheckCounts(title + tap, "tap"), {
+      passed: 8,
+      failed: 0,
+    });
+    assert.deepEqual(parseCheckCounts(title + marker, "memcode-json"), {
+      passed: 19,
+      failed: 0,
+    });
+  }
+  for (const hidden of ["\x1b]0;" + tap + "\x07", "\x1b]0;" + tap])
+    assert.deepEqual(parseCheckCounts(hidden, "tap"), {
+      passed: null,
+      failed: null,
+    });
+
+  const f = await fixture();
+  try {
+    const output =
+      "\x1b[?9001h\x1b[m\x1b]0;C:\\Tools\\node.exe\x07\x1b[?25h" + tap;
+    const result = await runTaskVerification(
+      () => f.state,
+      f.manager((request) => reply(request.after, output)),
+      { ...f.input, format: "tap" },
+    );
+    assert.equal(result.linked, true);
+    assert.equal(result.passed, 8);
+    assert.equal(result.failed, 0);
+  } finally {
+    await f.close();
+  }
+});
+
 test("manual edits before verification cannot be attributed to the earlier worker even when source stays stable during checks", async () => {
   const f = await fixture();
   try {

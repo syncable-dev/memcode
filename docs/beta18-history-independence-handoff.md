@@ -12,14 +12,11 @@ escalation queries use that epic's certified graph, retaining canonical board
 identity and shared file-scope keys. Native escalation resolution reopens the
 same epic store explicitly. Legacy checkout preparation stays serialized.
 
-Windows: typecheck, frontend/runtime build, 18 targeted regressions passed.
-The first full test run raced the artifact-viewer rebuild (931 passed, one
-missing-built-assets failure); that artifact test passed after the build and
-the full suite is being rerun sequentially. A fresh installed-app worker has
-joined Fleet and reached real GPT-6.2-Sol while primary history imports.
-Its review has not passed yet. These are progress observations, not release
-clearance. Native application binary was unchanged; this early acceptance run
-uses a rebuilt runtime override. Final package checks must use final resources.
+Windows: typecheck, frontend/runtime build and the sequential 935-test suite
+passed on `c3ca4a8`. An earlier run raced the artifact-viewer rebuild; that asset
+test and the sequential full suite passed after the build finished. Native
+application Rust was unchanged; these acceptance runs use a rebuilt runtime
+override. Final package checks must use final resources.
 
 The next patch also covers an epic branch already open in the primary folder:
 its files remain there, while a separate, stable current-source graph is kept
@@ -35,8 +32,27 @@ values, and the separate model reviewer ran. The review honestly retains
 incomplete impact coverage and unavailable linked check evidence; worker output
 reported eight passing tests, which is not a linked `memcode_check` report.
 Two other independent epics ran real Claude Code and Cursor coding workers
-concurrently and both reached Review. Their native reviews are being checked.
+concurrently and both reached Review. Their actual Code review tabs completed:
+Claude rendered eight function rows and Cursor eleven, each with five numeric
+after values. Before values are unavailable for newly added functions. The
+separate reviewers ran `claude-opus-5-5` and `composer-2.5[fast=true]`; Cursor's
+impact coverage remains explicitly incomplete.
 These observations are not final-source or Mac release acceptance.
+
+Additional Windows finding: ConPTY's OSC window-title prefix was partly left
+behind by Node's general VT stripper, hiding an otherwise complete TAP header.
+The small `runtime/verification.ts` fix strips complete OSC frames before VT
+normalization, while rejecting incomplete frames and ignoring report-like text
+inside titles. Fourteen verification tests pass. With the rebuilt runtime,
+native post-pass `task:verify` records linked 8/8, 7/7 and 7/7 results for the
+three real stories. This was invoked through the actual native RPC route; the
+renderer has no standalone verification action yet. Fresh reviews and the
+canonical-folder, same-epic three-provider native test are in progress.
+
+The primary engine replay still independently fails on a real 150-commit
+MemCode clone: `owned source retains extra source rows` (Windows, c411 engine,
+2026-11-19 19:04 UTC). No graph reset or manual snapshot repair was used for
+the successful independent-epic run above. This remains an engine release gate.
 
 ## Confirmed Windows failure
 
