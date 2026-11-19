@@ -136,3 +136,38 @@ After the scoped content-lookup correction, all **878 tests** passed in
 163.0 seconds. Typecheck, frontend/native builds, desktop smoke and the actual
 WebView2 shared-session UI check passed on the same source. Mac validation and
 the two-device installed-app checks are still required before publication.
+
+## Final integrated Windows candidate, 19 November
+
+Application source `127cf9ce34bac316b9d564a2f517cf29bcef812b` passed
+typecheck, all **931 tests** (zero failures or skips), the frontend/native
+build, and the desktop smoke check. The extracted NSIS payload matched this
+source and both existing engine pins. The private-data scan checked 3,747
+payload files and 17 embedded engine members against 94 private dogfood
+canaries in raw, JSON, UTF-16 and base64 forms; it found no matches or forbidden
+profile files. The installer SHA-256 is
+`45e2c19a0f3edfffde96e55b6af8090975797fde383a4ed6396d2ae7c612c643`.
+Its production updater signature passed the embedded-key verification and
+tampered-payload, wrong-key and wrong-version rejection checks. These results
+do not claim an Authenticode publisher signature or a complete NSIS update
+installation.
+
+The actual packaged Windows app reopened the existing approved QA profile
+without another sign-in. Two Windows-authored Claude follow-ups were visible
+on the Mac before its host shut down. The Mac remained offline from
+10:26:17.523 to 10:29:02.979 UTC. During that interval Windows edited the first
+input, cancelled the second, and submitted a new Cursor follow-up. The original
+Mac Cursor conversation consumed the new input automatically and answered once.
+Claude had been deliberately interrupted during a local approval; its owner
+released the stopped claim and resumed the original native conversation. Only
+the edited text was sent, once; the cancelled input was not sent.
+
+Windows observed both final replies, the original Mac ownership and confirmed
+models, and the cancelled queue state. Every earlier assistant message remained
+present and byte-identical. Attempts to edit either consumed input were refused
+by the actual native app. The Mac independently verified the authoritative
+picked-up and cancelled command revisions. This physical test used one approved
+member on two devices; it does not establish distinct-account authorization.
+The [Mac report](beta18-mac-acceptance-127cf9c.md) records the actual Improve,
+Insights, concurrent workers, review metrics and remaining launch/install gates.
+The candidate remains unpublished until those gates close.
