@@ -46,6 +46,62 @@ but neither this engine nor the app's peer-save startup failure is cleared.
 Keep both production pins at `1d0e8cb4a`. Windows will finish the exact-source
 native reopen and paired-review checks without changing the candidate code.
 
+## Exact-source native review and two reopens, 23:46 UTC
+
+The actual Code review tab reran MC-007 using exact 13cc3c3 and engine 1eb.
+Review `d654ccd7-7679-4c89-b2fe-c56fe2d9d1b8` ran from
+23:39:11.279 to 23:40:31.550 UTC (**80.271 s**), completed all deterministic
+phases and the separate read-only Codex `gpt-6.2-sol` reviewer, and returned
+`changes-requested`. All 51 per-function rows rendered. The current verification
+still linked the exact 30 passing, zero-failure assertions after the read-only
+implementation continuation. Impact remains explicitly bounded to the first
+24 affected functions. This independent epic review succeeded even though
+the primary retained graph remained partial.
+
+Two normal native quit/reopen cycles then passed store and saved-review
+preservation. Each reopened the original registered store, with ID
+`v1:01M7TJG7B4BZ8PHYKR0S0N2MCV`, exactly 45,936 journal bytes and checksum
+`c4e714cb3de28939b09cdc84299762fb5d59e1ee03648e1e3ee37401ab712042`.
+Both preserved all seven projects, 14 total stories, the MC-007 result,
+51 metrics and 30 passing checks. Codex, Claude Code and Cursor all remained
+authenticated and explicitly approved. Process ancestry proved that each
+native app launched the candidate engine against that same store. Normal
+MemCode PID 74476 remained untouched. No owner was killed or lock deleted.
+
+The two reopens **do not pass analysis readiness**: the retained primary
+publication is still partial, and native diagnostics timed out reading
+`get_query_revision`. Fresh import is ready with a published, stable boundary
+and zero mismatched files. These results must not be collapsed into a single
+overall "passed" receipt.
+
+The native verification build is the optimized Tauri executable with an explicit
+candidate runtime override in the existing isolated QA profile. It is **not**
+the final production-signed updater package.
+
+## Current paired check handoff
+
+The existing Team service advertises `workerSessions: 1` at
+`https://teams.hosted.memtrace.io`. The approved shared QA project is
+**History independence QA**, workspace
+`baa3d390-812e-4b0a-96f7-5204232ccdf7`. Native Windows 13cc3c3 is online.
+At 23:45:55 UTC, verification-only continuations began on MC-004 (Codex),
+MC-005 (Claude Code), and MC-006 (Cursor), using their original conversations
+and preserved epic files. The primary retained graph is still unverified;
+the independent worker views must not wait for primary history.
+
+Mac: use your existing approved QA profile, exact 13cc3c3 application code
+and the **candidate** 1eb engine, checking the actual launched hash. Do not
+substitute the updater rehearsal's published engine pin. Open this shared
+project and verify each current Windows session's origin, actual model and
+live activity. Send one follow-up to each conversation with a unique
+`MAC-EXACT-13CC-MC-00x-1120` marker; verify it is picked up once by the
+original worker session. Also view the completed MC-007 report above from
+Mac and send a review-only question. Check that the owner receives it and
+that Mac sees the same answer and measurements. Record exact source,
+engine hash, session IDs, queue state and native screenshots. If the existing
+QA session still refuses renewal, report that gate rather than borrowing
+the normal account or declaring the earlier two-device result current.
+
 Application source is `13cc3c356cbbf9f6cceddae9667e803b28604a0c`.
 `7dc3342afddc837db1d0acc7b1fa2288577367a4` contains only the shared notes.
 Windows verified that runtime, frontend, native source, scripts and tests match
