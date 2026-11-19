@@ -37,7 +37,7 @@ import { collectedArtifactFiles, reconcileArtifacts } from "./artifact-catalog";
 import { WorkerInputs } from "./worker-input";
 import { startHarnessSession } from "./agents";
 import { WorkerStartupQueue } from "./worker-startup";
-import { workerTurnContext } from "./worker-turn";
+import { workerCheckoutBrief, workerTurnContext } from "./worker-turn";
 import { effectivePermissionMode } from "../src/permissions";
 import type { AgentEvent } from "./agents/types";
 import { trackTurnActivity } from "./agents/activity";
@@ -994,9 +994,7 @@ export class WorkerManager {
         turn.intro,
         `Project: ${project.name}\nProject purpose: ${project.description}`,
         `Original work item (background) ${task.identifier}: ${task.title}\n${task.description}`,
-        task.scope?.length
-          ? "Declared source scope:\n" + task.scope.join("\n")
-          : "",
+        workerCheckoutBrief(workspace, project.path, task.scope),
         `You share this checkout with other Fleet story workers on epic branch ${task.run.branch}. Your agent identity is memcode:${task.id}. Never switch branches, reset, stash, commit, push, deploy, or undo another worker's changes. Follow AGENTS.md. ${contextConfig ? "The host owns Fleet reservations, heartbeat, conflict checks and post-edit episodes. Use the memcode-context gateway for source context; it exposes no Fleet mutation tools. Honor host pauses and stop for scope expansion or a conflict requiring human resolution." : "Follow Memtrace Fleet: read branch context, declare intent before each edit, re-read shared source, record episodes, and honor wait/defer directives. If scope expands or an overlap cannot be reconciled, stop and ask for a human decision."} The host reserves the declared scope; it does not fence arbitrary filesystem writes. Run appropriate checks and report what actually ran.`,
         `Put your reports, screenshots and artifacts only under ${artifactRoot.replaceAll("\\", "/")}. Preserve other workers' output.`,
         "Keep user-facing deliverables and the final report at the output folder's top level. Put diagnostic logs, exploratory helpers and verification scripts in its evidence/ subfolder; those remain available as collapsed supporting evidence.",

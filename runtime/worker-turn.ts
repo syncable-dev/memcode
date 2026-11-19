@@ -1,4 +1,21 @@
+import { isAbsolute, relative, resolve } from "node:path";
 import type { Message, WorkItem } from "../src/shared";
+import { within } from "./local";
+
+export function workerCheckoutBrief(checkout: string, projectRoot: string, scope: string[] = []): string {
+  const targets = scope.map((entry) => {
+    const path = isAbsolute(entry) && !within(checkout, entry) && within(projectRoot, entry)
+      ? relative(projectRoot, entry)
+      : entry;
+    const target = resolve(checkout, path);
+    return within(checkout, target) ? target : "(outside this checkout)";
+  });
+  return [
+    `Source checkout: ${checkout}`,
+    "Read, edit, and run project checks in that directory. Fleet file:: keys and workspace scopes in recalled decisions are coordination identifiers. Use paths inside this checkout for file operations.",
+    ...(targets.length ? ["Declared source scope:\n" + targets.join("\n")] : []),
+  ].join("\n");
+}
 
 /** Separate this pass's user requests from already-consumed conversation history. */
 export function workerTurnContext(

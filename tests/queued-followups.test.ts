@@ -307,6 +307,8 @@ test("all three adapters automatically coalesce busy follow-ups after Fleet clea
         "previous Fleet lease released before next pass",
       );
       const prompt = (await f.runs(task))[1].prompt;
+      assert.ok(prompt.includes(`Source checkout: ${task.run.workspace}`));
+      assert.ok(prompt.includes(join(task.run.workspace!, task.scope![0])));
       assert.ok(prompt.includes(one.text));
       assert.ok(prompt.includes(two.text));
       const current = prompt.lastIndexOf("CURRENT REQUESTS");
