@@ -3,6 +3,12 @@
 Status: **not cleared for publication**. This branch is the Windows-to-Mac
 handoff. Application changes are now present; native acceptance is in progress.
 
+Windows is validating exact app `13cc3c3` with optimized engine `1ebcfda2`.
+See [the current Windows report](windows-13cc-validation.md). A same-epic
+peer-save startup failure was observed independently of primary replay; its
+proposed fix is preserved separately and is not in the validation source.
+Keep production pins and publication on hold until final source is agreed.
+
 ## Mac review retry and saved-folder reconnect, 2026-11-19
 
 The optimized Mac engine at `1ebcfda2` again ran the native review
