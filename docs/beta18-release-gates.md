@@ -30,6 +30,8 @@ the immutable installers and update the website catalog. Verify the website
 download and beta.12/beta.17 update offers for both platforms. No publication
 or passing Mac result is implied by this preparation commit.
 
+The [Mac acceptance report for 7322ce6](beta18-mac-final-acceptance.md) records the installed QA results, both package hashes, the cross-device checks and the remaining release gates.
+
 ## Mac results from the beta.17 integration
 
 On 19 November the installed QA app ran on macOS 27.2 (Apple silicon) at
