@@ -518,6 +518,7 @@ test("preparation and spawn failures pause authorized input without marking it i
         () => task.run.state === "failed" && queued.followupState === "paused",
         "failed launch",
       );
+      assert.ok(task.run.finishedAt, "the failed preparation has a completion timestamp");
       assert.equal(queued.promptedAt, undefined);
       assert.equal((await f.runs(task)).length, 0);
     } finally {

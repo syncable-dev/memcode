@@ -236,6 +236,59 @@ async function fixture() {
   };
 }
 
+test("a retry keeps the failed preflight intact while it waits for a new Team claim", async () => {
+  const f = await fixture();
+  try {
+    const task = f.aState.tasks.find(item => item.harness === "codex")!;
+    task.run = {state: "preparing", startedAt: at};
+    await f.a.acquire(task.id, "A");
+    await f.a.synchronize("A");
+    Object.assign(task.run, {state: "failed", finishedAt: "2026-11-18T19:00:01.000Z", error: "Source verification failed"});
+    await f.a.release(task.id, "A");
+    await f.b.synchronize("B");
+    const failed = structuredClone(f.b.status("B")!.sessions![0]);
+    assert.equal(failed.state, "failed");
+
+    const retryStart = "2026-11-18T19:00:02.000Z";
+    task.run = {state: "preparing", startedAt: retryStart};
+    await f.a.synchronize("A");
+    await f.b.synchronize("B");
+    assert.deepEqual(f.b.status("B")!.sessions, [failed]);
+
+    await f.a.acquire(task.id, "A");
+    Object.assign(task.run, {state: "finished", finishedAt: "2026-11-18T19:00:03.000Z"});
+    await f.a.release(task.id, "A");
+    await f.b.synchronize("B");
+    const attempts = f.b.status("B")!.sessions!;
+    assert.equal(attempts.length, 2);
+    assert.deepEqual(attempts.find(s => s.id === failed.id), failed);
+    const completed = attempts.find(s => s.id !== failed.id)!;
+    assert.equal(completed.state, "finished");
+    assert.equal(completed.startedAt, retryStart);
+    assert.ok(completed.epoch > failed.epoch);
+  } finally { await f.close(); }
+});
+
+test("a retained execution claim can be released but cannot be reused for another pass", async () => {
+  const f = await fixture();
+  try {
+    const task = await f.start("codex");
+    task.run.state = "failed";
+    await f.a.synchronize("A");
+    const failed = structuredClone(f.a.status("A")!.sessions![0]);
+    task.run = {state: "preparing", startedAt: "2026-11-18T19:00:02.000Z"};
+    await assert.rejects(f.a.acquire(task.id, "A"), /previous worker|previous pass/i);
+    await f.a.release(task.id, "A");
+    await f.b.synchronize("B");
+    assert.deepEqual(f.b.status("B")!.sessions, [failed]);
+    await f.a.acquire(task.id, "A");
+    task.run.state = "finished";
+    await f.a.release(task.id, "A");
+    await f.b.synchronize("B");
+    assert.equal(f.b.status("B")!.sessions!.length, 2);
+  } finally { await f.close(); }
+});
+
 test("Claude Code, Codex and Cursor share their actual conversation, model, author and saved review across members", async () => {
   const f = await fixture();
   try {

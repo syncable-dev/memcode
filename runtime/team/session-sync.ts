@@ -471,6 +471,13 @@ export class TeamSessionSync {
         prior.owner.memberId === connection.credential.memberId;
       if (!claim && !own) continue;
       if (!task.run.startedAt) continue;
+      const current = claim
+        ? state.sessions.find(session => session.id === claim.attemptId)
+        : prior;
+      // Preparation is visible locally before the new pass acquires its claim.
+      // Keep any final review or messages on the pass that actually produced them.
+      if (current?.startedAt && current.startedAt !== task.run.startedAt) continue;
+      if (!claim && !current?.startedAt) continue;
       const review =
         this.reviews.get(task.id) ??
         (task.codeReview
@@ -519,7 +526,6 @@ export class TeamSessionSync {
         stamp = hash(payload),
         sent = this.published.get(key);
       if (sent?.hash === stamp && Date.now() - sent.at < 15000) continue;
-      const current = state.sessions.find((s) => s.id === payload.id);
       const patch = current
         ? {
             ...payload,

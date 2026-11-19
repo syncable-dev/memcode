@@ -1081,7 +1081,14 @@ export class TeamSyncClient implements TeamWorkerClaims {
     if (connection.deletions?.some((backup) => backup.tasks.some((task) => task.id === taskId))) throw Error("Wait for this story’s pending deletion to finish syncing before starting a worker.");
     await this.synchronize(projectId);
     const remoteTaskId = remoteTeamId(connection, "story", taskId);
-    if (connection.leases.has(taskId)) return;
+    const retained = connection.leases.get(taskId);
+    if (retained) {
+      const previous = connection.sessions?.sessions.find(session => session.id === retained.attemptId);
+      const startedAt = this.state().tasks.find(task => task.id === taskId)?.run.startedAt;
+      if (previous?.startedAt && startedAt && previous.startedAt !== startedAt)
+        throw Error("A previous worker pass still owns this story’s claim. Release its claim in Team before starting another pass.");
+      return;
+    }
     const attempts = (connection.claimAttempts ??= {});
     let attempt = attempts[taskId];
     if (attempt?.state === "owned") throw Error("A previous worker on this device still owns this story’s claim. Verify that it has stopped, then release the claim in Team before starting again.");

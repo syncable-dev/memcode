@@ -1352,6 +1352,7 @@ export class WorkerManager {
           : cancelled
             ? "stopped"
             : "failed";
+      task.run.finishedAt = now();
       task.run.error = cancelled ? undefined : (error as Error).message;
       if (cancelled || error instanceof FleetBlocked)
         task.stage = task.run.workspace ? "review" : "planned";
