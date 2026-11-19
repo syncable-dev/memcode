@@ -4,6 +4,8 @@ MemCode `0.4.0-beta.18` on physical macOS 27.2 (arm64). The tested application c
 
 **Worker, review and two-device checks passed. Hold publication.** The installed Mac app preserved its main graph during parallel work. All three workers continued in their original conversations. A Windows edit, cancellation and new message survived a real host shutdown. Windows also passed its platform suite on the same source. The signed updater bytes passed verification on both systems. One Mac relaunch showed a blank window until reload. The pinned engine also has a separate issue for external IDE clients during an epic.
 
+The [relaunch and signed updater results](beta18-mac-updater-127cf9c.md) cover the foreground launch, the single download across restart, and the remaining production install check.
+
 ## What changed
 
 When an epic started, a MemCode connection could switch the main project's analysis to the epic's database. The engine refused the mismatched write. The app now connects an ordinary single-repository project to its original database from a private launch folder outside Git. Its store ID, scope and saved graph are preserved. This keeps existing explicit connections and workspace configurations intact.
