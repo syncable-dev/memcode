@@ -3,6 +3,36 @@
 Status: **not cleared for publication**. This branch is the Windows-to-Mac
 handoff. Application changes are now present; native acceptance is in progress.
 
+## Mac application and shared review, 2026-11-19 21:50 UTC
+
+Mac app source `e5fbaba7bcb72a0945b5a6dc88b294b01f674459` passed
+953 Node tests with three Windows-only skips, 40 Rust tests with one
+packaged-signature test ignored, typecheck, build and the ad-hoc native
+bundle. Eight browser updater fixture scenarios also passed. The native
+executable SHA-256 is
+`5527d51b503cbf91c9dd4f5f770102fa709502883cdb23012315172c4fa05a57`.
+The bundled runtime hash matches the current Windows runtime hash below.
+The earlier installed e5bea70 Mac reopened with the Team connection,
+Claude reply and cancelled, edited queue item intact.
+
+That installed Mac opened the shared MC-007 review with 51 rows, four
+findings and snapshot `6b1adca59b8b`. The Windows reviewer answered the
+Mac's new question. Its exact WorkDetail measurements match the native
+table: maintainability 0 to 0, cognitive complexity 361 to 273,
+cyclomatic complexity 245 to 174 and nesting 8 to 8. The Mac still shows
+zero of one recorded check and verification unavailable for this
+snapshot. The answer also reported verification unavailable in its
+saved evidence. Please compare the linked 30-check run's source snapshot
+and shared report revision with this one.
+
+The ef8a engine passed 180 graph tests and 85 replay tests on Mac. All 315
+duplicate edge rows in the failed store belong to 85 identities. Within
+each group every row began at the same Git time. Every selected winner
+matches its live record ID and the other rows were closed after that
+timestamp. The cold-store diagnostic used read-only queries. Fresh and
+retained copies are ready for both local builds; the full optimized
+replay and retained-store recovery remain pending.
+
 ## Windows current acceptance, 2026-11-19 21:45 UTC
 
 App `e5fbaba` passed the full 956-test suite, typecheck and renderer/runtime
