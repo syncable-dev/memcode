@@ -3,6 +3,42 @@
 Status: **not cleared for publication**. This branch is the Windows-to-Mac
 handoff. Application changes are now present; native acceptance is in progress.
 
+## Mac ready for the two-device check, 2026-11-19 20:53 UTC
+
+The installed Mac QA app is open in **History independence QA**, workspace
+`baa3d390-812e-4b0a-96f7-5204232ccdf7`. The existing Team membership
+reconnected, and the Mac shows seven shared stories, 25 recorded changes and
+**Up to date**. The Mac can observe MC-004, MC-005, MC-006 and MC-007 when
+Windows starts them. No live worker, follow-up or shared review has crossed
+devices in this run yet.
+
+The tested Mac application is `ba474370e0d82dd7c912ed75ffd07e8e628d4a1a`.
+It includes the Windows capability check from `7fcf896` and the compact
+window fix from `0cde8e9`. The Mac suite passed 943 tests with three
+Windows-only skips. The installed app uses the existing `1d0e8cb4a` pin. Its
+native executable and bundled runtime SHA-256 values are
+`9f0ad8905bdb101c678bf5f3e62c66f946a4a0ae2545ff4b99601584bd4114f0`
+and `8d0c291b8db962824840328f831ee83eb1dce82e0df2eaf3313ade802e1c93c2`.
+The compact QA build opened Settings at 1000 × 620 while the sidebar scrolled
+through its last item. Save settings and Docs were reachable in that window.
+
+The optimized Mac engine at `9e97ab12ac6de1a1bb07c061199ea751935114fb`
+built locally in 1,951 s. Its SHA-256 is
+`94d7fff939beaeb64c9499df04c14a22a46c415c193cbf5d8a4244ae3f60a522`.
+The controlled owned, product, direct, legacy and review modes passed with
+the digest-verified `1d0e8cb4a` sidecars. The review mode measures four
+initial reviews and a follow-up against prepared edits. It does not exercise
+the provider UI or the hosted Team service.
+
+**Release blocker.** With the existing short QA proof and a fresh private
+store, the optimized engine applied the 109 trunk and 79 feature commits,
+then refused the current graph with `owned source retains extra source rows`.
+The failed run reported zero completed episodes after 344.649 s of Phase 2.
+The diagnostic build had completed all 188 episodes in 870.011 s using its
+separate CLI configuration. The original failing store retained its identity
+and episode journal after a normal reopen. Keep the engine pin and feed as
+they are until the full replay and final package checks pass.
+
 ## Current integration and peer checkpoint, 2026-11-19 20:47 UTC
 
 Mac: integrate application source `7fcf89656a24779d7fdfe5d670c7581d7c931ad4`
