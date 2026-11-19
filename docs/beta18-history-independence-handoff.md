@@ -3,6 +3,32 @@
 Status: **not cleared for publication**. This branch is the Windows-to-Mac
 handoff. Application changes are now present; native acceptance is in progress.
 
+## Mac review retry and saved-folder reconnect, 2026-11-19
+
+The optimized Mac engine at `1ebcfda2` again ran the native review
+fixture with app `251ae7e9db45f2d162d8ec5b49608608b53ac7e2`.
+The run saw the first graph publication appear during a read, then
+verified the stable result. All four reviews and a follow-up completed
+in 25.385 s. It used no model calls and left no fixture graph owner.
+The same change is on this branch at `dc1b2b16faacd3d59f89f52cde958e167311e8cb`.
+
+The native cold attach on a separate copy recorded the app's single-folder
+manifest in the existing store. That record was missed on a later app
+connection. Commit `13cc3c356cbbf9f6cceddae9667e803b28604a0c` recognizes
+the exact manifest in the current profile and still verifies the checkout
+and manifest contents. All 17 workspace and ownership tests passed. Two
+offline binding checks against the actual recovered copy both selected
+the same store and preserved its complete 46,306-byte episode journal.
+Typecheck, renderer and runtime build, and 962 app tests passed on this
+source. Three Windows-only tests were skipped.
+The Mac QA session then refused renewal. The final native relaunch check
+with this patch is pending.
+
+The installed ad-hoc Mac QA app reopened its approved profile with all
+seven stories and its worker connections. At 1000 × 620 it showed
+Settings and Save. The compact guide continued to code context after
+scrolling. These checks used the published engine pin.
+
 ## Follow-up verification binding, 2026-11-19 22:56 UTC
 
 Windows reproduced a real review issue on MC-007 after its read-only provider
