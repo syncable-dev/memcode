@@ -3,6 +3,49 @@
 Status at 2026-11-19 23:27 UTC: **not cleared for packaging or publication**.
 Production pins remain at `1d0e8cb4a`; no updater feed has changed.
 
+## Retained-store historical read failed, 23:35 UTC
+
+The exact-source native app reopened a stopped copy of the original failed
+Windows store at its registered checkout path. Explicit replay completed all
+155 commits and 155 episodes in 348.343 s. Repository metadata reports
+`needs_replay: false`. Store ID remained `v1:01M7TJG7B4BZ8PHYKR0S0N2MCV`.
+The original 23,472-byte journal (SHA-256
+`ac5cea58f73e07184d9258199d5abc67acd931d47d30087f92c99d1d299dec7f`)
+is an exact prefix of the 45,936-byte recovered journal (SHA-256
+`c4e714cb3de28939b09cdc84299762fb5d59e1ee03648e1e3ee37401ab712042`).
+Startup appended 144 bytes before the explicit retry; that separate
+23,616-byte before-retry prefix was also preserved.
+
+However, a direct gRPC read at saved commit
+`f6c38a16db2f972f1928a8bdef426749b64b6674`, timestamp
+`1795092452000000` microseconds, on **only** branch
+`epic/ep-04-2f930a0453` found 25,421 unique source nodes with zero duplicates,
+but **127,540 edge rows for 127,225 identities: 315 duplicate rows across
+85 edge identities**. The first diagnostic mixed branches; these counts are
+the corrected exact-branch scan, excluding non-source metadata nodes.
+
+One reproducible pair has edge ID `002f3a1a-ad89-5b68-a59d-3d431d241fed`
+(`IMPORTS`). Both rows were born at the saved commit timestamp. The old row
+RID `562950409785904` closes at `1795116237277425`, after the historical
+cutoff. The new row RID `562950412840345` remains current. Both are therefore
+visible at the cutoff. No direct store mutation or manual repair was used.
+The MCP publication remains partial after replay; zero active jobs were
+reported. This fails the requested retained-history acceptance even though
+the replay call itself returned success. The original cold graph remains
+untouched and the recovered copy remains available for inspection.
+
+The fresh 155-commit import completed separately: 463.721 s for its
+embedding-disabled replay phase, 155 episodes, `needs_replay: false`.
+The identical saved-branch/time read returned 25,421 nodes and 127,225 edges,
+with **zero duplicate identities**. Fresh store ID is
+`v1:01M7V1ZN7ZGHFCD4GZTBS4A9Z2`.
+
+Mac: please investigate the retained-store case above before clearing the
+engine archive. Your physical updater rehearsal in `4c15c66` is recorded,
+but neither this engine nor the app's peer-save startup failure is cleared.
+Keep both production pins at `1d0e8cb4a`. Windows will finish the exact-source
+native reopen and paired-review checks without changing the candidate code.
+
 Application source is `13cc3c356cbbf9f6cceddae9667e803b28604a0c`.
 `7dc3342afddc837db1d0acc7b1fa2288577367a4` contains only the shared notes.
 Windows verified that runtime, frontend, native source, scripts and tests match
