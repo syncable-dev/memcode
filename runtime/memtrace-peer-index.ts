@@ -88,6 +88,18 @@ export function exactRevisionSource(
   );
 }
 
+export class StartupPublicationTimeout extends Error {}
+
+/** A worker may refresh only after its exact checkout's previous job has finished. */
+export function completedEpicIndex(result: unknown, project: Project, repoId: string): boolean {
+  const jobs: unknown = Array.isArray(result) ? result : (result as { jobs?: unknown } | null)?.jobs;
+  if (!Array.isArray(jobs) || !project.path || !jobs.every((job) =>
+    job && ["completed", "failed", "cancelled"].includes(job.status))) return false;
+  return jobs.some((job) => job.status === "completed" && job.repo_id === repoId &&
+    typeof jobPath(job) === "string" && pathKey(jobPath(job)) === pathKey(project.path!) &&
+    jobBranch(job) === project.branch);
+}
+
 /** A saved failure may only be superseded by this checkout's stable native certificate. */
 export function certifiedPublication(
   value: Json | undefined,
@@ -605,7 +617,7 @@ export async function waitForPeerIndex(
     await sleep(Math.min(pollMs, Math.max(0, waitUntil - now())));
   }
   if (!current && backgroundObserved)
-    throw Error(
+    throw new StartupPublicationTimeout(
       "Memtrace's startup graph has not finished verifying this checkout and branch. Retry to follow its publication; no duplicate index was queued.",
     );
   if (!current)

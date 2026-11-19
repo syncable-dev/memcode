@@ -14,6 +14,7 @@ import {
 } from "../src/code-review";
 import type { StoryAuthor } from "../src/story-comments";
 import {
+  attributedReviewPaths,
   captureStoryReview,
   type StoryReviewCapture,
 } from "./code-review-snapshot";
@@ -726,16 +727,7 @@ export class CodeReviewManager {
               void phase("review", note).catch(() => {});
             },
             assertActive,
-            capture.snapshot.files
-              .filter(
-                (file) =>
-                  Object.hasOwn(capture.baseFiles, file.path) &&
-                  !file.projection &&
-                  ["reservation", "native-edit", "verified-edits"].includes(
-                    file.attribution,
-                  ),
-              )
-              .map((file) => file.path),
+            attributedReviewPaths(capture),
           );
           assertActive();
           reviewProject = project;

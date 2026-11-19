@@ -192,6 +192,7 @@ export async function repairReviewPublication(
   assertActive: () => void = () => {},
   expectedSourceRevision?: string,
   capturedPaths: readonly string[] = [],
+  guard?: { signal: AbortSignal; beforeIndex: (repoId?: string) => Promise<void> },
 ): Promise<Project> {
   if (project.analysisCheckout !== "owned-worktree-v1") return project;
   assertActive();
@@ -226,7 +227,7 @@ export async function repairReviewPublication(
         repo_id: repoId,
         branch: selected.branch,
         wait_ms: 1000,
-      });
+      }, guard?.signal);
       assertActive();
       if (!record(value))
         throw Error(
@@ -338,7 +339,7 @@ export async function repairReviewPublication(
   // This flag bypasses MemCode's cached-current shortcut. MemtraceEngine.index
   // still passes incremental: !!match and never asks to clear the existing store.
   repairStarted = true;
-  const refreshedRepoId = await engine.analyze(selected, update, true);
+  const refreshedRepoId = await engine.analyze(selected, update, true, undefined, guard?.signal, guard?.beforeIndex);
   assertActive();
   if (refreshedRepoId !== repoId)
     throw Error(

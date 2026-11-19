@@ -36,6 +36,7 @@ import { watchArtifacts } from "./artifact-watch";
 import { collectedArtifactFiles, reconcileArtifacts } from "./artifact-catalog";
 import { WorkerInputs } from "./worker-input";
 import { startHarnessSession } from "./agents";
+import { prepareWorkerAnalysis } from "./worker-analysis";
 import { WorkerStartupQueue } from "./worker-startup";
 import { workerCheckoutBrief, workerContextForPrompt, workerTurnContext } from "./worker-turn";
 import { previousProviderSession, resumableProviderSession } from "./provider-session";
@@ -544,6 +545,7 @@ export class WorkerManager {
       }
     }
     const previousProvider = previousProviderSession(task);
+    const previousSource = task.run.finishedSourceBinding;
     const sessionBinding = previousProvider ? {
       harness: previousProvider.harness, workspace: previousProvider.workspace,
       branch: previousProvider.branch, epicId: previousProvider.epicId,
@@ -733,17 +735,17 @@ export class WorkerManager {
         analysisProject.analysis = "indexing";
         await progress("Connecting to the epic code graph");
         try {
-          analysisProject.repoId = await this.engine.analyze(
-            analysisProject,
-            (note) => {
+          analysisProject.repoId = await prepareWorkerAnalysis(this.engine, analysisProject, task, {
+            previous: previousProvider,
+            source: previousSource,
+            changedBranch: activation.changedBranch,
+            signal: cancelledPreparation.signal,
+            update: (note) => {
               if (task.run.state !== "preparing" || task.run.activity?.label === note) return;
               task.run.activity = { phase: "working", label: note, at: now() };
               void this.changed().catch(() => {});
             },
-            activation.changedBranch,
-            undefined,
-            cancelledPreparation.signal,
-          );
+          });
           analysisProject.analysis = "ready";
           if (analysisProject !== project)
             task.run.analysisRepoId = analysisProject.repoId;

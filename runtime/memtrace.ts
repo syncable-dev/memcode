@@ -787,6 +787,7 @@ export class MemtraceEngine {
       ? project.analysisNote
       : undefined,
     signal?: AbortSignal,
+    beforeIndex?: (repoId?: string) => Promise<void>,
   ): Promise<string> {
     signal?.throwIfAborted();
     const repoId = await this.index(
@@ -795,6 +796,7 @@ export class MemtraceEngine {
       force,
       recoverablePublicationFailure(previousFailure),
       signal,
+      beforeIndex,
     );
     signal?.throwIfAborted();
     // Watcher lifecycle step 1. Analysis is complete without waiting for it.
@@ -807,6 +809,7 @@ export class MemtraceEngine {
     force: boolean,
     retryPublication: boolean,
     signal?: AbortSignal,
+    beforeIndex?: (repoId?: string) => Promise<void>,
   ): Promise<string> {
     const selectedPath = project.path, selectedBranch = project.branch;
     update("Connecting to the local Memtrace engine…");
@@ -882,6 +885,10 @@ export class MemtraceEngine {
         skip_embed: project.analysisCheckout === "owned-worktree-v1",
         branch: project.branch,
       });
+    if (beforeIndex) {
+      await beforeIndex(match?.repo_id);
+      assertActive();
+    }
     const job = await queueIndex();
     assertActive();
     if (

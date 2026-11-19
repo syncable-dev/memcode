@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  completedEpicIndex,
   verifiedIndexRevision,
   waitForIndexPublication,
   waitForPeerIndex,
@@ -425,6 +426,36 @@ const job = (patch: Record<string, unknown> = {}) => ({
   runtime_context: { requested_path: project.path },
   ...patch,
 });
+test("a worker repair requires the previous exact job and an idle native store", () => {
+  const finished = job({ status: "completed", branch: project.branch });
+  const canRepair = (jobs: unknown) => completedEpicIndex({ jobs }, project, "fixture");
+  assert.equal(canRepair([finished]), true);
+  for (const other of ["running", "pending", "paused", "unknown"])
+    assert.equal(canRepair([finished, job({ status: other })]), false);
+  for (const mismatch of [{ branch: "other" }, { repo_id: "other" }, { runtime_context: { requested_path: "/other" } }])
+    assert.equal(canRepair([{ ...finished, ...mismatch }]), false);
+  assert.equal(canRepair([]), false);
+  assert.equal(canRepair(undefined), false);
+});
+
+test("a guarded worker refresh rechecks the matched repository before submitting any job", async () => {
+  const engine = new MemtraceEngine(() => "unused");
+  engine.connect = (async () => ({})) as unknown as MemtraceEngine["connect"];
+  const calls: string[] = [];
+  engine.call = async (_project, name) => {
+    calls.push(name);
+    if (name === "list_indexed_repositories")
+      return { repos: [{ repo_id: "fixture", repo_path: project.path }] };
+    throw Error("unexpected native request");
+  };
+  await assert.rejects(engine.analyze(project, () => {}, true, undefined, undefined, async (repoId) => {
+    assert.equal(repoId, "fixture");
+    throw Error("source changed");
+  }), /source changed/);
+  assert.deepEqual(calls, ["list_indexed_repositories"]);
+  await engine.close();
+});
+
 const clock = () => {
   let time = 100000;
   return {
