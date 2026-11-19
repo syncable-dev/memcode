@@ -81,6 +81,9 @@ latency. Proofs and credentials must never enter receipts or source control.
 
 Then test the real two-computer flow against a Team service advertising
 `workerSessions:1`. A desktop update alone cannot add those server routes.
+The permanent service was updated on 19 November; see
+[hosted validation](shared-worker-service-validation.md). Verify its capability
+again before starting the two-device acceptance.
 
 1. Use two QA members/devices in one isolated shared project. Run Claude Code,
    Codex and Cursor stories on the Mac; view each from the other member's app.
