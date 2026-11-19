@@ -1,7 +1,29 @@
 # Beta.18: history independence and native acceptance
 
 Status: **not cleared for publication**. This branch is the Windows-to-Mac
-handoff. Do not package the first documentation commit as a completed fix.
+handoff. Application changes are now present; native acceptance is in progress.
+
+## Application patch ready for Mac integration
+
+The patch keeps primary history intact but sets process-local
+`MEMTRACE_NO_REPLAY=1` for owned epic graph owners. Independent epics no longer
+await primary analysis. Fleet admission, leases, heartbeat, checkpoint and
+escalation queries use that epic's certified graph, retaining canonical board
+identity and shared file-scope keys. Native escalation resolution reopens the
+same epic store explicitly. Legacy checkout preparation stays serialized.
+
+Windows: typecheck, frontend/runtime build, 18 targeted regressions passed.
+The first full test run raced the artifact-viewer rebuild (931 passed, one
+missing-built-assets failure); that artifact test passed after the build and
+the full suite is being rerun sequentially. A fresh installed-app worker has
+joined Fleet and reached real GPT-6.2-Sol while primary history imports.
+Its review has not passed yet. These are progress observations, not release
+clearance. Native application binary was unchanged; this early acceptance run
+uses a rebuilt runtime override. Final package checks must use final resources.
+
+The owned-epic optimization does not claim the primary engine replay failure
+is repaired. A branch already open in the selected canonical checkout still
+uses that checkout's existing preparation path and needs the engine fix.
 
 ## Confirmed Windows failure
 

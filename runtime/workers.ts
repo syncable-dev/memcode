@@ -654,7 +654,10 @@ export class WorkerManager {
       await this.teamClaims?.acquire(task.id, project.id);
       teamClaimHeld = !!this.teamClaims;
       continuing();
-      if (this.prepareProject && (project.analysis !== "ready" || !project.repoId)) {
+      const ownedCheckout =
+        typeof this.engine.ownedWorktreeSupport === "function" &&
+        (await this.engine.ownedWorktreeSupport(project));
+      if (!ownedCheckout && this.prepareProject && (project.analysis !== "ready" || !project.repoId)) {
         await progress("Connecting to the project code graph");
         await Promise.race([this.prepareProject(project.id), aborted]);
       }
@@ -704,15 +707,21 @@ export class WorkerManager {
         }
       }
       await progress("Opening the epic checkout");
-      if (project.analysis !== "ready" || !project.repoId)
+      if (!ownedCheckout && (project.analysis !== "ready" || !project.repoId))
         throw new Error("Connect Memtrace before starting a Fleet worker.");
-      const ownedCheckout =
-        typeof this.engine.ownedWorktreeSupport === "function" &&
-        (await this.engine.ownedWorktreeSupport(project));
       const activation = await this.workspaces.activate(task, project, {
         ownedCheckout,
       });
       analysisProject = epicAnalysisProject(project, task);
+      // A branch already open in the selected folder must keep using that
+      // checkout; only independent epic graphs can skip the primary analysis.
+      if (ownedCheckout && analysisProject === project && (project.analysis !== "ready" || !project.repoId)) {
+        await progress("Connecting to this checkout's code graph");
+        if (this.prepareProject)
+          await Promise.race([this.prepareProject(project.id), aborted]);
+        if (project.analysis !== "ready" || !project.repoId)
+          throw new Error("Connect Memtrace before starting a Fleet worker.");
+      }
       await assertEpicDependencies(this.state(), task, task.run.workspace!);
       continuing();
       if (ownedCheckout) {

@@ -565,7 +565,15 @@ export class MemtraceEngine {
       // Each epic needs current structure, not another embedding-model copy.
       // Its retrieval uses the checkout's lexical/AST graph; facts never fall
       // back to another branch's semantic index.
-      if (ownedCheckout) env.MEMTRACE_SKIP_EMBED = "1";
+      if (ownedCheckout) {
+        env.MEMTRACE_SKIP_EMBED = "1";
+        // Git history belongs to the primary project graph. Replaying it in
+        // every epic duplicates work and holds its current-source publication
+        // while workers and reviews need that exact checkout's live structure.
+        // This is process-local; the primary graph and installed CLI keep their
+        // history, and the epic still records its own live edit episodes.
+        env.MEMTRACE_NO_REPLAY = "1";
+      }
       // The SDK stops stdio children after a two-second EOF budget. A native
       // graph owner needs a durable flush. Managed graphs attach as clients
       // and ready() starts a separately tracked headless owner when cold.

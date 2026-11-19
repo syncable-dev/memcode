@@ -220,7 +220,8 @@ for (const owned of [true, false]) {
     const root = await mkdtemp(join(tmpdir(), "memcode-startup-"));
     const source = join(root, "source");
     const state = initialState();
-    const project: Project = { ...state.projects[0], path: source, branch: "main", analysis: "ready", repoId: "startup-fixture" };
+    // A held primary history import must not gate independent owned epics.
+    const project: Project = { ...state.projects[0], path: source, branch: "main", analysis: owned ? "indexing" : "ready", repoId: owned ? undefined : "startup-fixture" };
     state.projects = [project];
     state.epics = ["a", "b"].map((id, order) => ({
       id, identifier: "EP-" + id, title: id, projectId: project.id, branch: "epic/" + id,
@@ -244,7 +245,10 @@ for (const owned of [true, false]) {
       if (other.run.activity?.label === "Waiting for local worker startup") waitingOther.resolve();
     }, {
       ownedWorktreeSupport: async () => owned,
-      analyze: async (p: Project) => p.id,
+      analyze: async (p: Project) => {
+        if (owned) assert.notEqual(p.id, project.id, "Primary history import must not be awaited");
+        return p.id;
+      },
       qualify: async (_project: Project, task: WorkItem) => {
         entered.push(task.id);
         if (task.id === first.id) {
@@ -279,6 +283,8 @@ for (const owned of [true, false]) {
       if (owned) {
         await observe(otherEntered.promise, "second epic to qualify while the first is still running");
         assert.notEqual(first.run.workspace, other.run.workspace);
+        assert.equal(project.analysis, "indexing");
+        assert.equal(project.repoId, undefined, "An epic certificate cannot promote the primary graph");
         assert.equal(await git(source, ["branch", "--show-current"]), "main");
         const cancelled = start(same);
         await observe(waitingSame.promise, "same-epic queue");

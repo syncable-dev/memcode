@@ -147,6 +147,7 @@ createInterface({input:process.stdin}).on('line',line=>{
     bootstraps++;
     assert.equal(environment.MEMTRACE_MCP_ATTACH_ONLY, "1");
     assert.equal(environment.MEMTRACE_SKIP_EMBED, "1");
+    assert.equal(environment.MEMTRACE_NO_REPLAY, "1");
     assert.equal(
       scope.directory.replaceAll("\\", "/").toLowerCase(),
       (await realpath(source)).replaceAll("\\", "/").toLowerCase(),
