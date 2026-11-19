@@ -64,6 +64,17 @@ export interface TeamWorkerClaims {
   release(taskId: string, projectId: string): Promise<void>;
 }
 
+function savedSessionBinding(run: WorkItem["run"]) {
+  if (run.sessionBinding) return run.sessionBinding;
+  // Legacy saves contain the actual provider in the model observation. A card's
+  // current assignment or proposed route may have changed since that turn.
+  const harness = run.measurements?.modelSource?.split("-")[0];
+  if (run.sessionId && run.workspace &&
+      (harness === "codex" || harness === "claude" || harness === "cursor"))
+    return { harness, workspace: run.workspace } as const;
+  return undefined;
+}
+
 async function closeWithin(
   action: Promise<unknown> | undefined,
   label: string,
@@ -542,7 +553,11 @@ export class WorkerManager {
         this.cancellingReview.delete(task.id);
       }
     }
-    const previousAttempt = task.harness === "claude" && task.run.sessionId ? { ...task, run: { ...task.run } } : undefined;
+    const sessionBinding = savedSessionBinding(task.run);
+    const previousAttempt = task.harness === "claude" && task.run.sessionId &&
+      (!sessionBinding || sessionBinding.harness === "claude")
+      ? { ...task, run: { ...task.run, workspace: sessionBinding?.workspace ?? task.run.workspace } }
+      : undefined;
     task.run = {
       ...task.run,
       nativeEditCapture: undefined,
@@ -552,7 +567,7 @@ export class WorkerManager {
       startedAt: now(),
       finishedAt: undefined,
       exitCode: undefined,
-      sessionId: undefined,
+      sessionBinding,
       measurements: undefined,
       checks: undefined,
       finishedSourceBinding: undefined,
@@ -1079,7 +1094,10 @@ export class WorkerManager {
           saveEvent();
           return;
         }
-        if (event.type === "session") task.run.sessionId = event.sessionId;
+        if (event.type === "session") {
+          task.run.sessionId = event.sessionId;
+          task.run.sessionBinding = { harness: launchedHarness, workspace };
+        }
         if (event.type === "message") {
           const existing = event.messageId
             ? task.messages.find(
@@ -1125,7 +1143,14 @@ export class WorkerManager {
         /* Optional reporting cannot block launch. */
       }
       await progress(`Starting ${harnessNames[launchedHarness]}`);
+      const pickedUpFollowup = conversation.some(message => message.pickedUpAt && !message.promptedAt);
+      const sameSessionScope = sessionBinding?.harness === launchedHarness &&
+        checkoutKey(sessionBinding.workspace) === checkoutKey(workspace);
+      const resumeSessionId = pickedUpFollowup && sameSessionScope ? task.run.sessionId : undefined;
+      if (pickedUpFollowup && task.run.sessionId && !sameSessionScope)
+        this.message(task, "system", "Starting a new provider session with the saved story conversation. The previous session could not be tied to this worker and checkout.");
       const session = this.sessionFactory(launchedHarness, {
+        resumeSessionId,
         command,
         cwd: workspace,
         model: task.route.model,

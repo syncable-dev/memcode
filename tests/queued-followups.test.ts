@@ -121,6 +121,7 @@ async function fixture(
   const settlementGate = new Promise<void>((resolve) => {
     releaseSettlement = resolve;
   });
+  const resumedSessions: (string | undefined)[] = [];
   const manager = new WorkerManager(
     () => state,
     async () => {
@@ -183,7 +184,11 @@ async function fixture(
       })),
     undefined,
     undefined,
-    startPrintFixtureSession,
+    (harness, session) => {
+      resumedSessions.push(session.resumeSessionId);
+      session.onEvent({ type: "session", sessionId: "fixture-provider-session" });
+      return startPrintFixtureSession(harness, session);
+    },
   );
   const runs = async (task: WorkItem) =>
     JSON.parse(
@@ -213,6 +218,7 @@ async function fixture(
     project,
     tasks,
     manager,
+    resumedSessions,
     runs,
     release,
     enqueue,
@@ -230,6 +236,23 @@ async function fixture(
     },
   };
 }
+
+test("a follow-up can reuse a verified older save, but never an unverified provider or different checkout", async () => {
+  for (const source of ["matching legacy", "changed provider", "unverified legacy", "different checkout"]) {
+    const f = await fixture(["codex"]), task = f.tasks[0];
+    try {
+      task.run = {state: "finished", sessionId: "original-local-session", workspace: f.repo};
+      if (source !== "unverified legacy")
+        task.run.measurements = {modelIds: [], modelSource: source === "changed provider" ? "claude-assistant" : "codex-thread"};
+      if (source === "different checkout") task.run.workspace = join(f.root, "previous-repo");
+      f.enqueue(task, "Run the follow-up on the correct workspace.");
+      await until(async () => (await f.runs(task)).length === 1, "queued pass started");
+      assert.deepEqual(f.resumedSessions, [source === "matching legacy" ? "original-local-session" : undefined]);
+      await f.release(task, 1);
+      await until(() => task.run.state === "finished", "queued pass finished");
+    } finally { await f.cleanup(); }
+  }
+});
 
 test("a finished provider still occupies its slot until its final contribution has settled", async () => {
   const f = await fixture(["codex"], { settlementGate: true }),
@@ -293,6 +316,7 @@ test("all three adapters automatically coalesce busy follow-ups after Fleet clea
       );
       assert.ok(prompt.endsWith(two.text));
       assert.equal(prompt.split(one.text).length - 1, 1);
+      assert.deepEqual(f.resumedSessions, [undefined, "fixture-provider-session"]);
       assert.equal(one.followupState, "included");
       assert.equal(two.followupState, "included");
       assert.ok(one.promptedAt);

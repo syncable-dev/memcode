@@ -481,12 +481,9 @@ function runCodexSession(options: AgentSessionOptions, inspect?: (result: CodexC
         emit({ type: "measurement", models: [...reportedModels] });
       }
     }
-    if (method === "thread/started" && params.thread?.id) {
-      threadId = params.thread.id;
-      emit({ type: "session", sessionId: threadId });
-    } else if (method === "turn/started") {
-      // turn/start's response, rather than an unrelated notification, owns turnId.
-    } else if (method === "model/rerouted") {
+    // Only the thread and turn request replies identify this worker. Subagents
+    // share its transport and can independently announce a new thread.
+    if (method === "model/rerouted") {
       if (
         typeof params.fromModel === "string" &&
         params.fromModel.length <= 256 &&
@@ -497,6 +494,8 @@ function runCodexSession(options: AgentSessionOptions, inspect?: (result: CodexC
       reportedEffort = undefined;
       modelMeasurement(params.toModel, "codex-rerouted");
     } else if (method === "thread/tokenUsage/updated") {
+      // Native totals include every previous turn of a resumed thread.
+      if (options.resumeSessionId) return;
       const total = params.tokenUsage?.total;
       if (!total || typeof total !== "object" || Array.isArray(total)) return;
       emit({
@@ -686,7 +685,7 @@ function runCodexSession(options: AgentSessionOptions, inspect?: (result: CodexC
           emit({ type: "message", role: "system", text: selected ? `Codex selected ${selected} from this account’s available models.` : "Codex will use this account’s default model." });
       }
       attemptedModel = selected;
-      const thread = await request("thread/start", {
+      const threadOptions = {
         cwd: options.cwd,
         ...(selected ? { model: selected } : {}),
         ...(selectedEffort ? { config: { model_reasoning_effort: selectedEffort } } : {}),
@@ -695,10 +694,20 @@ function runCodexSession(options: AgentSessionOptions, inspect?: (result: CodexC
           mode === "full-access" ? "danger-full-access" : "workspace-write",
         approvalPolicy: policy,
         approvalsReviewer: reviewer,
-        allowProviderModelFallback: false,
-      });
+      };
+      const thread = options.resumeSessionId
+        ? await request("thread/resume", {
+            ...threadOptions,
+            threadId: options.resumeSessionId,
+            excludeTurns: true,
+          }).catch(() => {
+            throw Error("Codex could not resume this story’s original thread. Check the local Codex account and retry the follow-up.");
+          })
+        : await request("thread/start", { ...threadOptions, allowProviderModelFallback: false });
+      if (options.resumeSessionId && thread.thread?.id !== options.resumeSessionId)
+        throw Error("Codex returned a different thread while resuming this story. The follow-up was not sent.");
       if (
-        mode !== "review" &&
+        (mode !== "review" || !!options.resumeSessionId) &&
         (thread.approvalPolicy !== policy ||
           thread.approvalsReviewer !== reviewer ||
           thread.sandbox?.type !==
