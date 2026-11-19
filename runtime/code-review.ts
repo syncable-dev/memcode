@@ -41,6 +41,7 @@ interface ReviewHooks {
     project: Project,
     update: (note: string) => void,
     assertActive: () => void,
+    capturedPaths: string[],
   ): Promise<Project>;
   repairPublication?(
     task: WorkItem,
@@ -725,6 +726,16 @@ export class CodeReviewManager {
               void phase("review", note).catch(() => {});
             },
             assertActive,
+            capture.snapshot.files
+              .filter(
+                (file) =>
+                  Object.hasOwn(capture.baseFiles, file.path) &&
+                  !file.projection &&
+                  ["reservation", "native-edit", "verified-edits"].includes(
+                    file.attribution,
+                  ),
+              )
+              .map((file) => file.path),
           );
           assertActive();
           reviewProject = project;

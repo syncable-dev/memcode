@@ -1175,12 +1175,13 @@ export async function createRuntime(
     implementationCount: () => workers.implementationCount(),
     implementationStarting: (taskId) => workers.implementationStarting(taskId),
     capacityChanged: () => workers.dispatchQueued(),
-    prepare: async (item, selected, update, assertActive) => {
+    prepare: async (item, selected, update, assertActive, capturedPaths) => {
       const prepared = await prepareReviewAnalysis(
         engine,
         selected,
         update,
         assertActive,
+        capturedPaths,
       );
       if (prepared.analysisCheckout === "owned-worktree-v1")
         item.run.analysisRepoId = prepared.repoId;

@@ -1,6 +1,6 @@
 import type { Project } from "../src/shared";
 import type { MemtraceEngine } from "./memtrace";
-import { verifiedIndexRevision } from "./memtrace-peer-index";
+import { exactRevisionSource, verifiedIndexRevision } from "./memtrace-peer-index";
 
 type Engine = Pick<
   MemtraceEngine,
@@ -26,7 +26,12 @@ function graph(value: Json): Json | undefined {
       : value.graph_revision;
   return record(candidate) ? candidate : undefined;
 }
-function exactSource(value: Json, project: Project, repoId: string): boolean {
+function matchesSourceObservation(
+  value: Json,
+  project: Project,
+  repoId: string,
+  capturedPaths: readonly string[] = [],
+): boolean {
   return (
     value.checkout_mode === "owned-worktree-v1" &&
     value.graph_scope === "owned_worktree_graph" &&
@@ -42,9 +47,13 @@ function exactSource(value: Json, project: Project, repoId: string): boolean {
     text(value.source_revision) &&
     text(value.indexing_revision) &&
     text(value.token) &&
-    value.mismatched_files === 0 &&
     Array.isArray(value.mismatched_paths) &&
-    value.mismatched_paths.length === 0 &&
+    value.mismatched_files === value.mismatched_paths.length &&
+    new Set(value.mismatched_paths).size === value.mismatched_files &&
+    value.mismatched_paths.every(
+      (path: unknown) =>
+        typeof path === "string" && capturedPaths.includes(path),
+    ) &&
     value.ambiguous_indexed_files === false &&
     Number.isSafeInteger(value.source_file_count) &&
     value.source_file_count >= 0 &&
@@ -54,6 +63,59 @@ function exactSource(value: Json, project: Project, repoId: string): boolean {
     value.error_code === undefined &&
     value.message === undefined &&
     (value.reason === undefined || value.reason === "")
+  );
+}
+// The native branch overlay can report the checkout digest before it has an
+// index token or file inventory. This is a recovery hint, never review evidence.
+const pendingBranchFields = new Set([
+  "_meta",
+  "repo_id",
+  "branch",
+  "worktree",
+  "checkout_mode",
+  "graph_scope",
+  "ready",
+  "status",
+  "reason",
+  "source_commit",
+  "source_revision",
+  "token",
+  "indexing_revision",
+  "requested_source_matches",
+  "requested_revision_matches",
+  "retry_query_group",
+]);
+function pendingBranchSource(
+  value: Json,
+  project: Project,
+  repoId: string,
+): boolean {
+  return (
+    exactRevisionSource(value, project, repoId) &&
+    value.ready === false &&
+    value.status === "partial" &&
+    value.reason === "branch_publication_incomplete" &&
+    text(value.source_commit) &&
+    text(value.source_revision) &&
+    value.requested_source_matches === true &&
+    value.requested_revision_matches === true &&
+    value.retry_query_group === false &&
+    value.indexing_revision === null &&
+    value.token === null &&
+    Object.keys(value).every((key) => pendingBranchFields.has(key))
+  );
+}
+function pendingBranchBoundary(value: Json): boolean {
+  const boundary = graph(value);
+  return (
+    !!boundary &&
+    value._meta?.stale !== true &&
+    boundary.status === "partial" &&
+    text(boundary.token) &&
+    boundary.publication_unchanged_during_call === false &&
+    Object.keys(boundary).every((key) =>
+      ["token", "status", "publication_unchanged_during_call"].includes(key),
+    )
   );
 }
 function publication(value: Json, status: "published" | "partial"): boolean {
@@ -70,7 +132,7 @@ function publication(value: Json, status: "published" | "partial"): boolean {
 function ready(value: Json, project: Project, repoId: string): boolean {
   return (
     verifiedIndexRevision(value, project, repoId) &&
-    exactSource(value, project, repoId) &&
+    matchesSourceObservation(value, project, repoId) &&
     value.status === "complete" &&
     publication(value, "published")
   );
@@ -120,15 +182,16 @@ export async function repairReviewPublication(
   update: (note: string) => void,
   assertActive: () => void = () => {},
   expectedSourceRevision?: string,
+  capturedPaths: readonly string[] = [],
 ): Promise<Project> {
   if (project.analysisCheckout !== "owned-worktree-v1") return project;
   assertActive();
-  let repoId = project.repoId;
+  const repoId = project.repoId;
   if (!text(repoId))
     throw Error(
       "Analyze this epic's exact source before repairing its review publication.",
     );
-  let selected: Project = { ...project };
+  const selected: Project = { ...project };
   let sourceRevision = expectedSourceRevision,
     freshReads = 0,
     repairStarted = false;
@@ -197,7 +260,7 @@ export async function repairReviewPublication(
     }
     while (
       freshReads < 3 &&
-      exactSource(value, selected, repoId) &&
+      matchesSourceObservation(value, selected, repoId, capturedPaths) &&
       reviewPublicationTransition(value)
     ) {
       freshReads++;
@@ -206,7 +269,29 @@ export async function repairReviewPublication(
     }
     return value;
   };
-  const before = await inspect();
+  const capturedFilesLag = (value: Json) =>
+    value.ready === false &&
+    value.status === "partial" &&
+    value.mismatched_files > 0 &&
+    value.requested_source_matches === true &&
+    value.requested_revision_matches === true &&
+    value._meta?.stale !== true &&
+    matchesSourceObservation(value, selected, repoId, capturedPaths) &&
+    (publication(value, "partial") || publication(value, "published"));
+  let before = await inspect();
+  let confirmedWorkerEdit = false;
+  if (
+    capturedPaths.length &&
+    (pendingBranchSource(before, selected, repoId) || capturedFilesLag(before))
+  ) {
+    // A pending branch view or a lagging file from the captured patch may
+    // justify a refresh. Pin the source digest across independent reads.
+    before = await inspect();
+    confirmedWorkerEdit =
+      capturedFilesLag(before) ||
+      (pendingBranchSource(before, selected, repoId) &&
+        pendingBranchBoundary(before));
+  }
   if (
     expectedSourceRevision !== undefined &&
     before.source_revision !== expectedSourceRevision
@@ -215,12 +300,15 @@ export async function repairReviewPublication(
       "The epic's source changed before publication recovery. Its result was not adopted.",
     );
   if (ready(before, selected, repoId)) return selected;
-  if (!(
-    exactSource(before, selected, repoId) &&
-    before.ready === false &&
-    before.status === "partial" &&
-    publication(before, "partial")
-  ))
+  if (
+    !confirmedWorkerEdit &&
+    !(
+      matchesSourceObservation(before, selected, repoId) &&
+      before.ready === false &&
+      before.status === "partial" &&
+      publication(before, "partial")
+    )
+  )
     throw Error(
       "Memtrace could not verify this epic's exact source and graph publication. No automatic repair was attempted; check its code context before reviewing.",
     );
@@ -232,13 +320,12 @@ export async function repairReviewPublication(
   // This flag bypasses MemCode's cached-current shortcut. MemtraceEngine.index
   // still passes incremental: !!match and never asks to clear the existing store.
   repairStarted = true;
-  repoId = await engine.analyze(selected, update, true);
+  const refreshedRepoId = await engine.analyze(selected, update, true);
   assertActive();
-  if (repoId !== selected.repoId)
+  if (refreshedRepoId !== repoId)
     throw Error(
       "Memtrace changed repository identity during publication repair. Its result was not adopted.",
     );
-  selected = { ...selected, repoId };
   const after = await inspect();
   if (
     !ready(after, selected, repoId) ||
@@ -254,6 +341,7 @@ export async function prepareReviewAnalysis(
   project: Project,
   update: (note: string) => void,
   assertActive: () => void = () => {},
+  capturedPaths: readonly string[] = [],
 ): Promise<Project> {
   if (project.analysisCheckout !== "owned-worktree-v1") return project;
   assertActive();
@@ -268,6 +356,8 @@ export async function prepareReviewAnalysis(
       { ...project },
       update,
       assertActive,
+      undefined,
+      capturedPaths,
     );
   const repoId = await engine.analyze(project, update);
   assertActive();
@@ -276,5 +366,7 @@ export async function prepareReviewAnalysis(
     { ...project, repoId, analysis: "ready" },
     update,
     assertActive,
+    undefined,
+    capturedPaths,
   );
 }

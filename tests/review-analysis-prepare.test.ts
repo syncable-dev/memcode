@@ -86,7 +86,7 @@ function fixture() {
       return reads.shift() ?? certificate();
     },
   };
-  const run = () =>
+  const run = (capturedPaths: string[] = []) =>
     prepareReviewAnalysis(
       engine,
       project,
@@ -94,6 +94,7 @@ function fixture() {
       () => {
         if (cancelled) throw Error("cancelled by user");
       },
+      capturedPaths,
     );
   return {
     project,
@@ -445,5 +446,127 @@ test("unknown, malformed, missing and foreign transition metadata never gets a f
       /No automatic repair/,
     );
     assert.deepEqual(f.calls, ["watch", "get_query_revision"]);
+  }
+});
+
+function pendingBranch(f: ReturnType<typeof fixture>): Record<string, any> {
+  return {
+    ready: false,
+    status: "partial",
+    reason: "branch_publication_incomplete",
+    repo_id: f.project.repoId,
+    worktree: f.project.path,
+    branch: f.project.branch,
+    checkout_mode: "owned-worktree-v1",
+    graph_scope: "owned_worktree_graph",
+    requested_source_matches: true,
+    requested_revision_matches: true,
+    retry_query_group: false,
+    source_commit: "commit",
+    source_revision: "same-source",
+    indexing_revision: null,
+    token: null,
+    _meta: {
+      graph_revision: {
+        status: "partial",
+        token: "pending",
+        publication_unchanged_during_call: false,
+      },
+    },
+  };
+}
+
+test("an edited epic with a pending branch view gets one incremental refresh after a second observation", async () => {
+  const f = fixture();
+  const transition = pendingBranch(f);
+  transition._meta = {
+    stale: true,
+    graph_revision: {
+      before: { status: "partial", token: "previous" },
+      after: { status: "partial", token: "pending" },
+      publication_unchanged_during_call: false,
+    },
+  };
+  f.reads.splice(0, 1, transition, pendingBranch(f), f.certificate());
+  await f.run(["src/owned.ts"]);
+  assert.deepEqual(f.calls, [
+    "watch",
+    "get_query_revision",
+    "watch",
+    "get_query_revision",
+    "analyze:repair",
+    "watch",
+    "get_query_revision",
+  ]);
+});
+
+test("a pending branch view cannot authorize recovery on a changed source or a foreign checkout", async () => {
+  for (const mutate of [
+    (value: any) => {
+      value.source_revision = "changed";
+    },
+    (value: any) => {
+      value.worktree += "-foreign";
+    },
+    (value: any) => {
+      value.requested_source_matches = false;
+    },
+    (value: any) => {
+      value._meta.graph_revision.status = "unavailable";
+    },
+    (value: any) => {
+      value.mismatched_files = 1;
+    },
+    (value: any) => {
+      value.error_code = "BROKEN";
+    },
+  ]) {
+    const f = fixture(),
+      followup = pendingBranch(f);
+    mutate(followup);
+    f.reads.splice(0, 1, pendingBranch(f), followup);
+    await assert.rejects(f.run(["src/owned.ts"]));
+    assert.equal(f.calls.includes("analyze:repair"), false);
+  }
+});
+
+test("a pending branch view after repair cannot authorize review or a second index", async () => {
+  const f = fixture();
+  f.reads.splice(
+    0,
+    1,
+    pendingBranch(f),
+    pendingBranch(f),
+    pendingBranch(f),
+    pendingBranch(f),
+  );
+  await assert.rejects(
+    f.run(["src/owned.ts"]),
+    /after one incremental refresh/,
+  );
+  assert.equal(f.calls.filter((call) => call === "analyze:repair").length, 1);
+});
+
+test("only the current story’s captured files can explain a stale native index", async () => {
+  for (const authorized of [true, false]) {
+    const f = fixture(),
+      lag = f.certificate();
+    Object.assign(lag, {
+      ready: false,
+      status: "partial",
+      mismatched_files: 1,
+      mismatched_paths: ["src/owned.ts"],
+    });
+    f.reads.splice(0, 1, lag, lag, f.certificate());
+    if (authorized) {
+      await f.run(["src/owned.ts"]);
+      assert.equal(
+        f.calls.filter((call) => call === "analyze:repair").length,
+        1,
+      );
+    } else {
+      await assert.rejects(f.run(["src/another.ts"]), /No automatic repair/);
+      assert.equal(f.calls.includes("analyze:repair"), false);
+    }
   }
 });
