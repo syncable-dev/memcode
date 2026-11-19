@@ -143,9 +143,7 @@ function movingPublicationBoundary(value: Json): Json | undefined {
   const boundary = graph(value);
   const observation = (part: unknown): part is Json =>
     record(part) &&
-    Object.keys(part).every((key) => ["status", "token"].includes(key)) &&
-    ["partial", "published"].includes(part.status) &&
-    text(part.token);
+    Object.keys(part).every((key) => ["status", "token"].includes(key));
   if (
     !boundary ||
     boundary.publication_unchanged_during_call !== false ||
@@ -153,12 +151,25 @@ function movingPublicationBoundary(value: Json): Json | undefined {
       ["before", "after", "publication_unchanged_during_call"].includes(key),
     ) ||
     !observation(boundary.before) ||
-    !observation(boundary.after) ||
-    boundary.before.token === boundary.after.token ||
-    value._meta?.stale !== true
+    !observation(boundary.after)
   )
     return undefined;
-  return boundary;
+  const { before, after } = boundary;
+  if (!["partial", "published"].includes(after.status) || !text(after.token))
+    return undefined;
+  // The first publication may appear after the call has already started.
+  if (before.status === "unavailable")
+    return before.token === null &&
+      after.status === "partial" &&
+      value._meta?.stale === undefined
+      ? boundary
+      : undefined;
+  return ["partial", "published"].includes(before.status) &&
+    text(before.token) &&
+    before.token !== after.token &&
+    value._meta?.stale === true
+    ? boundary
+    : undefined;
 }
 
 export function reviewPublicationTransition(value: Json): boolean {

@@ -368,6 +368,19 @@ function transition(
   return value;
 }
 
+test("review reads again when the native graph starts publishing during inspection", async () => {
+  const f = fixture();
+  const starting = f.certificate("partial");
+  starting._meta.graph_revision = {
+    before: { status: "unavailable", token: null },
+    after: { status: "partial", token: "pending" },
+    publication_unchanged_during_call: false,
+  };
+  f.reads.splice(0, 1, starting, f.certificate());
+  await f.run();
+  assert.deepEqual(f.calls, ["watch", "get_query_revision", "get_query_revision"]);
+});
+
 test("a native publication completed during inspection requires a fresh strict read, not another index", async () => {
   for (const shape of [
     [false, false],
