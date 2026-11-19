@@ -10,6 +10,7 @@ import { childEnv, findCommand, now } from "./local";
 import {
   resolveMcpWorkspace,
   projectMcpWorkspace,
+  standaloneMcpWorkspace,
   MemtraceAdmissionError,
   admitPrivateEpisodeRepository,
   waitForPrivateRepositoryDiscovery,
@@ -548,6 +549,15 @@ export class MemtraceEngine {
         ),
       ),
     );
+    const standaloneWorkspace = () =>
+      !local && !scope.workspace && this.options.managedGraphRoot
+        ? standaloneMcpWorkspace(
+            scope.directory,
+            this.options.managedGraphRoot,
+            env,
+          )
+        : null;
+    let standalone = await standaloneWorkspace();
     if (local) {
       env.MEMTRACE_MEMDB_DATA_DIR = local.dataDirectory;
       env.MEMTRACE_DATA_DIR = local.jobDirectory;
@@ -572,20 +582,27 @@ export class MemtraceEngine {
     const attach = async () => {
       if (this.closing) throw Error("The Memtrace connection is closing.");
       await disconnect();
+      const manifest = standalone?.workspaceFile ?? local?.workspaceFile;
       const transport = new StdioClientTransport({
         command: command.command,
         args: [
           ...command.prefix,
           "mcp",
           ...(useManagedOwner ? ["--attach-only"] : []),
-          ...(local
-            ? ["--workspace-file", local.workspaceFile]
+          ...(manifest
+            ? ["--workspace-file", manifest]
             : scope.workspace
               ? ["--workspace", scope.workspace]
               : []),
         ],
-        cwd: launchDirectory,
-        env,
+        cwd: standalone ? dirname(standalone.workspaceFile) : launchDirectory,
+        env: standalone
+          ? {
+              ...env,
+              MEMTRACE_MEMDB_DATA_DIR: standalone.dataDirectory,
+              MEMTRACE_DATA_DIR: standalone.jobDirectory,
+            }
+          : env,
         stderr: "pipe",
       });
       const client = new Client(
@@ -638,7 +655,14 @@ export class MemtraceEngine {
       } else {
         try {
           await probe();
+          // A first-time CLI boot can publish the original folder scope during
+          // discovery. Bind it before the application issues any source writes.
+          if (!standalone) {
+            standalone = await standaloneWorkspace();
+            if (standalone) await probe();
+          }
         } catch (error) {
+          if (standalone) throw error;
           if (!pendingMemtraceOwner(error) && !disconnectedMemtraceClient(error))
             throw error;
           // ClientPending is not a wrong store. Bootstrap only the selected
@@ -708,7 +732,11 @@ export class MemtraceEngine {
       }
     } catch (error) {
       await disconnect();
-      if (error instanceof MemtraceAdmissionError && !privateProject) {
+      if (
+        error instanceof MemtraceAdmissionError &&
+        !privateProject &&
+        !standalone
+      ) {
         return this.open(project, true);
       }
       throw error;
