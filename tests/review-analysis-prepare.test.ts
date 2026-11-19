@@ -597,3 +597,16 @@ test("a captured mismatch can cross a publication boundary during its confirming
     4,
   );
 });
+
+test("a worker publication transition gives the native writer time before consuming another read", async (t) => {
+  const f = fixture();
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  f.reads.splice(0, 1, transition(f), f.certificate());
+  const result = f.run(["src/owned.ts"]);
+  await new Promise(resolve => setImmediate(resolve));
+  const reads = () => f.calls.filter(call => call === "get_query_revision").length;
+  assert.equal(reads(), 1);
+  t.mock.timers.tick(1000);
+  await result;
+  assert.equal(reads(), 2);
+});

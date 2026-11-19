@@ -277,6 +277,10 @@ export async function repairReviewPublication(
     ) {
       freshReads++;
       update("Waiting for one stable graph publication observation…");
+      // An active native writer can return several envelopes in milliseconds.
+      // Space the three worker-edit observations by 1, 2 and 4 seconds.
+      if (capturedPaths.length)
+        await new Promise((done) => setTimeout(done, 1000 * 2 ** (freshReads - 1)));
       value = await read();
     }
     return value;
