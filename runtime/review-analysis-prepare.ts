@@ -139,7 +139,7 @@ function ready(value: Json, project: Project, repoId: string): boolean {
 }
 
 /** A native before/after envelope is a reason to read again, never a certificate. */
-export function reviewPublicationTransition(value: Json): boolean {
+function movingPublicationBoundary(value: Json): Json | undefined {
   const boundary = graph(value);
   const observation = (part: unknown): part is Json =>
     record(part) &&
@@ -155,7 +155,16 @@ export function reviewPublicationTransition(value: Json): boolean {
     !observation(boundary.before) ||
     !observation(boundary.after) ||
     boundary.before.token === boundary.after.token ||
-    value._meta?.stale !== true ||
+    value._meta?.stale !== true
+  )
+    return undefined;
+  return boundary;
+}
+
+export function reviewPublicationTransition(value: Json): boolean {
+  const boundary = movingPublicationBoundary(value);
+  if (
+    !boundary ||
     !record(value.publication) ||
     !["partial", "published"].includes(value.publication.status) ||
     !text(value.publication.token)
@@ -197,7 +206,7 @@ export async function repairReviewPublication(
     repairStarted = false;
   const unverifiedAfterRepair =
     "The epic's graph publication is still unverified after one incremental refresh, or its source changed. Retry review after checking its code context.";
-  const inspect = async (): Promise<Json> => {
+  const inspect = async (confirmWorkerEdit = false): Promise<Json> => {
     assertActive();
     const watch = await engine.watch(selected, repoId);
     assertActive();
@@ -260,8 +269,11 @@ export async function repairReviewPublication(
     }
     while (
       freshReads < 3 &&
-      matchesSourceObservation(value, selected, repoId, capturedPaths) &&
-      reviewPublicationTransition(value)
+      ((matchesSourceObservation(value, selected, repoId, capturedPaths) &&
+        reviewPublicationTransition(value)) ||
+        (confirmWorkerEdit &&
+          pendingBranchSource(value, selected, repoId) &&
+          movingPublicationBoundary(value)))
     ) {
       freshReads++;
       update("Waiting for one stable graph publication observation…");
@@ -286,7 +298,7 @@ export async function repairReviewPublication(
   ) {
     // A pending branch view or a lagging file from the captured patch may
     // justify a refresh. Pin the source digest across independent reads.
-    before = await inspect();
+    before = await inspect(true);
     confirmedWorkerEdit =
       capturedFilesLag(before) ||
       (pendingBranchSource(before, selected, repoId) &&

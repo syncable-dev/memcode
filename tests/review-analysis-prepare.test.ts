@@ -570,3 +570,30 @@ test("only the current story’s captured files can explain a stale native index
     }
   }
 });
+
+test("a captured mismatch can cross a publication boundary during its confirming read", async () => {
+  const f = fixture(),
+    lag = f.certificate(),
+    pending = pendingBranch(f);
+  Object.assign(lag, {
+    ready: false,
+    status: "partial",
+    mismatched_files: 1,
+    mismatched_paths: ["src/owned.ts"],
+  });
+  pending._meta = {
+    stale: true,
+    graph_revision: {
+      before: { status: "published", token: "old" },
+      after: { status: "partial", token: "new" },
+      publication_unchanged_during_call: false,
+    },
+  };
+  f.reads.splice(0, 1, lag, pending, pendingBranch(f), f.certificate());
+  await f.run(["src/owned.ts"]);
+  assert.equal(f.calls.filter((call) => call === "analyze:repair").length, 1);
+  assert.equal(
+    f.calls.filter((call) => call === "get_query_revision").length,
+    4,
+  );
+});
