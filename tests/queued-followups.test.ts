@@ -241,14 +241,18 @@ test("a follow-up can reuse a verified older save, but never an unverified provi
   for (const source of ["matching legacy", "changed provider", "unverified legacy", "different checkout"]) {
     const f = await fixture(["codex"]), task = f.tasks[0];
     try {
-      task.run = {state: "finished", sessionId: "original-local-session", workspace: f.repo};
+      await f.manager.start(task, f.project);
+      await until(async () => (await f.runs(task)).length === 1, "initial native pass");
+      await f.release(task, 1);
+      await until(() => task.run.state === "finished" && !f.manager.implementationStarting(task.id), "initial pass settled");
+      task.run = {state: "finished", sessionId: "original-local-session", workspace: f.repo, branch: task.run.branch};
       if (source !== "unverified legacy")
         task.run.measurements = {modelIds: [], modelSource: source === "changed provider" ? "claude-assistant" : "codex-thread"};
       if (source === "different checkout") task.run.workspace = join(f.root, "previous-repo");
       f.enqueue(task, "Run the follow-up on the correct workspace.");
-      await until(async () => (await f.runs(task)).length === 1, "queued pass started");
-      assert.deepEqual(f.resumedSessions, [source === "matching legacy" ? "original-local-session" : undefined]);
-      await f.release(task, 1);
+      await until(async () => (await f.runs(task)).length === 2, "queued pass started");
+      assert.deepEqual(f.resumedSessions, [undefined, source === "matching legacy" ? "original-local-session" : undefined]);
+      await f.release(task, 2);
       await until(() => task.run.state === "finished", "queued pass finished");
     } finally { await f.cleanup(); }
   }
@@ -289,6 +293,7 @@ test("all three adapters automatically coalesce busy follow-ups after Fleet clea
     try {
       await f.manager.start(task, f.project);
       await until(async () => (await f.runs(task)).length === 1, "first pass");
+      task.assignment = "auto";
       const one = f.enqueue(
           task,
           "First queued review: exact quote and page 2",
@@ -319,6 +324,7 @@ test("all three adapters automatically coalesce busy follow-ups after Fleet clea
       assert.ok(prompt.endsWith(two.text));
       assert.equal(prompt.split(one.text).length - 1, 1);
       assert.deepEqual(f.resumedSessions, [undefined, "fixture-provider-session"]);
+      assert.equal(prompt.includes("HISTORICAL CONVERSATION"), false, "native resumed turns do not replay the transcript");
       assert.equal(one.followupState, "included");
       assert.equal(two.followupState, "included");
       assert.ok(one.promptedAt);

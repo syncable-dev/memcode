@@ -4,6 +4,7 @@ import {
   verifiedIndexRevision,
   waitForIndexPublication,
   waitForPeerIndex,
+  verifyingSourceRevision,
 } from "../runtime/memtrace-peer-index";
 import { MemtraceEngine } from "../runtime/memtrace";
 import type { Project } from "../src/shared";
@@ -437,6 +438,25 @@ const clock = () => {
     readTimeoutMs: 100,
   };
 };
+
+for (const reason of ["index_verification_running", "branch_publication_incomplete"])
+  test(`native ${reason} gets the bounded verification window and requires the same final certificate`, async () => {
+    let time = 0, reads = 0;
+    const pending = { ...nativeOwnedRevision, ready: false, status: "partial", reason,
+      token: null, indexing_revision: null, source_revision: "unchanged-source",
+      requested_source_matches: true, requested_revision_matches: true, retry_query_group: false };
+    assert.equal(verifyingSourceRevision(pending, nativeOwnedProject, "fixture"), "unchanged-source");
+    assert.equal(verifyingSourceRevision({ ...pending, graph_scope: "canonical_graph" }, nativeOwnedProject, "fixture"), undefined);
+    assert.equal(verifyingSourceRevision({ ...pending, error: "failure" }, nativeOwnedProject, "fixture"), undefined);
+    assert.equal(await waitForIndexPublication({ call: async (_p, name, args) => {
+      assert.equal(name, "get_query_revision"); reads++;
+      if (reads > 1) assert.equal(args.expected_source_revision, "unchanged-source");
+      return time < 60_000 ? pending : { ...nativeOwnedRevision, source_revision: "unchanged-source" };
+    } }, nativeOwnedProject, "fixture", () => {}, {
+      now: () => time, sleep: async ms => { time += ms; }, pollMs: 1000, timeoutMs: 100_000,
+    }), "fixture");
+    assert.ok(time >= 60_000 && time <= 100_000);
+  });
 
 test("a completed job waits beyond three seconds for independent publication without resubmitting or accepting partial results", async () => {
   let time = 0;

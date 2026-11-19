@@ -193,6 +193,23 @@ export function writingSourceRevision(
     return value.source_revision;
 }
 
+/** Native early envelopes are progress, never evidence that a graph is ready. */
+export function verifyingSourceRevision(
+  value: Json | undefined,
+  project: Project,
+  repoId: string,
+): string | undefined {
+  if (
+    exactRevisionSource(value, project, repoId) &&
+    value?.status === "partial" && value.ready === false &&
+    ["index_write_in_progress", "index_verification_running", "branch_publication_incomplete"].includes(value.reason) &&
+    value.token === null && value.indexing_revision === null &&
+    value.requested_source_matches === true && value.requested_revision_matches === true &&
+    value.retry_query_group === false && usable(value.source_revision) &&
+    value.error === undefined && value._error === undefined && value.error_code === undefined
+  ) return value.source_revision;
+}
+
 /** Counts and a current repository summary are not a source/publication certificate. */
 export const verifiedIndexRevision = (
   value: Json | null | undefined,
@@ -321,7 +338,7 @@ export async function waitForIndexPublication(
       throw Error(
         `Memtrace job completed, but current source on branch ${branch} is not verified: Memtrace reported another repository, checkout or branch. Its result was not adopted.`,
       );
-    const writerSource = writingSourceRevision(revision, project, repoId);
+    const writerSource = verifyingSourceRevision(revision, project, repoId) ?? writingSourceRevision(revision, project, repoId);
     if (
       (revision?.reason === "index_write_in_progress" && !writerSource) ||
       (expectedSource &&

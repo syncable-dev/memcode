@@ -655,11 +655,12 @@ function runCursorSession(options: AgentSessionOptions, inspect?: (session: Json
       const context = { cwd: options.cwd, mcpServers: await sessionServers(options.contextConfig) };
       let session: Json;
       if (options.resumeSessionId !== undefined) {
-        if (!sessionId || initialized.agentCapabilities?.loadSession !== true)
+        const resume = initialized.agentCapabilities?.sessionCapabilities?.resume != null;
+        if (!sessionId || (!resume && initialized.agentCapabilities?.loadSession !== true))
           throw Error("This Cursor CLI cannot reopen the previous Cursor conversation.");
         try {
           // ACP acknowledges the requested ID with an empty or config-only load result.
-          session = await request("session/load", { ...context, sessionId });
+          session = await request(resume ? "session/resume" : "session/load", { ...context, sessionId });
         } catch {
           throw Error("Could not load the previous Cursor conversation on this computer.");
         }

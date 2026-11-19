@@ -17,6 +17,10 @@ installed-app results and unsigned package hashes. The Mac reproduced failures
 in first-time review preparation and Codex follow-up continuity. Live
 two-device acceptance is pending.
 
+The [continuation integration checks](beta18-integration-checks.md) record the
+Windows integration of the subsequent Mac fixes. The original uploaded packages
+are superseded candidates: rebuild the integrated source before signing them.
+
 After both platforms pass on the final source, integrate through the required
 approved PRs, verify both version-bound production updater signatures, publish
 the immutable installers and update the website catalog. Verify the website

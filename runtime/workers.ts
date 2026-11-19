@@ -38,6 +38,7 @@ import { WorkerInputs } from "./worker-input";
 import { startHarnessSession } from "./agents";
 import { WorkerStartupQueue } from "./worker-startup";
 import { workerCheckoutBrief, workerTurnContext } from "./worker-turn";
+import { previousProviderSession, resumableProviderSession } from "./provider-session";
 import { effectivePermissionMode } from "../src/permissions";
 import type { AgentEvent } from "./agents/types";
 import { trackTurnActivity } from "./agents/activity";
@@ -62,17 +63,6 @@ export interface TeamWorkerClaims {
   prepareFollowups?(task: WorkItem): Promise<void>;
   acquire(taskId: string, projectId: string): Promise<void>;
   release(taskId: string, projectId: string): Promise<void>;
-}
-
-function savedSessionBinding(run: WorkItem["run"]) {
-  if (run.sessionBinding) return run.sessionBinding;
-  // Legacy saves contain the actual provider in the model observation. A card's
-  // current assignment or proposed route may have changed since that turn.
-  const harness = run.measurements?.modelSource?.split("-")[0];
-  if (run.sessionId && run.workspace &&
-      (harness === "codex" || harness === "claude" || harness === "cursor"))
-    return { harness, workspace: run.workspace } as const;
-  return undefined;
 }
 
 async function closeWithin(
@@ -553,7 +543,11 @@ export class WorkerManager {
         this.cancellingReview.delete(task.id);
       }
     }
-    const sessionBinding = savedSessionBinding(task.run);
+    const previousProvider = previousProviderSession(task);
+    const sessionBinding = previousProvider ? {
+      harness: previousProvider.harness, workspace: previousProvider.workspace,
+      branch: previousProvider.branch, epicId: previousProvider.epicId,
+    } : undefined;
     const previousAttempt = task.harness === "claude" && task.run.sessionId &&
       (!sessionBinding || sessionBinding.harness === "claude")
       ? { ...task, run: { ...task.run, workspace: sessionBinding?.workspace ?? task.run.workspace } }
@@ -759,9 +753,12 @@ export class WorkerManager {
         }
       }
       await progress("Measuring story scope and checking available workers");
+      const routingTask = previousProvider && previousProvider.epicId === task.epicId && task.assignment === "auto"
+        ? { ...task, assignment: "manual" as const, harness: previousProvider.harness }
+        : task;
       const [evidence, catalog] = await Promise.all([
         this.engine.qualify(analysisProject, task),
-        this.catalog(assignedHarness(task, permissionSettings)),
+        this.catalog(assignedHarness(routingTask, permissionSettings)),
       ]);
       continuing();
       task.evidence = evidence;
@@ -779,7 +776,7 @@ export class WorkerManager {
       if (!approved.length)
         throw Error("Connect a worker in Workers before starting a worker.");
       task.route = planRoute(
-        { ...task, permissionMode: permissionPreference },
+        { ...routingTask, permissionMode: permissionPreference },
         task.evidence,
         approved,
         permissionSettings,
@@ -808,6 +805,7 @@ export class WorkerManager {
       task.run.changeRunId = randomUUID();
       await this.fleet.before(project, task);
       const workspace = task.run.workspace!;
+      const resumeSessionId = await resumableProviderSession(previousProvider, task, workspace);
       continuing();
       this.preparations.set(task.id, {
         cancel: async () => {
@@ -988,7 +986,7 @@ export class WorkerManager {
       continuing();
       conversation = claimReviewContext(task.messages, now());
       await this.changed();
-      const turn = workerTurnContext(task, conversation);
+      const turn = workerTurnContext(task, conversation, resumeSessionId ? 0 : 8000);
       const prompt = [
         "You are implementing a work item in MemCode, a local coding-worker suite.",
         turn.intro,
@@ -1094,7 +1092,7 @@ export class WorkerManager {
         }
         if (event.type === "session") {
           task.run.sessionId = event.sessionId;
-          task.run.sessionBinding = { harness: launchedHarness, workspace };
+          task.run.sessionBinding = { harness: launchedHarness, workspace, branch: task.run.branch, epicId: task.epicId };
         }
         if (event.type === "message") {
           const existing = event.messageId
@@ -1142,10 +1140,7 @@ export class WorkerManager {
       }
       await progress(`Starting ${harnessNames[launchedHarness]}`);
       const pickedUpFollowup = conversation.some(message => message.pickedUpAt && !message.promptedAt);
-      const sameSessionScope = sessionBinding?.harness === launchedHarness &&
-        checkoutKey(sessionBinding.workspace) === checkoutKey(workspace);
-      const resumeSessionId = pickedUpFollowup && sameSessionScope ? task.run.sessionId : undefined;
-      if (pickedUpFollowup && task.run.sessionId && !sameSessionScope)
+      if (pickedUpFollowup && task.run.sessionId && !resumeSessionId)
         this.message(task, "system", "Starting a new provider session with the saved story conversation. The previous session could not be tied to this worker and checkout.");
       const session = this.sessionFactory(launchedHarness, {
         resumeSessionId,

@@ -144,6 +144,36 @@ test("one real incremental repair completes a known unfinished publication witho
   assert.match(f.progress[0], /one incremental refresh/);
 });
 
+for (const reason of ["index_verification_running", "branch_publication_incomplete", "index_write_in_progress"])
+  test(`review follows native ${reason} progress to its exact certificate without a retry or duplicate index`, async () => {
+    const f = fixture();
+    const pending = {
+      repo_id: "repo", worktree: f.project.path, branch: f.project.branch,
+      checkout_mode: "owned-worktree-v1", graph_scope: "owned_worktree_graph",
+      source_revision: "same-source", token: null, indexing_revision: null,
+      status: "partial", ready: false, reason,
+      requested_source_matches: true, requested_revision_matches: true, retry_query_group: false,
+    };
+    f.reads.splice(0, 1, pending, f.certificate());
+    assert.equal((await f.run()).repoId, "repo");
+    assert.deepEqual(f.calls, ["watch", "get_query_revision", "get_query_revision"]);
+    assert.match(f.progress.join(" "), /automatically/);
+  });
+
+test("a native verification wait never adopts a changed source or a foreign owned graph", async () => {
+  for (const field of ["source_revision", "worktree", "repo_id", "branch", "graph_scope"]) {
+    const f = fixture();
+    const pending = { repo_id: "repo", worktree: f.project.path, branch: f.project.branch,
+      checkout_mode: "owned-worktree-v1", graph_scope: "owned_worktree_graph",
+      source_revision: "same-source", token: null, indexing_revision: null,
+      status: "partial", ready: false, reason: "index_verification_running",
+      requested_source_matches: true, requested_revision_matches: true, retry_query_group: false };
+    f.reads.splice(0, 1, pending, { ...f.certificate(), [field]: "different" });
+    await assert.rejects(f.run(), /source changed|could not verify/);
+    assert.equal(f.calls.some(call => call.startsWith("analyze")), false);
+  }
+});
+
 const invalid: Record<string, (value: Record<string, any>) => void> = {
   foreign_repo: (value) => {
     value.repo_id = "other";

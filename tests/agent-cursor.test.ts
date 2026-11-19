@@ -40,9 +40,9 @@ input.on('line',async line=>{
  const message=JSON.parse(line); trace({in:message});
  if(!message.method){const resolve=pending.get(message.id);pending.delete(message.id);resolve?.(message);return;}
  const p=message.params??{};
- if(message.method==='initialize')return answer(message.id,{protocolVersion:1,agentCapabilities:{loadSession:process.env.CASE!=='resume-unsupported'},authMethods:[{id:'cursor_login'}]});
+ if(message.method==='initialize')return answer(message.id,{protocolVersion:1,agentCapabilities:{loadSession:process.env.CASE!=='resume-unsupported',...(process.env.CASE==='resume-fast'?{sessionCapabilities:{resume:{}}}:{})},authMethods:[{id:'cursor_login'}]});
  if(message.method==='authenticate')return answer(message.id,{});
- if(message.method==='session/load'){
+ if(message.method==='session/load'||message.method==='session/resume'){
   if(typeof p.cwd!=='string'||!Array.isArray(p.mcpServers))throw Error('Missing resume context');
   if(process.env.CASE==='resume-missing')return send({jsonrpc:'2.0',id:message.id,error:{code:-32602,message:'Cannot find '+p.sessionId}});
   update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:'history from an earlier turn'}});
@@ -418,7 +418,7 @@ test(
   },
 );
 
-for (const scenario of ["resume", "resume-unsupported", "resume-missing", "resume-wrong"]) {
+for (const scenario of ["resume", "resume-fast", "resume-unsupported", "resume-missing", "resume-wrong"]) {
   test(`Cursor ${scenario} keeps a follow-up on its original conversation`, async () => {
     const run = await fixture(scenario);
     try {
@@ -426,12 +426,12 @@ for (const scenario of ["resume", "resume-unsupported", "resume-missing", "resum
       const result = await session.completion;
       const sent = (await run.trace()).map((line) => line.in).filter(Boolean);
       assert.ok(!sent.some((p) => p.method === "session/new"));
-      assert.equal(sent.find((p) => p.method === "session/load")?.params.sessionId,
+      assert.equal(sent.find((p) => p.method === (scenario === "resume-fast" ? "session/resume" : "session/load"))?.params.sessionId,
         scenario === "resume-unsupported" ? undefined : "session-fixture");
       assert.equal(sent.find((p) => p.method === "session/prompt")?.params.sessionId,
-        scenario === "resume" ? "session-fixture" : undefined);
+        ["resume", "resume-fast"].includes(scenario) ? "session-fixture" : undefined);
       assert.ok(!run.events.some((e) => e.type === "message" && e.text.includes("history from an earlier turn")));
-      if (scenario === "resume") assert.equal(result.exitCode, 0);
+      if (["resume", "resume-fast"].includes(scenario)) assert.equal(result.exitCode, 0);
       else {
         assert.match(result.error ?? "", /previous Cursor|original Cursor/i);
         assert.ok(!result.error!.includes("session-fixture"));

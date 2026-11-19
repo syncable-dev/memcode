@@ -1,6 +1,6 @@
 import type { Project } from "../src/shared";
 import type { MemtraceEngine } from "./memtrace";
-import { exactRevisionSource, verifiedIndexRevision } from "./memtrace-peer-index";
+import { exactRevisionSource, verifiedIndexRevision, verifyingSourceRevision } from "./memtrace-peer-index";
 
 type Engine = Pick<
   MemtraceEngine,
@@ -254,14 +254,16 @@ export async function repairReviewPublication(
       text(value.worktree) &&
       pathKey(value.worktree) === pathKey(selected.path!) &&
       value.ready === false &&
-      [
+      ([
         "index_write_in_progress",
         "indexing_in_progress",
         "graph_materialization_in_progress",
-      ].includes(value.reason)
+      ].includes(value.reason) ||
+        (!!verifyingSourceRevision(value, selected, repoId) &&
+          (value.reason !== "branch_publication_incomplete" || !capturedPaths.length)))
     ) {
       update(
-        "Memtrace is finishing this epic's existing graph write. Following its publication…",
+        "Memtrace is verifying this epic's existing graph. Review will continue automatically…",
       );
       await new Promise((done) => setTimeout(done, delay));
       delay = Math.min(3000, delay * 2);

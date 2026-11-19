@@ -197,7 +197,7 @@ export interface WorkItem extends TaskPlanningFields {
     error?: string;
     sessionId?: string;
     /** Device-local provenance for sessionId, including across failed preparations. */
-    sessionBinding?: { harness: Harness; workspace: string };
+    sessionBinding?: { harness: Harness; workspace: string; branch?: string; epicId?: string | null };
     changeRunId?: string;
     nativeEditCapture?: boolean;
     measurements?: import("./measurements").WorkerMeasurements;
