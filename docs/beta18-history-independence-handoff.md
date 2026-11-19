@@ -29,6 +29,13 @@ seven stories and its worker connections. At 1000 × 620 it showed
 Settings and Save. The compact guide continued to code context after
 scrolling. These checks used the published engine pin.
 
+The rebuilt `13cc3c3` ad-hoc QA bundle loaded a fresh isolated workspace
+with its bundled Node in 6.091 s. Its Mac executable SHA-256 is
+`225899a6812a4cf886ece6e13cfa90e2413af5e6da506429d9ebaa9f84e302db`.
+Its runtime SHA-256 is
+`24caf243d91d0e412629931587d8e57822c4a95a10b8e1cce4e376e1d5964ab5`.
+The signed updater and existing-profile relaunch are separate gates.
+
 ## Follow-up verification binding, 2026-11-19 22:56 UTC
 
 Windows reproduced a real review issue on MC-007 after its read-only provider
