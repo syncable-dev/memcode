@@ -149,6 +149,17 @@ test("managed project graphs open under the app profile without touching a legac
     await projectMcpWorkspace(project, { managedGraphRoot: graphRoot }),
     managed,
   );
+  const current = await projectMcpWorkspace(project, {
+    managedGraphRoot: graphRoot,
+    currentSourceOnly: true,
+  });
+  assert.notEqual(current.dataDirectory, managed.dataDirectory);
+  assert.notEqual(current.dataDirectory, legacy.dataDirectory);
+  assert.equal(await readFile(current.workspaceFile, "utf8"), await readFile(managed.workspaceFile, "utf8"));
+  assert.equal(await readFile(owner, "utf8"), existingOwner);
+  assert.deepEqual(await projectMcpWorkspace(project, {
+    managedGraphRoot: graphRoot, currentSourceOnly: true,
+  }), current);
 });
 
 test("standalone MemCode binds the original folder store from outside the linked workers' repository", async (t) => {

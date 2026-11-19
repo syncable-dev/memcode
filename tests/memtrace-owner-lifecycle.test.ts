@@ -93,7 +93,7 @@ test("overlapping epic retirements share the drain and cannot clear its guard be
   await engine.close();
 });
 
-test("cold owned-epic discovery uses attach-only MCP before managed owner bootstrap, and an unwatch failure cannot strand its client", async () => {
+for (const primaryFolder of [false, true]) test(`cold ${primaryFolder ? "primary-folder source" : "owned-epic"} discovery attaches before owner bootstrap and never replays history`, async () => {
   const directory = await mkdtemp(join(tmpdir(), "memcode-managed-epic-")),
     source = join(directory, "source"),
     executable = join(directory, "mcp-fixture.mjs"),
@@ -130,7 +130,8 @@ createInterface({input:process.stdin}).on('line',line=>{
     path: source,
     branch: "main",
     analysis: "idle",
-    analysisCheckout: "owned-worktree-v1",
+    analysisCheckout: primaryFolder ? undefined : "owned-worktree-v1",
+    analysisCurrentSource: true,
     createdAt: new Date().toISOString(),
   };
   const engine = new MemtraceEngine(() => executable);

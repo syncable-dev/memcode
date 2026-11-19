@@ -297,6 +297,16 @@ test("non-owned legacy preparation keeps its existing behavior and starts no ext
   assert.deepEqual(f.calls, []);
 });
 
+test("a primary-folder epic verifies its separate current-source graph instead of the history graph", async () => {
+  const f = fixture();
+  delete f.project.analysisCheckout;
+  f.project.analysisCurrentSource = true;
+  const result = await f.run();
+  assert.equal(result.analysisCurrentSource, true);
+  assert.equal(result.repoId, f.project.repoId);
+  assert.deepEqual(f.calls, ["analyze:cached"]);
+});
+
 test("late publication recovery repairs the current owner without retirement, reopening or cached analysis", async () => {
   const f = fixture();
   f.reads.splice(0, 1, f.certificate("partial"), f.certificate());

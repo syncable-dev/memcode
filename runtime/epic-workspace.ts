@@ -97,15 +97,12 @@ export class EpicWorkspace {
       task.run.workspace = checkout.workspace;
       task.run.branch = branch;
       task.run.baseline = epic.baseRevision;
-      if (checkout.workspace !== canonical) {
-        const id = `${project.id}:epic:${epic.id}`;
-        if (task.run.analysisProjectId !== id)
-          task.run.analysisRepoId = undefined;
-        task.run.analysisProjectId = id;
-      } else {
-        task.run.analysisProjectId = undefined;
+      // Even when the epic is already open in the primary folder, use a
+      // separate current-source view. Its history import must not gate work.
+      const id = `${project.id}:epic:${epic.id}${checkout.workspace === canonical ? ":source" : ""}`;
+      if (task.run.analysisProjectId !== id)
         task.run.analysisRepoId = undefined;
-      }
+      task.run.analysisProjectId = id;
       task.updatedAt = now();
       return { epic, changedBranch: false };
     }

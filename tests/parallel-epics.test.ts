@@ -160,6 +160,24 @@ test("restarting preserves dirty epic results and rejects an externally changed 
   );
 });
 
+test("an epic already open in the primary folder keeps its files but uses an independent current-source graph", async () => {
+  const f = await fixture();
+  f.state.epics[0].branch = "main";
+  await f.workspaces.activate(f.a, f.project, { ownedCheckout: true });
+  assert.equal(f.a.run.workspace, await realpath(f.root));
+  const analysis = epicAnalysisProject(f.project, f.a);
+  assert.notEqual(analysis.id, f.project.id);
+  assert.equal(analysis.analysisCurrentSource, true);
+  assert.equal(analysis.analysisCheckout, undefined, "A primary Git folder cannot pretend to be a linked worktree");
+  assert.equal(analysis.repoId, undefined, "The primary history graph's certificate cannot be inherited");
+  const peer = f.story("a2", "a");
+  f.state.tasks.push(peer);
+  await f.workspaces.activate(peer, f.project, { ownedCheckout: true });
+  assert.equal(peer.run.analysisProjectId, f.a.run.analysisProjectId);
+  assert.equal(f.project.repoId, "canonical");
+  assert.equal(await git(f.root, ["branch", "--show-current"]), "main");
+});
+
 test("a Done prerequisite in another epic must actually be present before a dependent worker can start", async () => {
   const f = await fixture();
   await f.workspaces.activate(f.a, f.project, { ownedCheckout: true });

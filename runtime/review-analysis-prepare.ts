@@ -362,6 +362,13 @@ export async function prepareReviewAnalysis(
   assertActive: () => void = () => {},
   capturedPaths: readonly string[] = [],
 ): Promise<Project> {
+  if (project.analysisCurrentSource && project.analysisCheckout !== "owned-worktree-v1") {
+    assertActive();
+    await engine.activateEpic?.(project, update);
+    const repoId = await engine.analyze(project, update);
+    assertActive();
+    return { ...project, repoId, analysis: "ready" };
+  }
   if (project.analysisCheckout !== "owned-worktree-v1") return project;
   assertActive();
   await engine.activateEpic?.(project, update);

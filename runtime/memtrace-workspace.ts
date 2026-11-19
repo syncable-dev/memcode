@@ -92,6 +92,7 @@ export async function projectMcpWorkspace(
   options: {
     checkoutMode?: "owned-worktree-v1";
     managedGraphRoot?: string;
+    currentSourceOnly?: boolean;
   } = {},
 ) {
   const directory = await realpath(projectPath);
@@ -99,7 +100,9 @@ export async function projectMcpWorkspace(
   // Owned epic manifests must remain underneath the linked checkout. The
   // managed primary graph lives in the profile so a standalone CLI can keep
   // its existing checkout-local graph and indexing history.
-  const managedRoot = ownedWorktree ? undefined : options.managedGraphRoot;
+  const managedRoot = ownedWorktree ? undefined : options.currentSourceOnly
+    ? join(options.managedGraphRoot ?? join(directory, ".memcode"), "current-source")
+    : options.managedGraphRoot;
   const graphDirectory = managedRoot
     ? await managedProjectDirectory(managedRoot, directory)
     : directory;

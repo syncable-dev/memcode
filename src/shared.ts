@@ -213,6 +213,8 @@ export interface WorkItem extends TaskPlanningFields {
 export interface Project {
   /** Ephemeral local query scope, not a shared project identity. */
   analysisCheckout?: "owned-worktree-v1";
+  /** Ephemeral epic source view; Git history stays in the primary project graph. */
+  analysisCurrentSource?: boolean;
   id: string;
   name: string;
   description: string;

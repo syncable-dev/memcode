@@ -21,9 +21,22 @@ Its review has not passed yet. These are progress observations, not release
 clearance. Native application binary was unchanged; this early acceptance run
 uses a rebuilt runtime override. Final package checks must use final resources.
 
-The owned-epic optimization does not claim the primary engine replay failure
-is repaired. A branch already open in the selected canonical checkout still
-uses that checkout's existing preparation path and needs the engine fix.
+The next patch also covers an epic branch already open in the primary folder:
+its files remain there, while a separate, stable current-source graph is kept
+under a distinct namespace. It uses a normal canonical graph certificate,
+never a linked-worktree certificate. Same-epic workers share that source view.
+The primary project and installed CLI retain their history stores. This does
+not claim that the primary engine replay failure itself is repaired.
+
+Windows on `f49d28f`: the sequential 932-test suite passed, as did the native
+desktop smoke check. The fresh Codex coding story and actual Code review tab
+completed during the primary import. Its 16 function rows render real numeric
+values, and the separate model reviewer ran. The review honestly retains
+incomplete impact coverage and unavailable linked check evidence; worker output
+reported eight passing tests, which is not a linked `memcode_check` report.
+Two other independent epics ran real Claude Code and Cursor coding workers
+concurrently and both reached Review. Their native reviews are being checked.
+These observations are not final-source or Mac release acceptance.
 
 ## Confirmed Windows failure
 

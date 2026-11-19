@@ -159,7 +159,7 @@ export class MemtraceEngine {
   }
   /** Release our idle epic owner; the graph cache and checkout stay on disk. */
   async releaseEpic(project: Project): Promise<void> {
-    if (project.analysisCheckout !== "owned-worktree-v1") return;
+    if (!project.analysisCurrentSource && project.analysisCheckout !== "owned-worktree-v1") return;
     const previous = this.retirements.get(project.id);
     if (previous) return previous;
     this.retiring.add(project.id);
@@ -515,7 +515,7 @@ export class MemtraceEngine {
     const authentication = await this.options.environment?.();
     const managed = this.options.privateProject?.() === true;
     privateProject ||=
-      managed || project.analysisCheckout === "owned-worktree-v1";
+      managed || project.analysisCurrentSource === true || project.analysisCheckout === "owned-worktree-v1";
     const command = await findCommand("memtrace", this.configuredPath());
     if (!command)
       throw new Error(
@@ -524,14 +524,16 @@ export class MemtraceEngine {
     await ensureLocalRuntimeIgnored(project.path);
     const scope = await resolveMcpWorkspace(project.path);
     const ownedCheckout = project.analysisCheckout === "owned-worktree-v1";
+    const currentSource = ownedCheckout || project.analysisCurrentSource === true;
     const managedGraphRoot = managed
       ? this.options.managedGraphRoot
       : undefined;
-    const useManagedOwner = ownedCheckout || !!managedGraphRoot;
+    const useManagedOwner = currentSource || !!managedGraphRoot;
     const local = privateProject
       ? await projectMcpWorkspace(project.path, {
           checkoutMode: project.analysisCheckout,
           managedGraphRoot,
+          currentSourceOnly: currentSource,
         })
       : null;
     const launchDirectory =
@@ -565,7 +567,7 @@ export class MemtraceEngine {
       // Each epic needs current structure, not another embedding-model copy.
       // Its retrieval uses the checkout's lexical/AST graph; facts never fall
       // back to another branch's semantic index.
-      if (ownedCheckout) {
+      if (currentSource) {
         env.MEMTRACE_SKIP_EMBED = "1";
         // Git history belongs to the primary project graph. Replaying it in
         // every epic duplicates work and holds its current-source publication
@@ -918,7 +920,7 @@ export class MemtraceEngine {
         path: project.path,
         repo_id: match?.repo_id ?? project.repoId,
         incremental: !!match,
-        skip_embed: project.analysisCheckout === "owned-worktree-v1",
+        skip_embed: project.analysisCurrentSource === true || project.analysisCheckout === "owned-worktree-v1",
         branch: project.branch,
       });
     if (beforeIndex) {
