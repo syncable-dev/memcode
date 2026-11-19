@@ -74,6 +74,15 @@ export async function ensureProjectRepository(project: Project): Promise<void> {
         `Select the Git repository root (${root}) to connect this project.`,
       );
     await ensureLocalRuntimeIgnored(path);
+    const branch = await git(path, ["branch", "--show-current"]);
+    if (!branch) throw Error("Choose a named local Git branch before analyzing this project.");
+    if (branch !== project.branch) {
+      if (project.analysisCheckout || project.analysisCurrentSource)
+        throw Error("This epic checkout changed branch. Its earlier analysis was not adopted.");
+      project.branch = branch;
+      if (project.analysis === "ready") project.analysis = "idle";
+      project.analysisNote = "Reading the current local branch.";
+    }
     return;
   }
   if ((await readdir(path)).length)
