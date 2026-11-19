@@ -9,6 +9,42 @@ peer-save startup failure was observed independently of primary replay; its
 proposed fix is preserved separately and is not in the validation source.
 Keep production pins and publication on hold until final source is agreed.
 
+## Physical Mac updater relaunch, 20 November
+
+The physical Mac installed and automatically relaunched an isolated QA
+build of `13cc3c356cbbf9f6cceddae9667e803b28604a0c` using the normal native
+updater and a private loopback HTTPS feed. Both apps had the same unique
+QA identifier and a hard guard on that profile. The version-bound
+signature used a one-use QA updater key. This rehearsal used the published
+engine pin. The production-signed archive and live beta account remain
+separate acceptance gates.
+
+The beta.17 starter detected beta.18 and downloaded the 144,733,659-byte
+archive automatically. SHA-256
+`019bf83558f04d1db3c845f317da1781cb166e39a156db4a3150aa5fa4b09325`.
+After quitting, beta.17 reopened with the exact same cached file,
+including inode, modification time and checksum. The feed saw one
+package GET through installation and the subsequent cold launch.
+
+Clicking **Install and restart** installed beta.18 in place. The new
+process appeared without a manual launch roughly 133 s after observation
+began. The first 60-second check timed out while the updater was still
+running. The installed app reported beta.18 and **You’re up to date**.
+The saved story, seven-worker setting and both model settings survived
+installation and one more cold restart. The installed Node and the real
+product adapters transcribed both expected phrases from a known audio
+file in 1.149 s and ranked the right local retrieval result first in
+8.098 s. The model checks sent zero remote requests. The app executable
+and running process of the regular installation matched the baseline.
+
+Separately, the optimized Mac engine `1ebcfda2` is staged locally as
+`1ebcfda21-beta.1-macos-aarch64-5e5e1165d6305123.zip` with SHA-256
+`5e5e1165d6305123b42cabb8b75362dc0d0873ebe3a12a5c8361fcf9b4f01e11`.
+MemCode's own archive checker verified the exact allowlist and every
+file digest. Its compiled engine is the one used in the fresh and
+retained-history acceptance below. The production installer still needs
+the agreed final app source and both platform engine archives.
+
 ## Mac review retry and saved-folder reconnect, 2026-11-19
 
 The optimized Mac engine at `1ebcfda2` again ran the native review
