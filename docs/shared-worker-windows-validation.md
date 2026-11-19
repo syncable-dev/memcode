@@ -114,3 +114,25 @@ After this context fix, typecheck, all **876 tests**, frontend and native builds
 desktop smoke and the native shared-session UI check passed again. The two
 new regression tests cover the large intact payload and the original refusal
 for genuinely oversized evidence.
+
+The next, stricter real Claude check requested the exact metrics for a function
+near the end of that saved report. It exposed a second adapter bug: Claude
+successfully retrieved that row using its allowed native Grep tool, but MemCode
+recognized only Read as evidence access. The answer was rejected despite the
+successful lookup. MemCode now recognizes successful content lookups of the
+exact private evidence file, with the same read-only tool catalog. Other paths,
+filename-only searches, counts, no matches and tool failures do not qualify.
+The JSON retains line breaks for bounded native reads without repeated
+indentation.
+
+With this correction, the real `claude-opus-5-5` reviewer returned the exact
+saved row in 22.4 seconds: cognitive 0, cyclomatic 1, nesting 0 and
+maintainability 88.55729948050106. All four values and the symbol matched the
+native report exactly. This is a targeted evidence-reading check, separate
+from the original coding and native-analysis run. The targeted adapter suite
+passed all 14 tests, including successful and rejected content lookups.
+
+After the scoped content-lookup correction, all **878 tests** passed in
+163.0 seconds. Typecheck, frontend/native builds, desktop smoke and the actual
+WebView2 shared-session UI check passed on the same source. Mac validation and
+the two-device installed-app checks are still required before publication.

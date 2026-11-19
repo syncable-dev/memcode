@@ -21,7 +21,12 @@ import {
 import { assertWorkerConnected } from "./worker-connections";
 import { within } from "./local";
 import { selectCursorModel } from "./agents/cursor";
-import { readCodexCatalog, recordCodexModelFailure, selectCodexModel, type CodexCatalog } from "./agents/codex-models";
+import {
+  readCodexCatalog,
+  recordCodexModelFailure,
+  selectCodexModel,
+  type CodexCatalog,
+} from "./agents/codex-models";
 import { probeClaudeCatalog } from "./agents/claude";
 import { selectClaudeModel } from "./agents/claude-models";
 
@@ -445,8 +450,17 @@ async function codexQuestion(
   };
   try {
     if (!options.localModel) {
-      catalog = await readCodexCatalog(command, reviewEnvironment(command), (method, params) => rpc.request(method, params, 4500));
-      requested = selectCodexModel(catalog, requested, !options.modelPinned, input.task.route?.tier);
+      catalog = await readCodexCatalog(
+        command,
+        reviewEnvironment(command),
+        (method, params) => rpc.request(method, params, 4500),
+      );
+      requested = selectCodexModel(
+        catalog,
+        requested,
+        !options.modelPinned,
+        input.task.route?.tier,
+      );
     }
     attemptedModel = requested;
     const started = await rpc.request("thread/start", {
@@ -549,15 +563,7 @@ async function cursorQuestion(
   const reading = new Set<string>();
   const rpc = new ReviewRpc(
     command,
-    [
-      "--mode",
-      "ask",
-      "--sandbox",
-      "enabled",
-      "--workspace",
-      cwd,
-      "acp",
-    ],
+    ["--mode", "ask", "--sandbox", "enabled", "--workspace", cwd, "acp"],
     cwd,
     options,
   );
@@ -657,9 +663,15 @@ async function cursorQuestion(
           "Cursor did not acknowledge read-only Ask mode. No review prompt was sent.",
         );
     }
-    const selected = await selectCursorModel(session, requested, (method, params) => rpc.request(method, params),
-      options.modelPinned ? undefined : input.task.route?.tier);
-    const selection = selected.config.find((item) => item.category === "model" || item.id === "model");
+    const selected = await selectCursorModel(
+      session,
+      requested,
+      (method, params) => rpc.request(method, params),
+      options.modelPinned ? undefined : input.task.route?.tier,
+    );
+    const selection = selected.config.find(
+      (item) => item.category === "model" || item.id === "model",
+    );
     model = text(selection?.currentValue ?? selected.legacyModel);
     if (!model || /^(auto|default)(\[.*\])?$/.test(model))
       throw Error(
@@ -702,22 +714,42 @@ async function claudeQuestion(
   options: ReviewAgentOptions,
 ): Promise<ReadonlyReviewAnswer> {
   if (requested) {
-    requested = selectClaudeModel(await probeClaudeCatalog(command), requested, !!options.modelPinned);
-    if (input.signal?.aborted) throw Error("Review conversation was cancelled.");
+    requested = selectClaudeModel(
+      await probeClaudeCatalog(command),
+      requested,
+      !!options.modelPinned,
+    );
+    if (input.signal?.aborted)
+      throw Error("Review conversation was cancelled.");
   }
   const evidenceHash = digest(await readReviewFile(cwd, "review-context.json"));
   const run = (mode: "--restricted" | "--safe-mode") =>
-    runClaudeReview(command, cwd, prompt, requested, input, options, evidenceHash, mode);
+    runClaudeReview(
+      command,
+      cwd,
+      prompt,
+      requested,
+      input,
+      options,
+      evidenceHash,
+      mode,
+    );
   try {
     return await run("--restricted");
   } catch (error) {
-    if (!(error instanceof UnsupportedClaudeReviewFlag) || input.signal?.aborted) throw error;
+    if (
+      !(error instanceof UnsupportedClaudeReviewFlag) ||
+      input.signal?.aborted
+    )
+      throw error;
   }
   try {
     return await run("--safe-mode");
   } catch (error) {
     if (error instanceof UnsupportedClaudeReviewFlag)
-      throw Error("Update Claude Code to a version with --safe-mode or --restricted to use read-only reviews.");
+      throw Error(
+        "Update Claude Code to a version with --safe-mode or --restricted to use read-only reviews.",
+      );
     throw error;
   }
 }
@@ -732,7 +764,10 @@ function runClaudeReview(
   evidenceHash: string,
   mode: "--restricted" | "--safe-mode",
 ): Promise<ReadonlyReviewAnswer> {
-  const readCalls = new Set<string>();
+  const readCalls = new Map<
+    string,
+    "claude-native-read-tool" | "claude-native-grep-tool"
+  >();
   let evidenceRead: ReadonlyReviewAnswer["evidenceRead"];
   const child = (options.spawn ?? spawn)(
     command.command,
@@ -848,14 +883,21 @@ function runClaudeReview(
       }
       if (packet.type === "assistant") {
         for (const part of rows(packet.message?.content)) {
+          if (part.type !== "tool_use") continue;
+          const method =
+            part.name === "Read"
+              ? "claude-native-read-tool"
+              : part.name === "Grep" && part.input?.output_mode === "content"
+                ? "claude-native-grep-tool"
+                : undefined;
+          const path =
+            part.name === "Read" ? part.input?.file_path : part.input?.path;
           if (
-            part.type === "tool_use" &&
-            part.name === "Read" &&
-            typeof part.input?.file_path === "string" &&
-            resolvePath(cwd, part.input.file_path) ===
-              resolvePath(cwd, "review-context.json")
+            method &&
+            typeof path === "string" &&
+            resolvePath(cwd, path) === resolvePath(cwd, "review-context.json")
           )
-            readCalls.add(part.id);
+            readCalls.set(part.id, method);
         }
         const reported = text(packet.message?.model);
         if (reported) {
@@ -870,13 +912,26 @@ function runClaudeReview(
       }
       if (packet.type === "user")
         for (const part of rows(packet.message?.content)) {
+          const method = readCalls.get(part.tool_use_id);
+          const content =
+            typeof part.content === "string"
+              ? part.content
+              : rows(part.content)
+                  .filter((item) => item.type === "text")
+                  .map((item) => text(item.text))
+                  .join("\n");
           if (
             part.type === "tool_result" &&
-            readCalls.has(part.tool_use_id) &&
-            part.is_error !== true
+            method &&
+            part.is_error !== true &&
+            content.trim() &&
+            !(
+              method === "claude-native-grep-tool" &&
+              /^\s*No (?:matches|files) found\b/i.test(content)
+            )
           )
             evidenceRead = {
-              method: "claude-native-read-tool",
+              method,
               sha256: evidenceHash,
             };
         }
@@ -907,7 +962,13 @@ function runClaudeReview(
     child.on("error", finish);
     child.on("close", (code) => {
       lines.close();
-      if (code === 1 && !bytes && /^error: unknown option ['"]--(?:restricted|safe-mode|permission-prompts)['"]$/m.test(startupError))
+      if (
+        code === 1 &&
+        !bytes &&
+        /^error: unknown option ['"]--(?:restricted|safe-mode|permission-prompts)['"]$/m.test(
+          startupError,
+        )
+      )
         finish(new UnsupportedClaudeReviewFlag());
       else if (code !== 0 || !acknowledged || !result || !model || !answer)
         finish(
@@ -950,15 +1011,20 @@ export function createReadonlyReviewAgent(
       );
       const measured = input.task.run.measurements?.modelId;
       // Cursor reports the family in telemetry, but routes keep the selected variant.
-      const cursorVariant = harness === "cursor" && input.task.route?.model.split("[")[0] === measured
-        ? input.task.route?.model : undefined;
+      const cursorVariant =
+        harness === "cursor" &&
+        input.task.route?.model.split("[")[0] === measured
+          ? input.task.route?.model
+          : undefined;
       const settings = state().settings;
-      const globalOverride = settings?.defaultHarness === harness || (harness === "codex" && settings?.localModel) ? settings.model : undefined;
+      const globalOverride =
+        settings?.defaultHarness === harness ||
+        (harness === "codex" && settings?.localModel)
+          ? settings.model
+          : undefined;
       const explicit = input.task.modelOverride || globalOverride;
       const requested =
-        explicit || cursorVariant || measured ||
-        input.task.route?.model ||
-        "";
+        explicit || cursorVariant || measured || input.task.route?.model || "";
       const evidence = {
         ...input.review,
         messages: undefined,
@@ -977,14 +1043,18 @@ export function createReadonlyReviewAgent(
       const patchTruncated =
         input.patchTruncated === true ||
         patch.length < (input.patch?.length ?? 0);
-      // Formatting whitespace can consume the entire bound on a large review.
-      // Keep every evidence field, numeric zero and coverage limit unchanged.
-      const context = JSON.stringify({
-        review: evidence,
-        patch,
-        patchTruncated,
-        conversation: history,
-      });
+      // Keep line-oriented native reads useful without repeated indentation.
+      // Every evidence field, numeric zero and coverage limit stays unchanged.
+      const context = JSON.stringify(
+        {
+          review: evidence,
+          patch,
+          patchTruncated,
+          conversation: history,
+        },
+        null,
+        1,
+      ).replace(/^ +/gm, "");
       if (context.length > 180000)
         throw Error(
           "The saved review exceeds the bounded reviewer context; select a smaller story.",
@@ -1003,7 +1073,9 @@ export function createReadonlyReviewAgent(
       // Providers report process.cwd() with aliases such as macOS /var resolved.
       const capsule = await realpath(directory);
       if (!within(await realpath(dataDir), capsule))
-        throw Error("The review context must stay inside MemCode's private profile.");
+        throw Error(
+          "The review context must stay inside MemCode's private profile.",
+        );
       await writeFile(join(directory, "review-context.json"), context, {
         mode: 0o600,
       });
@@ -1037,7 +1109,9 @@ export function createReadonlyReviewAgent(
           claude: claudeQuestion,
           cursor: cursorQuestion,
         }[harness](command, capsule, prompt, requested, input, {
-          ...options, modelPinned: !!explicit, localModel: harness === "codex" && !!settings?.localModel,
+          ...options,
+          modelPinned: !!explicit,
+          localModel: harness === "codex" && !!settings?.localModel,
         });
       } finally {
         if (within(dataDir, directory))

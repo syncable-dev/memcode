@@ -5,11 +5,12 @@ Keep both compiled Memtrace engine pins on
 `1d0e8cb4a4fb3f5b9638fa5ff4841cd1baf378ae`.
 
 The shared worker fixes and incoming Mac CLI/path fixes passed Windows
-typecheck, all 876 tests, frontend/native builds, desktop smoke and the actual
-shared-session WebView2 check. Commit `d52261a` additionally fixes large saved
-review conversations exceeding the context bound due to JSON whitespace;
-real Codex and Claude reviewers read the intact saved evidence and answered.
-Mac validation should include that commit before packaging.
+typecheck, all 878 tests, frontend/native builds, desktop smoke and the actual
+shared-session WebView2 check. Large saved review conversations now fit the
+existing bound without losing evidence, and successful Claude content lookups
+of that evidence are recognized. A real Claude answer copied the exact metrics
+of a function near the end of the large report. Mac validation must include
+these latest fixes from `feat/shared-worker-sessions` before packaging.
 
 Mac installed-app and two-device results remain pending. Return a sanitized,
 tracked validation summary with the tested source commit, engine hash, actual

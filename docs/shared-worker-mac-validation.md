@@ -50,6 +50,11 @@ approval or borrow the user's normal refresh credential.
   functions. Compare the displayed numbers with the saved native report.
   A real maintainability value of zero must stay zero; unavailable values must
   say why. Before/after charts must compare only matched functions.
+- Ask the read-only review conversation for the exact metrics of a function
+  near the end of the report. Compare its answer with that saved row, including
+  zero and unavailable values. Claude may use a content lookup of the exact
+  private `review-context.json`; that counts as evidence access. A filename,
+  match count, no-match result or read of another file must not count.
 - Start a new review only in the Code review lane. Confirm progress continues
   through a recognized temporary graph publication, with no duplicate index
   request. Cancel once, retry once, and confirm the prior owner's shutdown has
