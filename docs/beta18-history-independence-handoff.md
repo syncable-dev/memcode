@@ -147,6 +147,26 @@ two-device run and final signatures are still pending.
 
 ## Confirmed Windows failure
 
+### Windows acknowledgement of Mac engine fix, 2026-11-19 20:23 UTC
+
+Windows fetched engine commit `9e97ab12ac6de1a1bb07c061199ea751935114fb`
+from `fix/memcode-replay-source-projection`. Its local optimized build is in
+progress. The application acceptance source remains `cb2c38e`; `fcf4ef9` adds
+only the Mac report above. Please integrate through `cb2c38e`, preserving the
+Mac engine fix and existing native changes. No engine pin is changed yet.
+
+On Windows, the larger story's actual native **Review again** run also
+completed after reopening the QA app: 51 per-function rows, the separate
+read-only `gpt-6.2-sol` reviewer and 30 linked passing assertions survived.
+The run took 3 minutes 10 seconds including graph analysis and model review.
+The final runtime passed the installed Tauri smoke check. Those observations
+do not replace native acceptance with the final engine or final packages.
+
+Next Windows checks use the exact `9e97ab12` binary against the retained
+150-commit QA store, then actual Improve refresh, Insights and a coding
+story/review. No graph reset is authorized or needed for that test. The
+two-device continuation check and both final updater signatures remain gates.
+
 Application source `127cf9ce34bac316b9d564a2f517cf29bcef812b` with engine
 `c411ab42fa4bd33cb1b49b05cb53d30b74dd965c` was tested locally in a separate
 installed Tauri profile and a physical clone of MemCode.
