@@ -123,6 +123,7 @@ fn main() {
                     )
                 })?;
                 let mut window = tauri::WebviewWindowBuilder::from_config(app, &config)?
+                    .prevent_overflow()
                     .focused(!verification)
                     .skip_taskbar(verification);
                 if std::env::var("MEMCODE_NATIVE_TEST_PROFILE").as_deref() == Ok("1")
