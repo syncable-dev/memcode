@@ -19,28 +19,26 @@ export function SignInWelcome({
     <Modal
       title="Welcome to your next build."
       kicker="SIGN IN TO MEMCODE"
-      description="Connect once. Keep your projects, settings and local tools across updates."
+      description="Your Memtrace account works here too. New here? Create one as you sign in."
       close={onSkip}
     >
       <div className="modal-body sign-in-welcome">
         <div className="sign-in-welcome-brand">
           <Mark />
           <span>
-            Your code stays on this computer.
-            <small>Team sharing is always your choice.</small>
+            Your work, in focus.
+            <small>Your code and workers stay on this computer.</small>
           </span>
         </div>
         <BetaAccess
           welcome
-          existingCLI
           notify={notify}
           onStatus={onStatus}
           onAccountStatus={onAccountStatus}
         />
         <p>
-          No Memtrace account yet? Create one in the same browser flow. Local
-          Memtrace analysis is unlimited during the noncommercial beta. Coding
-          workers use your own provider accounts.
+          Noncommercial beta · Unlimited local Memtrace analysis. Your
+          coding-model accounts stay separate.
         </p>
         <button type="button" className="text-button" onClick={onSkip}>
           Explore without signing in for now

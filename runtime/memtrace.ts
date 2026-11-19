@@ -39,7 +39,11 @@ import {
   sourceChangedBeforePublication,
 } from "../src/local-analysis";
 import { appVersion } from "../src/version";
-import { checkoutCapabilities, readCheckoutCapabilities, type CheckoutCapabilities } from "./memtrace-capabilities";
+import {
+  checkoutCapabilities,
+  readCheckoutCapabilities,
+  type CheckoutCapabilities,
+} from "./memtrace-capabilities";
 
 type Json = Record<string, any>;
 function unwrap(value: unknown): any {
@@ -108,7 +112,9 @@ export class MemtraceEngine {
       environment?: () => Promise<Record<string, string>>;
       privateProject?: () => boolean;
       managedGraphRoot?: string;
-      checkoutCapabilities?: (path: string) => Promise<CheckoutCapabilities | null>;
+      checkoutCapabilities?: (
+        path: string,
+      ) => Promise<CheckoutCapabilities | null>;
     } = {},
   ) {}
   scopeFor(projectId: string): MemtraceScopeBinding | null {
@@ -139,9 +145,12 @@ export class MemtraceEngine {
   }
   async ownedWorktreeSupport(project: Project): Promise<boolean> {
     try {
-      const advertised = await (this.options.checkoutCapabilities ?? readCheckoutCapabilities)(this.configuredPath());
+      const advertised = await (
+        this.options.checkoutCapabilities ?? readCheckoutCapabilities
+      )(this.configuredPath());
       const capabilities = checkoutCapabilities(
-        advertised ?? await this.call(project, "get_checkout_capabilities", {}),
+        advertised ??
+          (await this.call(project, "get_checkout_capabilities", {})),
       );
       return (
         capabilities?.protocol_version === 1 &&
@@ -160,7 +169,11 @@ export class MemtraceEngine {
   }
   /** Release our idle epic owner; the graph cache and checkout stay on disk. */
   async releaseEpic(project: Project): Promise<void> {
-    if (!project.analysisCurrentSource && project.analysisCheckout !== "owned-worktree-v1") return;
+    if (
+      !project.analysisCurrentSource &&
+      project.analysisCheckout !== "owned-worktree-v1"
+    )
+      return;
     const previous = this.retirements.get(project.id);
     if (previous) return previous;
     this.retiring.add(project.id);
@@ -179,7 +192,10 @@ export class MemtraceEngine {
   }
   /** Explicit new review/start authority may reopen an idle owner after it drains.
    * An earlier in-flight query still cannot resurrect a retired binding. */
-  async activateEpic(project: Project, update?: (note: string) => void): Promise<void> {
+  async activateEpic(
+    project: Project,
+    update?: (note: string) => void,
+  ): Promise<void> {
     const retirement = this.retirements.get(project.id);
     if (retirement) {
       update?.("Finishing the previous epic engine session…");
@@ -516,7 +532,9 @@ export class MemtraceEngine {
     const authentication = await this.options.environment?.();
     const managed = this.options.privateProject?.() === true;
     privateProject ||=
-      managed || project.analysisCurrentSource === true || project.analysisCheckout === "owned-worktree-v1";
+      managed ||
+      project.analysisCurrentSource === true ||
+      project.analysisCheckout === "owned-worktree-v1";
     const command = await findCommand("memtrace", this.configuredPath());
     if (!command)
       throw new Error(
@@ -525,11 +543,12 @@ export class MemtraceEngine {
     await ensureLocalRuntimeIgnored(project.path);
     const scope = await resolveMcpWorkspace(project.path);
     const ownedCheckout = project.analysisCheckout === "owned-worktree-v1";
-    const currentSource = ownedCheckout || project.analysisCurrentSource === true;
+    const currentSource =
+      ownedCheckout || project.analysisCurrentSource === true;
     const managedGraphRoot = managed
       ? this.options.managedGraphRoot
       : undefined;
-    const useManagedOwner = currentSource || !!managedGraphRoot;
+    let useManagedOwner = currentSource || !!managedGraphRoot;
     const local = privateProject
       ? await projectMcpWorkspace(project.path, {
           checkoutMode: project.analysisCheckout,
@@ -561,6 +580,7 @@ export class MemtraceEngine {
           )
         : null;
     let standalone = await standaloneWorkspace();
+    if (standalone) useManagedOwner = true;
     if (local) {
       env.MEMTRACE_MEMDB_DATA_DIR = local.dataDirectory;
       env.MEMTRACE_DATA_DIR = local.jobDirectory;
@@ -580,8 +600,8 @@ export class MemtraceEngine {
       // The SDK stops stdio children after a two-second EOF budget. A native
       // graph owner needs a durable flush. Managed graphs attach as clients
       // and ready() starts a separately tracked headless owner when cold.
-      if (useManagedOwner) env.MEMTRACE_MCP_ATTACH_ONLY = "1";
     }
+    if (useManagedOwner) env.MEMTRACE_MCP_ATTACH_ONLY = "1";
     let active: { client: Client; transport: StdioClientTransport } | undefined;
     const disconnect = async () => {
       if (!active) return;
@@ -649,20 +669,63 @@ export class MemtraceEngine {
     };
     try {
       let discovered: any;
+      let probedRepository: string | undefined, probedAdmission: any;
       const probe = async () => {
+        probedRepository = undefined;
+        probedAdmission = undefined;
         await attach();
         discovered = await discover();
+        // Discovery can read the saved workspace manifest before a cold MCP
+        // session has attached to its store owner. Probe a real graph read too,
+        // so that this state enters the normal owner bootstrap below instead
+        // of failing later at the admission check.
+        const rows: Json[] = Array.isArray(discovered)
+          ? discovered
+          : (discovered?.repos ?? []);
+        const selected = rows.find(
+          (repo) =>
+            pathKey(repo.repo_path ?? repo.path ?? "") ===
+            pathKey(project.path!),
+        );
+        if (selected?.repo_id) {
+          probedAdmission = await active!.client
+            .callTool(
+              {
+                name: "get_repository_stats",
+                arguments: {
+                  repo_id: selected.repo_id,
+                  branch: project.branch,
+                },
+              },
+              undefined,
+              { timeout: 30_000 },
+            )
+            .then(unwrap);
+          probedRepository = selected.repo_id;
+        }
       };
-      if (local) {
+      const readyBoundOwner = async () => {
+        const binding = standalone ?? local;
+        if (!binding) throw Error("A project graph binding is required.");
+        useManagedOwner = true;
+        env.MEMTRACE_MCP_ATTACH_ONLY = "1";
         // Guard the initial attachment too: an endpoint can still answer while
         // a preceding project binding is shutting down this store.
         await this.owners.ready(
-          { ...local, directory: launchDirectory },
+          {
+            ...binding,
+            directory: standalone
+              ? dirname(standalone.workspaceFile)
+              : launchDirectory,
+          },
           command,
           env,
           probe,
           reportProgress,
         );
+      };
+      if (local || standalone) {
+        await readyBoundOwner();
       } else {
         try {
           await probe();
@@ -670,16 +733,26 @@ export class MemtraceEngine {
           // discovery. Bind it before the application issues any source writes.
           if (!standalone) {
             standalone = await standaloneWorkspace();
-            if (standalone) await probe();
+            if (standalone) await readyBoundOwner();
           }
         } catch (error) {
-          if (standalone) throw error;
-          if (!pendingMemtraceOwner(error) && !disconnectedMemtraceClient(error))
+          if (
+            !pendingMemtraceOwner(error) &&
+            !disconnectedMemtraceClient(error)
+          )
             throw error;
-          // ClientPending is not a wrong store. Bootstrap only the selected
-          // project, never the broad Folder Group or an unmarked parent.
-          await disconnect();
-          return this.open(project, true);
+          // A cold CLI can publish the folder binding before the graph read
+          // attaches. Keep that original store and journal; attach through a
+          // tracked owner rather than abandoning its history for a fresh graph.
+          standalone ??= await standaloneWorkspace();
+          if (standalone) {
+            await readyBoundOwner();
+          } else {
+            // ClientPending is not a wrong store. Bootstrap only the selected
+            // project, never the broad Folder Group or an unmarked parent.
+            await disconnect();
+            return this.open(project, true);
+          }
         }
       }
       discovered = await waitForPrivateRepositoryDiscovery(
@@ -723,16 +796,19 @@ export class MemtraceEngine {
       const repoId =
         admitted?.repo_id ?? (admitted ? project.repoId : undefined);
       if (repoId && !privateEpisodeAdmitted) {
-        const admission = unwrap(
-          await active!.client.callTool(
-            {
-              name: "get_repository_stats",
-              arguments: { repo_id: repoId, branch: project.branch },
-            },
-            undefined,
-            { timeout: 30_000 },
-          ),
-        );
+        const admission =
+          probedRepository === repoId
+            ? probedAdmission
+            : unwrap(
+                await active!.client.callTool(
+                  {
+                    name: "get_repository_stats",
+                    arguments: { repo_id: repoId, branch: project.branch },
+                  },
+                  undefined,
+                  { timeout: 30_000 },
+                ),
+              );
         if (
           admission?.repo_in_store === false ||
           admission?.diagnostic?.kind === "wrong_store"
@@ -775,13 +851,21 @@ export class MemtraceEngine {
     this.clients.set(project.id, { ...connection, projectPath: project.path });
     return connection.client;
   }
-  async call(project: Project, name: string, args: Json, signal?: AbortSignal): Promise<any> {
+  async call(
+    project: Project,
+    name: string,
+    args: Json,
+    signal?: AbortSignal,
+  ): Promise<any> {
     signal?.throwIfAborted();
     const generation = this.bindingGenerations.get(project.id) ?? 0;
     const client = await this.connect(project);
     const query = (connection: Client) =>
       connection
-        .callTool({ name, arguments: args }, undefined, { timeout: 120_000, signal })
+        .callTool({ name, arguments: args }, undefined, {
+          timeout: 120_000,
+          signal,
+        })
         .then((result) => {
           if (generation !== (this.bindingGenerations.get(project.id) ?? 0))
             throw Error(
@@ -850,7 +934,8 @@ export class MemtraceEngine {
     signal?: AbortSignal,
     beforeIndex?: (repoId?: string) => Promise<void>,
   ): Promise<string> {
-    const selectedPath = project.path, selectedBranch = project.branch;
+    const selectedPath = project.path,
+      selectedBranch = project.branch;
     update("Connecting to the local Memtrace engine…");
     await this.connect(project, update);
     signal?.throwIfAborted();
@@ -882,7 +967,9 @@ export class MemtraceEngine {
     if (
       match?.repo_id &&
       (!force || retryPublication) &&
-      (match.index_state === "current" || match.index_state === "catching_up" || retryPublication)
+      (match.index_state === "current" ||
+        match.index_state === "catching_up" ||
+        retryPublication)
     ) {
       const revision = await this.call(project, "get_query_revision", {
         repo_id: match.repo_id,
@@ -902,7 +989,14 @@ export class MemtraceEngine {
       } else if (verifiedIndexRevision(revision, project, match.repo_id))
         return match.repo_id;
       if (writingSourceRevision(revision, project, match.repo_id))
-        return waitForIndexPublication(this, project, match.repo_id, update, wait, revision);
+        return waitForIndexPublication(
+          this,
+          project,
+          match.repo_id,
+          update,
+          wait,
+          revision,
+        );
       // Native startup can publish the repository summary before its independent
       // source certificate. Follow that publication without enqueueing a duplicate.
       if (!retryPublication || !incompletePublication(revision))
@@ -921,7 +1015,9 @@ export class MemtraceEngine {
         path: project.path,
         repo_id: match?.repo_id ?? project.repoId,
         incremental: !!match,
-        skip_embed: project.analysisCurrentSource === true || project.analysisCheckout === "owned-worktree-v1",
+        skip_embed:
+          project.analysisCurrentSource === true ||
+          project.analysisCheckout === "owned-worktree-v1",
         branch: project.branch,
       });
     if (beforeIndex) {
@@ -975,7 +1071,14 @@ export class MemtraceEngine {
           assertActive();
           if (certifiedPublication(revision, project, repoId)) return repoId;
           if (writingSourceRevision(revision, project, repoId))
-            return waitForIndexPublication(this, project, repoId, update, wait, revision);
+            return waitForIndexPublication(
+              this,
+              project,
+              repoId,
+              update,
+              wait,
+              revision,
+            );
         }
         throw new Error(status.error ?? "Project analysis failed");
       }
@@ -1002,7 +1105,10 @@ export class MemtraceEngine {
           throw new Error(
             "The index completed without a verified repository identity. Reconnect before planning workers.",
           );
-        return waitForIndexPublication(this, project, repoId, update, { ...wait, completedJob: true });
+        return waitForIndexPublication(this, project, repoId, update, {
+          ...wait,
+          completedJob: true,
+        });
       }
     }
     throw new Error(

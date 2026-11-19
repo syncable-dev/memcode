@@ -3,6 +3,42 @@
 Status: **not cleared for publication**. This branch is the Windows-to-Mac
 handoff. Application changes are now present; native acceptance is in progress.
 
+## Setup polish and cold CLI connection, 2026-11-19 22:51 UTC
+
+The guide now presents Connect, Build and Review, with optional local tools
+inside Connect. Each screen has one primary action. Worker permissions remain
+visible after connection. Settings has separate Account, Workers, Dictation,
+Local retrieval, Updates and Privacy sections.
+
+Native Windows checks passed for every Settings section and all three worker
+defaults. Optional tools open the correct Settings section; continuing leaves
+the board and model preferences alone. An approved CLI account opened a new
+project's setup and code-context step without any sign-in or approval prompt.
+A separate signed-out fixture displayed sign-in on both launches and honored
+Skip for the rest of each launch. This is a native UI test with a stateless
+signed-out CLI fixture, not a new real-account registration test. The compact
+1000 × 620 sign-in view kept its primary action visible.
+
+Direct typecheck, renderer/runtime build, optimized native app build and the
+full native smoke including planning passed. All 961 Node tests passed with
+test concurrency limited to four. The first unrestricted run had one follow-up
+queue timeout while the app and engine were compiling; all 12 queue tests
+passed in their focused rerun before the complete bounded run passed.
+
+The same patch fixes a cold CLI attachment edge: manifest discovery could
+succeed while the following graph read still had no attached owner. For an
+existing standalone folder binding, MemCode now starts or borrows its tracked
+owner using the original store and journal. It keeps primary history enabled.
+Two real stdio protocol fixtures cover a pre-existing binding and one published
+during discovery; they verify the original journal and scope remain intact.
+This connection fix still needs the native retained-store acceptance with the
+optimized recovery engine; do not treat the fixture tests as that result.
+
+Mac: pull this branch, preserve your engine candidate, build the app, and check
+the approved-account new-project flow, compact Settings/guide layout and the
+original-folder cold connection. Keep both production pins and publication on
+hold until the optimized engine and full two-device flow are cleared.
+
 ## Retained Mac history recovered in the diagnostic run, 2026-11-19 22:29 UTC
 
 The actual native `replay_history` retry on a cold copy of the failed

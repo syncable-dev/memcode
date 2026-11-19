@@ -36,7 +36,7 @@ export function LocalToolsGuide({
               : status.state === "installing"
                 ? "Downloading…"
                 : status.state === "error"
-                  ? "Needs attention"
+                  ? "Not ready"
                   : "Not set up",
           );
       },
@@ -51,7 +51,7 @@ export function LocalToolsGuide({
               : status.status === "installing"
                 ? "Downloading…"
                 : status.status === "error"
-                  ? "Needs attention"
+                  ? "Not ready"
                   : "Not set up",
           );
       },
@@ -70,14 +70,14 @@ export function LocalToolsGuide({
           icon: AudioLines,
           title: "Speak your prompts",
           status: voice,
-          body: "Local Whisper dictation turns your voice into editable text. Allow microphone access the first time.",
+          body: "Turn a spoken idea into an editable prompt. Whisper runs locally.",
         },
         {
           action: "retrieval" as const,
           icon: Network,
           title: "Local code retrieval",
           status: retrieval,
-          body: "Qwen 2.5 Coder helps plan code searches. Memtrace supplies the source evidence; your coding worker still builds the change.",
+          body: "Qwen 2.5 Coder helps plan searches over Memtrace’s code context.",
         },
       ].map(({ action, icon: Icon, title, status, body }) => (
         <button key={action} type="button" onClick={() => onAction(action)}>
@@ -94,10 +94,7 @@ export function LocalToolsGuide({
           </span>
         </button>
       ))}
-      <p>
-        Both are optional, run on this computer and download only when you
-        choose setup. You can add them later in Settings.
-      </p>
+      <p>On-device models download only when you choose setup.</p>
     </div>
   );
 }

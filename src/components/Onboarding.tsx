@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import {
   ArrowRight,
   Check,
-  Code2,
   Folder,
   GitBranch,
   Layers3,
@@ -30,41 +29,41 @@ const copy = {
   project: {
     number: 1,
     title: "Give your idea a home.",
-    body: "Create a local project or open a folder you already work in. You decide what goes on its board.",
+    body: "Open a code folder or start a new project. Your board is a place for the work you want to do.",
     button: "Create or open a project",
     target: "[data-guide=project-picker]",
   },
   memtrace: {
     number: 2,
     title: "Understand the code first.",
-    body: "Sign in with your Memtrace account, then analyze this project locally. Workers use that context to find relevant code and measure complexity and impact.",
+    body: "Memtrace reads your code locally. Your workers get relevant context, measured complexity and change impact.",
     button: "Analyze this project",
     target: "[data-guide=project-picker]",
   },
   worker: {
     number: 3,
     title: "Choose a worker you trust.",
-    body: "Connect a coding tool, then choose its default permissions below. They apply across projects; each story can override them.",
+    body: "Connect your coding tool with your approval. Choose its default permissions here, once, for future stories.",
     button: "Choose a worker",
     target: "[data-guide=worker-connections]",
   },
   "local-tools": {
     number: 4,
     title: "Make it work your way.",
-    body: "Want to talk through an idea or use a small local retrieval model? Choose either, both, or continue without them.",
+    body: "Two optional ways to make the workspace yours. Add them now or come back in Settings.",
     button: "Continue to your first work",
   },
   epic: {
     number: 5,
     title: "What would you like to build?",
-    body: "An epic groups an outcome; a story describes one useful change. Write your own when you’re ready, or finish setup with an empty board.",
+    body: "An epic holds a larger goal. Stories are the smaller changes that get you there. Start with either.",
     button: "Write an epic",
     target: "[data-guide=new-epic]",
   },
   story: {
     number: 5,
     title: "One clear request is enough.",
-    body: "Describe the outcome, useful context and what success looks like. Creating a story saves your brief; starting its worker is a separate choice.",
+    body: "Describe what you want and how you’ll know it works. Save the story, then start its worker when you’re ready.",
     button: "Write a story",
     target: "[data-guide=new-story]",
   },
@@ -77,7 +76,7 @@ const copy = {
   "code-review": {
     number: 6,
     title: "Review what changed.",
-    body: "When the work is ready, move the story to the Code review lane. Open its Code review tab and start the review there.",
+    body: "Move finished work to Code review. Start the review inside the story to compare measurements and inspect findings before accepting the change.",
     button: "Open the illustrated guide",
   },
 };
@@ -211,19 +210,29 @@ export function Onboarding({
           )}
           <div className="project-guide-path" aria-label="Project setup steps">
             {[
-              { icon: Folder, label: "Your project" },
-              { icon: Code2, label: "Code context" },
-              { icon: Plug, label: "Your worker" },
-              { icon: Sparkles, label: "Local extras" },
-              { icon: MessageSquare, label: "Your first work" },
-              { icon: ScanLine, label: "Code review" },
-            ].map(({ icon: Icon, label }, index) => (
+              {
+                icon: Plug,
+                label: "Connect",
+                detail: "Your account, code and coding tool.",
+              },
+              {
+                icon: MessageSquare,
+                label: "Build",
+                detail: "One clear story. Your worker takes it from there.",
+              },
+              {
+                icon: ScanLine,
+                label: "Review",
+                detail: "See the change and decide what’s ready.",
+              },
+            ].map(({ icon: Icon, label, detail }, index) => (
               <div key={label} className={index === 0 ? "current" : ""}>
                 <span>
                   <Icon size={17} />
                 </span>
                 <small>{String(index + 1).padStart(2, "0")}</small>
                 <strong>{label}</strong>
+                <p>{detail}</p>
               </div>
             ))}
           </div>
@@ -234,7 +243,10 @@ export function Onboarding({
                 ? "Your existing work stays on the board. This guide only helps connect the essentials for this project."
                 : "Your board starts empty. Setup won’t add stories, epics or cycles for you."}
           </p>
-          {preference}
+          <details className="project-guide-options">
+            <summary>Setup preferences</summary>
+            {preference}
+          </details>
           <footer>
             <button className="button secondary" onClick={pause}>
               Skip for now
@@ -272,6 +284,7 @@ export function Onboarding({
   );
   const analyzing = ["connecting", "indexing"].includes(project.analysis);
   const contextReady = project.analysis === "ready" && memtraceConnected;
+  const phase = step === "code-review" ? 2 : item.number === 5 ? 1 : 0;
   return (
     <>
       {!hidden && bounds && bounds.width > 0 && (
@@ -303,18 +316,30 @@ export function Onboarding({
             <X size={14} />
           </button>
         </header>
-        <div className="guide-progress" aria-label={`Step ${item.number} of 6`}>
-          {[1, 2, 3, 4, 5, 6].map((number) => (
-            <i
-              key={number}
-              className={number <= item.number ? "complete" : ""}
-            />
+        <ol
+          className="guide-progress"
+          aria-label={`Setup stage ${phase + 1} of 3`}
+        >
+          {["Connect", "Build", "Review"].map((label, index) => (
+            <li
+              key={label}
+              className={index <= phase ? "complete" : ""}
+              aria-current={index === phase ? "step" : undefined}
+            >
+              {index < phase ? <Check size={11} /> : <span>{index + 1}</span>}
+              {label}
+            </li>
           ))}
-        </div>
+        </ol>
         <div className="guide-step-copy" key={step}>
           <small>
-            STEP {item.number} OF 6
-            {[4, 5].includes(item.number) ? " · OPTIONAL" : ""}
+            {step === "local-tools"
+              ? "OPTIONAL · ON THIS COMPUTER"
+              : [
+                  "CONNECT YOUR WORKSPACE",
+                  "YOUR FIRST PIECE OF WORK",
+                  "READY WHEN YOU ARE",
+                ][phase]}
           </small>
           <h2>{item.title}</h2>
           <p>{item.body}</p>
@@ -403,18 +428,24 @@ export function Onboarding({
             </>
           ) : step === "code-review" ? (
             <>
-              <div className="guide-review-advice">
-                <ScanLine size={16} aria-hidden />
-                <p>
-                  Open a finding to see the evidence. Compare the measured
-                  changes, then ask for a fix or record why you accept the risk.
-                </p>
+              <div className="guide-review-preview">
+                <ScanLine size={18} aria-hidden />
+                <span>
+                  <strong>Understand the change.</strong>
+                  <small>Before &amp; after · Findings · Verification</small>
+                </span>
               </div>
               <button
                 className="button primary"
+                onClick={() => onUpdate({ complete: true })}
+              >
+                Finish setup <Check size={13} />
+              </button>
+              <button
+                className="guide-use-existing"
                 onClick={() => onAction("review-docs")}
               >
-                {item.button} <ArrowRight size={13} />
+                See how Code review works <ArrowRight size={12} />
               </button>
               {story && (
                 <button
@@ -431,12 +462,16 @@ export function Onboarding({
               onClick={() => {
                 if (step === "ready" && !story)
                   onUpdate({ step: "code-review" });
+                else if (step === "worker" && connected)
+                  onUpdate({ step: "local-tools" });
                 else onAction(step === "ready" ? "open-story" : step);
               }}
             >
               {step === "ready" && !story
                 ? "Continue to Code review"
-                : item.button}
+                : step === "worker" && connected
+                  ? "Continue"
+                  : item.button}
               <ArrowRight size={13} />
             </button>
           )}
@@ -452,23 +487,23 @@ export function Onboarding({
             </button>
           )}
           {step === "worker" && (
-            <div className="guide-review-advice">
-              <Plug size={16} aria-hidden />
+            <details className="guide-permissions-help">
+              <summary>Which permission level should I choose?</summary>
               <p>
                 Smart auto handles routine approvals where supported. Standard
                 asks using the tool’s normal rules. Full access bypasses tool
                 approvals and supported sandboxes. Your default is saved for
                 future stories.
               </p>
-            </div>
+            </details>
           )}
           {step === "worker" && connected && (
             <button
               className="guide-use-existing"
-              onClick={() => onUpdate({ step: "local-tools" })}
+              onClick={() => onAction("worker")}
             >
               <Check size={12} />
-              Worker connected · continue
+              Review worker settings
             </button>
           )}
           {step === "epic" && selectedEpic && (
@@ -518,18 +553,13 @@ export function Onboarding({
               Continue to Code review <ArrowRight size={12} />
             </button>
           )}
-          {(step === "epic" ||
-            step === "story" ||
-            step === "ready" ||
-            step === "code-review") && (
+          {(step === "epic" || step === "story" || step === "ready") && (
             <button
               className="guide-use-existing"
               onClick={() => onUpdate({ complete: true })}
             >
               <Check size={12} />
-              {story || step === "code-review"
-                ? "Finish setup"
-                : "Finish setup · add work later"}
+              {story ? "Finish setup" : "Finish setup · add work later"}
             </button>
           )}
         </div>

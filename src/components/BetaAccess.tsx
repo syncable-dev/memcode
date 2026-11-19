@@ -139,6 +139,8 @@ export function BetaAccess({
             <>
               <Check size={12} /> Connected
             </>
+          ) : welcome ? (
+            "In your browser"
           ) : (
             "Noncommercial beta"
           )}
@@ -160,7 +162,7 @@ export function BetaAccess({
           : (status?.detail ??
             "Approve access with your Memtrace account. MemCode prepares the local engine for you.")}
       </p>
-      {!connected && !pending && (
+      {!welcome && !connected && !pending && (
         <p className="beta-access-note">
           Unlimited local Memtrace analysis during the noncommercial beta.
           Coding models use your own accounts and credits.
