@@ -85,3 +85,32 @@ latency. There is no normal-setup token-savings comparison in this test.
 The test scripts save their receipts in private temporary lab folders. Remove
 short-lived engine proof files after testing, retain the approved QA sign-in, and
 never commit provider credentials or raw private conversations.
+
+## Integration follow-up, 19 November
+
+The incoming Mac fixes at `f92111f8e4d1798b0bc6036549e8379d8cfd40cd`
+passed Windows typecheck, all **874 tests**, the frontend and native builds,
+desktop smoke, and the actual WebView2 shared-session UI check. This includes
+the read-only CLI compatibility changes, canonical checkout aliases, Homebrew
+npm discovery and pinned ONNX notices. These are Windows integration results;
+the Mac installed-app gates remain separate.
+
+A further real reviewer check found that formatting whitespace could push the
+large saved WorkDetail report over the existing 180,000-character input bound.
+The native measurements were present; the advisory conversation rejected the
+expanded JSON before starting its provider. Compact JSON keeps the same fields
+and the same bound. Oversized evidence is still refused, before creating a
+context capsule or launching a provider.
+
+With that fix, real installed Codex (`gpt-6.2-astra`) and Claude Code
+(`claude-opus-5-5`) both read their saved evidence and answered in 34.2 and
+31.4 seconds respectively. This reuses the previously approved QA profiles;
+it is a reviewer-startup check, not a new coding or native-analysis run.
+The regression fixture preserves all 111 per-function rows, 18 findings,
+numeric zeros, unavailable values, coverage notes and the bounded captured
+patch. No measurements or findings are discarded to fit the context.
+
+After this context fix, typecheck, all **876 tests**, frontend and native builds,
+desktop smoke and the native shared-session UI check passed again. The two
+new regression tests cover the large intact payload and the original refusal
+for genuinely oversized evidence.

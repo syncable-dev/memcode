@@ -161,6 +161,63 @@ test("writable or externally connected Codex is rejected before any review promp
   }
 });
 
+test("large saved reviews retain every measurement and patch within the evidence bound", async () => {
+  const f = await fixture("codex");
+  try {
+    f.review.metrics = Array.from({ length: 111 }, (_, index) => ({
+      symbol: `component${index}`,
+      path: "src/components/WorkDetail.tsx",
+      line: index + 1,
+      cognitive: index,
+      cyclomatic: index + 1,
+      nesting: 4,
+      maintainabilityIndex: index % 2 === 0 ? 0 : null,
+      halsteadVolume: 2000,
+      riskLevel: "high",
+      before: { source: "ast", cognitive: index + 10, cyclomatic: index + 2, nesting: 7, maintainabilityIndex: 0, halsteadVolume: 3000, line: index + 1 },
+      comparison: { status: "matched", reason: "Captured declaration matched by its stable identity and verified source hashes.", beforeSourceHash: "a".repeat(64), afterSourceHash: "b".repeat(64), metricsVersion: 1, qualityMetricsVersion: 1 },
+      source: "ast",
+    }));
+    f.review.coverage.limitations = ["Graph impact covers the first 24 affected functions."];
+    f.review.findings = Array.from({ length: 18 }, (_, index) => ({
+      id: `finding-${index}`,
+      title: "Inspect the changed declaration",
+      explanation: "The captured function has several nested conditions; inspect its callers before accepting the extraction. ".repeat(10),
+      severity: "medium",
+      category: "quality",
+      path: "src/components/WorkDetail.tsx",
+      line: index + 1,
+    }));
+    const patch = "+" + "captured source ".repeat(3749);
+    const result = await f.agent.ask({ task: f.task, review: f.review, patch, question: "Explain" });
+    assert.ok(result.evidenceRead);
+    const record = await f.record();
+    const source = record.replies.find((packet: any) => packet.id === "evidence-probe").result.contentItems[0].text;
+    const context = JSON.parse(source);
+    assert.ok(source.length <= 180000);
+    assert.ok(JSON.stringify(context, null, 2).length > 180000, "formatted evidence reproduces the former failure");
+    assert.deepEqual(context.review.metrics, f.review.metrics);
+    assert.deepEqual(context.review.findings, f.review.findings);
+    assert.deepEqual(context.review.coverage, f.review.coverage);
+    assert.equal(context.patch, patch);
+    assert.equal(context.patchTruncated, false);
+  } finally {
+    await f.close();
+  }
+});
+
+test("oversized review evidence still refuses before starting a provider or leaving a capsule", async () => {
+  const f = await fixture("codex");
+  try {
+    f.review.coverage.limitations = ["x".repeat(180001)];
+    await assert.rejects(f.agent.ask({ task: f.task, review: f.review, question: "Explain" }), /exceeds the bounded reviewer context/);
+    await assert.rejects(f.record(), { code: "ENOENT" });
+    assert.deepEqual(await readdir(f.profile), []);
+  } finally {
+    await f.close();
+  }
+});
+
 test("Cursor verifies acknowledged Ask mode, allows confined reads and rejects write, terminal and permission requests", async () => {
   const f = await fixture("cursor");
   try {

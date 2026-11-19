@@ -948,21 +948,6 @@ export function createReadonlyReviewAgent(
         command.command,
         commandIdentity(command),
       );
-      const directory = resolvePath(
-        dataDir,
-        "code-reviews",
-        "agent-context",
-        randomUUID(),
-      );
-      if (!within(dataDir, directory))
-        throw Error(
-          "The review context must stay inside MemCode's private profile.",
-        );
-      await mkdir(directory, { recursive: true, mode: 0o700 });
-      // Providers report process.cwd() with aliases such as macOS /var resolved.
-      const capsule = await realpath(directory);
-      if (!within(await realpath(dataDir), capsule))
-        throw Error("The review context must stay inside MemCode's private profile.");
       const measured = input.task.run.measurements?.modelId;
       // Cursor reports the family in telemetry, but routes keep the selected variant.
       const cursorVariant = harness === "cursor" && input.task.route?.model.split("[")[0] === measured
@@ -992,20 +977,33 @@ export function createReadonlyReviewAgent(
       const patchTruncated =
         input.patchTruncated === true ||
         patch.length < (input.patch?.length ?? 0);
-      const context = JSON.stringify(
-        {
-          review: evidence,
-          patch,
-          patchTruncated,
-          conversation: history,
-        },
-        null,
-        2,
-      );
+      // Formatting whitespace can consume the entire bound on a large review.
+      // Keep every evidence field, numeric zero and coverage limit unchanged.
+      const context = JSON.stringify({
+        review: evidence,
+        patch,
+        patchTruncated,
+        conversation: history,
+      });
       if (context.length > 180000)
         throw Error(
           "The saved review exceeds the bounded reviewer context; select a smaller story.",
         );
+      const directory = resolvePath(
+        dataDir,
+        "code-reviews",
+        "agent-context",
+        randomUUID(),
+      );
+      if (!within(dataDir, directory))
+        throw Error(
+          "The review context must stay inside MemCode's private profile.",
+        );
+      await mkdir(directory, { recursive: true, mode: 0o700 });
+      // Providers report process.cwd() with aliases such as macOS /var resolved.
+      const capsule = await realpath(directory);
+      if (!within(await realpath(dataDir), capsule))
+        throw Error("The review context must stay inside MemCode's private profile.");
       await writeFile(join(directory, "review-context.json"), context, {
         mode: 0o600,
       });
