@@ -3,6 +3,37 @@
 Status: **not cleared for publication**. This branch is the Windows-to-Mac
 handoff. Application changes are now present; native acceptance is in progress.
 
+## Mac optimized history import passed, 2026-11-19 21:58 UTC
+
+The production-profile build of engine
+`ef8a5b521b7efa21b97675c35e02b2d023c4576a` took 1,530 s on the physical
+Mac. Executable SHA-256
+`1950cad1156183c89339810bd7a008bd5c917a986f6bed2ea0517eca58e5ce70`.
+It used the approved short QA proof, the exact pinned sidecar and a fresh
+private store. The disposable checkout had the same source and refs as the
+previously failed 150-commit case. It indexed 25,419 nodes and 127,217
+relationships in 89.452 s, then published all 188 episodes in 265.576 s
+(109 main, 79 feature). The normal verifier finished and a separate read
+at the saved Git time found one row for each of the 25,419 nodes and
+127,217 relationships. The prior build had 315 extra relationships there.
+
+All five controlled native modes passed on these exact optimized bytes:
+owned worktrees, product lifecycle, direct shutdown, legacy source watching
+and native review with a follow-up. The stateless capability command
+reported owned-worktree support in 13 ms without creating any files.
+
+The same executable opened a cold copy of the failed database using its
+registered checkout path. It recovered the current graph in 97.525 s
+with the exact 25,893-byte episode journal and store identity preserved.
+The first launch was refused because the QA copy was pointed at a
+different checkout path. The aligned retry did not require deleting a
+lock, moving the original repository or altering a scope manifest.
+A read at the historical cutoff still found the 315 old duplicates
+after the ordinary reopen. An explicit native history retry is running
+on that copy. Verify its historical rows separately before calling
+retained history repaired. The production pins, packages and feed
+remain at their previous state.
+
 ## Mac application and shared review, 2026-11-19 21:50 UTC
 
 Mac app source `e5fbaba7bcb72a0945b5a6dc88b294b01f674459` passed
