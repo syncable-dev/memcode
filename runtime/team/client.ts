@@ -276,7 +276,13 @@ export class TeamSyncClient implements TeamWorkerClaims {
         }
       }
       const next = remoteTeamProjection(connection, projectSharedState(this.state(), connection.projectId));
-      const commands = sharedCommands(connection.baseline, next);
+      const rejectedCreates = new Map(connection.pendingHistoryImport
+        ? (connection.rejected ?? []).flatMap(({ command }) => command.type === "story.put" && !connection.snapshot.stories.some(story => story.id === command.story.id) ? [[command.story.id, command] as const] : [])
+        : []);
+      const baseline = rejectedCreates.size ? { ...connection.baseline, stories: connection.baseline.stories.filter(story => !rejectedCreates.has(story.id)) } : connection.baseline;
+      // A corrected initial story is a create, not a patch of a remote story
+      // that does not exist. Do not repeatedly resend an unchanged rejection.
+      const commands = sharedCommands(baseline, next).filter(command => command.type !== "story.put" || !rejectedCreates.has(command.story.id) || planningValueHash(command) !== planningValueHash(rejectedCreates.get(command.story.id)));
       if (!commands.length) continue;
       connection.baseline = next;
       const operations = commands.map((command) => ({ opId: randomUUID(), command, ...(connection.preparingDeletionId && ["story.delete", "epic.delete", "cycle.delete"].includes(command.type) ? { deletionId: connection.preparingDeletionId } : {}) }));
@@ -344,7 +350,13 @@ export class TeamSyncClient implements TeamWorkerClaims {
     // upload-time v1 dates. Its local history stays authoritative until imported.
     const localDates = !connection.localIds && (!connection.history?.import || connection.pendingHistoryImport)
       ? projectPlanningHistory(this.state(), connection.projectId) : undefined;
-    applySharedSnapshot(this.state(), connection.projectId, localTeamSnapshot(connection, optimistic(connection.snapshot, connection.outbox, connection.baseline, connection.credential.memberId)), localTeamProjection(connection, connection.baseline));
+    // Before the original import is accepted, a partial remote board is not
+    // authoritative for deletion. A rejected bootstrap command must never
+    // discard the owner's story, conversation or local worker evidence.
+    const previous = connection.pendingHistoryImport
+      ? emptySharedProjection()
+      : localTeamProjection(connection, connection.baseline);
+    applySharedSnapshot(this.state(), connection.projectId, localTeamSnapshot(connection, optimistic(connection.snapshot, connection.outbox, connection.baseline, connection.credential.memberId)), previous);
     if (localDates) {
       for (const meta of localDates.stories) {
         const task = this.state().tasks.find((item) => item.id === meta.id && item.projectId === connection.projectId);
@@ -548,6 +560,16 @@ export class TeamSyncClient implements TeamWorkerClaims {
           }
           // Backfill intervening accepted operations before consuming this ACK.
           while (connection.cursor < reply.event.sequence && !this.closed) await this.pull(connection);
+          if (connection.pendingHistoryImport && operation.command.type === "story.put") {
+            const storyId = operation.command.story.id;
+            const unresolved = (connection.rejected ?? []).filter(item => item.command.type !== "story.put" || item.command.story.id !== storyId);
+            if (unresolved.length !== (connection.rejected?.length ?? 0)) {
+              connection.rejected = unresolved;
+              // The original import was refused, never committed. Retry its
+              // preserved history against the board containing this correction.
+              connection.pendingHistoryImport.expectedHead = undefined;
+            }
+          }
           connection.outbox = connection.outbox.filter((item) => item.opId !== operation.opId);
           const backup = connection.deletions?.find((item) => item.id === operation.deletionId);
           if (backup) {
