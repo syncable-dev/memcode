@@ -347,7 +347,10 @@ export class TeamSessionSync {
   /** Seal the latest server version immediately before the host snapshots its prompt. */
   async pickup(connection: SessionConnection, task: WorkItem) {
     for (const message of task.messages.filter(
-      (m) => m.sourceCommandId && m.followupState === "queued" && !m.promptedAt,
+      (message) =>
+        message.sourceCommandId &&
+        !message.promptedAt &&
+        (message.followupState === "queued" || message.followupState === "paused"),
     )) {
       const result = await this.options.request<SessionCommand>(
         connection,

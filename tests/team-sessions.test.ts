@@ -4,6 +4,8 @@ import { mkdtemp, rm, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { initialState } from "../src/seed";
+import { settleFollowupQueue } from "../runtime/followup-queue";
+import { claimReviewContext } from "../runtime/review-context";
 import type { AppState, Harness } from "../src/shared";
 import type { StoryReviewRun } from "../src/code-review";
 import { TeamSyncClient } from "../runtime/team/client";
@@ -389,6 +391,39 @@ test("a teammate's edited follow-up is received once and sealed atomically befor
     );
     assert.equal(f.received.filter((value) => value === id).length, 1);
     assert.ok(task.messages.find((m) => m.id === id)!.pickedUpAt);
+  } finally {
+    await f.close();
+  }
+});
+
+test("resuming a paused follow-up seals the peer's latest edit and skips their cancellation", async () => {
+  const f = await fixture();
+  try {
+    const task = await f.start("claude");
+    const edited = await f.b.sendSessionCommand(task.id, "followup", "First wording");
+    const cancelled = await f.b.sendSessionCommand(task.id, "followup", "Will cancel");
+    await f.b.synchronize("B");
+    await f.a.synchronize("A");
+    await f.b.synchronize("B");
+    settleFollowupQueue(task, "paused");
+    task.run.state = "failed";
+    await f.a.release(task.id, "A");
+
+    await f.b.editSessionCommand(task.id, edited, "Final wording");
+    await f.b.editSessionCommand(task.id, cancelled, undefined, true);
+    task.run = { state: "preparing", startedAt: "2026-11-18T19:01:00.000Z" };
+    await f.a.acquire(task.id, "A");
+    await f.a.prepareFollowups(task);
+    const prompt = claimReviewContext(task.messages, "2026-11-18T19:01:01.000Z");
+
+    assert.equal(prompt.find(message => message.id === edited)?.text, "Final wording");
+    assert.ok(!prompt.some(message => message.id === cancelled));
+    await f.b.synchronize("B");
+    const commands = f.b.status("B")!.sessionCommands!;
+    assert.equal(commands.find(command => command.id === edited)?.state, "picked-up");
+    assert.equal(commands.find(command => command.id === cancelled)?.state, "cancelled");
+    await assert.rejects(f.b.editSessionCommand(task.id, edited, "After pickup"), /picked up/);
+    await assert.rejects(f.b.editSessionCommand(task.id, edited, undefined, true), /picked up/);
   } finally {
     await f.close();
   }
