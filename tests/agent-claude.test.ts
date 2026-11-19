@@ -29,11 +29,18 @@ for await(const line of createInterface({input:process.stdin})){
  if(frame.type==='control_request'){
   if(frame.request.subtype==='interrupt')process.exit(0);
   assert.equal(frame.request.subtype,'initialize');
+  if(scenario.startsWith('resume')){
+   const id='cdab4a32-3e04-47db-a563-e4b054ad1578';
+   if(process.argv[process.argv.indexOf('--resume')+1]!==id){finish(true);continue;}
+   if(scenario==='resume-missing'){send({type:'result',subtype:'error_during_execution',is_error:true,result:'No conversation found for '+id});continue;}
+   send({type:'system',subtype:'hook_started',session_id:scenario==='resume-wrong'?'other-session':id});
+  }
   if(scenario==='init-fail'){send({type:'control_response',response:{subtype:'error',request_id:frame.request_id,error:'Fixture initialization rejected.'}});continue;}
   send({type:'control_response',response:{subtype:'success',request_id:frame.request_id,response:{models:[{value:'fixture-model'}]}}});continue;
  }
  if(frame.type==='user'){
   assert.equal(frame.message.role,'user');assert.equal(frame.message.content,'A prompt with $(literal) and "quotes".');
+  if(scenario==='resume'){assert.equal(frame.session_id,'cdab4a32-3e04-47db-a563-e4b054ad1578');finish();continue;}
   send({type:'system',subtype:'init',session_id:'same-claude-session',permissionMode:scenario==='mode-downgrade'?'default':process.argv[process.argv.indexOf('--permission-mode')+1]});
   if(scenario==='mode-downgrade')continue;
   process.stderr.write('A live diagnostic before completion.\n');
@@ -94,6 +101,7 @@ async function setup(
   scenario: string,
   requestInput: AgentSessionOptions["requestInput"],
   permissionMode?: AgentSessionOptions["permissionMode"],
+  resumeSessionId?: string,
 ) {
   const directory = await mkdtemp(join(tmpdir(), "memcode-claude-protocol-"));
   const script = join(directory, "fixture.mjs");
@@ -117,6 +125,7 @@ async function setup(
       "--permission-prompts=none",
     ],
     permissionMode,
+    resumeSessionId,
     onEvent: (event) => events.push(event),
     requestInput,
   });
@@ -441,3 +450,20 @@ test("unsupported controls fail closed and an early successful process exit is n
     await early.cleanup();
   }
 });
+
+for (const scenario of ["resume", "resume-missing", "resume-wrong"]) {
+  test(`Claude ${scenario} sends a follow-up only to the requested conversation`, async () => {
+    const resumeId = "cdab4a32-3e04-47db-a563-e4b054ad1578";
+    const run = await setup(scenario, async () => ({ cancelled: true }), "review", resumeId);
+    try {
+      const result = await run.session.completion;
+      const frames = (await readFile(join(run.directory, "received.jsonl"), "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+      assert.equal(frames.filter((frame) => frame.type === "user").length, scenario === "resume" ? 1 : 0);
+      if (scenario === "resume") assert.equal(result.exitCode, 0);
+      else {
+        assert.match(result.error ?? "", /previous Claude|original Claude/i);
+        assert.ok(!result.error!.includes(resumeId));
+      }
+    } finally { await run.cleanup(); }
+  });
+}

@@ -232,7 +232,8 @@ function runCursorSession(options: AgentSessionOptions, inspect?: (session: Json
       stdio: ["pipe", "pipe", "pipe"],
     },
   );
-  let sessionId = "",
+  let loadingHistory = !!options.resumeSessionId;
+  let sessionId = options.resumeSessionId ?? "",
     nextId = 0,
     stderr = "",
     messageNumber = 0,
@@ -550,6 +551,8 @@ function runCursorSession(options: AgentSessionOptions, inspect?: (session: Json
       else call.resolve(record(message.result));
       return;
     }
+    // ACP load replays the entire conversation. These messages are already on the story.
+    if (loadingHistory && !hasId(message)) return;
     if (message.method === "session/update") {
       update(record(message.params));
       return;
@@ -567,7 +570,7 @@ function runCursorSession(options: AgentSessionOptions, inspect?: (session: Json
       }
       return;
     }
-    if (ended || stopped) {
+    if (ended || stopped || loadingHistory) {
       respond(message.id, { outcome: { outcome: "cancelled" } });
       return;
     }
@@ -607,7 +610,10 @@ function runCursorSession(options: AgentSessionOptions, inspect?: (session: Json
   });
   child.stdin?.on("error", () => {});
   child.stderr?.on("data", (chunk) => {
-    stderr = (stderr + chunk.toString()).slice(-16000);
+    const text = chunk.toString();
+    stderr = (stderr + (options.resumeSessionId
+      ? text.replaceAll(options.resumeSessionId, "[saved conversation]")
+      : text)).slice(-16000);
   });
   child.once("error", (error) => {
     void finish({ exitCode: null, error: error.message });
@@ -646,11 +652,25 @@ function runCursorSession(options: AgentSessionOptions, inspect?: (session: Json
         )
       )
         await request("authenticate", { methodId: "cursor_login" });
-      const session = await request("session/new", {
-        cwd: options.cwd,
-        mcpServers: await sessionServers(options.contextConfig),
-      });
-      sessionId = text(session.sessionId);
+      const context = { cwd: options.cwd, mcpServers: await sessionServers(options.contextConfig) };
+      let session: Json;
+      if (options.resumeSessionId !== undefined) {
+        if (!sessionId || initialized.agentCapabilities?.loadSession !== true)
+          throw Error("This Cursor CLI cannot reopen the previous Cursor conversation.");
+        try {
+          // ACP acknowledges the requested ID with an empty or config-only load result.
+          session = await request("session/load", { ...context, sessionId });
+        } catch {
+          throw Error("Could not load the previous Cursor conversation on this computer.");
+        }
+        if (session.sessionId !== undefined && session.sessionId !== sessionId)
+          throw Error("Cursor did not confirm the previous Cursor conversation.");
+        session = { ...session, sessionId };
+        loadingHistory = false;
+      } else {
+        session = await request("session/new", context);
+        sessionId = text(session.sessionId);
+      }
       if (!sessionId) throw Error("Cursor did not return a session identity.");
       if (inspect) {
         inspect(session);

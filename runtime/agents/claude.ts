@@ -56,6 +56,11 @@ export async function probeClaudeCatalog(command: Command): Promise<ModelOption[
 function runClaudeSession(options: AgentSessionOptions, inspect?: (models: ModelOption[]) => void): AgentSession {
   if (options.localModel)
     throw Error("The local-model option currently supports Codex with Ollama.");
+  const resumeId = options.resumeSessionId;
+  if (resumeId !== undefined &&
+      !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(resumeId))
+    throw Error("The previous Claude conversation has an invalid session identity.");
+  const resumeFailure = "Could not reopen the previous Claude conversation on this computer.";
   const nativeMode =
     options.permissionMode === "full-access"
       ? "bypassPermissions"
@@ -72,6 +77,7 @@ function runClaudeSession(options: AgentSessionOptions, inspect?: (models: Model
     options.command.command,
     [
       ...options.command.prefix,
+      ...(resumeId ? ["--resume", resumeId] : []),
       "--print",
       "--verbose",
       "--input-format",
@@ -345,6 +351,15 @@ function runClaudeSession(options: AgentSessionOptions, inspect?: (models: Model
     endWhenIdle();
   };
   const observe = (frame: Frame) => {
+    if (failure) return;
+    // A missing --resume target returns a terminal error before acknowledging initialize.
+    if (resumeId && (
+      (frame.session_id && frame.session_id !== resumeId) ||
+      (!initialized && (frame.type === "result" || frame.type === "error"))
+    )) {
+      fail(resumeFailure);
+      return;
+    }
     emit({ type: "raw", event: frame });
     const measurement = measurements.observe(frame);
     if (measurement) emit(measurement);
@@ -371,7 +386,7 @@ function runClaudeSession(options: AgentSessionOptions, inspect?: (models: Model
       if (initialized) return;
       clearTimeout(initTimeout);
       if (frame.response.subtype !== "success") {
-        fail(bounded(frame.response.error || "Claude initialization failed."));
+        fail(resumeId ? resumeFailure : bounded(frame.response.error || "Claude initialization failed."));
         return;
       }
       if (closed || stopping || inputEnded || child.stdin!.destroyed) return;
@@ -390,7 +405,7 @@ function runClaudeSession(options: AgentSessionOptions, inspect?: (models: Model
       emit({ type: "prompted" });
       write({
         type: "user",
-        session_id: "",
+        session_id: resumeId ?? "",
         parent_tool_use_id: null,
         message: { role: "user", content: options.prompt },
       });
@@ -543,7 +558,8 @@ function runClaudeSession(options: AgentSessionOptions, inspect?: (models: Model
     }
   });
   child.stderr!.on("data", (data) => {
-    const text = stripVTControlCharacters(String(data));
+    const diagnostic = stripVTControlCharacters(String(data));
+    const text = resumeId ? diagnostic.replaceAll(resumeId, "[saved conversation]") : diagnostic;
     stderr = (stderr + text).slice(-16000);
     if (text.trim())
       emit({
