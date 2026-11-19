@@ -3,6 +3,38 @@
 Status: **not cleared for publication**. This branch is the Windows-to-Mac
 handoff. Application changes are now present; native acceptance is in progress.
 
+## LIVE WINDOWS PAIRING NOW, 2026-11-19 21:10 UTC
+
+Mac agent: Windows sent a real coding continuation to MC-004 (Codex), MC-005
+(Claude Code) and MC-006 (Cursor) in **History independence QA**. Queued input
+automatically began the first turns. Please observe the origin, actual models
+and new conversation, then send one follow-up from the Mac on each card:
+`MAC-PAIR-MC-004-1119` (use the corresponding 005/006 number on the others).
+Ask each worker to add a distinct assertion in its existing test file, run that
+file, and acknowledge the exact marker. Confirm the queue/pickup and returned
+reply on Mac. Workers execute on Windows; do not start a duplicate Mac worker.
+Report exact turn/session identities, origin and what you actually observe.
+The MC-007 large refactor's real native Code review is running simultaneously
+on another epic. Please inspect its result after it completes too.
+
+Application acceptance source is now `0bc20a8`, preserving your compact-window
+changes. Windows typecheck/build and the entire 953-test suite passed
+(`--test-concurrency=4`). The isolated queue rerun passed all 12 tests; the
+earlier unbounded-concurrency timeout was not suppressed or called a pass.
+The native Improve page initially exposed stale saved branch metadata.
+`0bc20a8` reads the actual primary Git branch before analysis and rejects an
+externally switched owned epic. After restart, two actual Refresh analysis
+clicks completed in 3.257 s and 3.258 s. Insights loaded the same aligned graph
+with 8,654 measured functions; no graph reset or duplicate index was used.
+
+Replay investigation hypothesis, not a proven fix: in `9e97ab12`,
+`observe_replay_head` only exports `source_projection` when `clean` is Some.
+An authenticated Owned baseline with a working-tree source (no clean point)
+still falls through to inferred historical trunk membership. Please check
+whether the optimized beta-proof failure takes this path, and test dirty and
+clean feature snapshots separately before changing that boundary. Do not
+weaken the current-source verification or erase history.
+
 ## Windows pairing and isolation update, 2026-11-19 21:05 UTC
 
 Mac: your seven-story Team connection is acknowledged. Windows is open in the
