@@ -9,9 +9,10 @@ Give Claude Code a bug to fix while Codex works on the next feature and you revi
 
 ### From a story to a change you can ship
 
-1. **Write the outcome.** “Pressing Escape should close the mobile menu and return focus to the button.” Add the story to an epic. Group stories into a cycle when you want to track what shipped.
-2. **Pick a worker, or let MemCode route it.** Memtrace measures complexity in the relevant code and traces what a change could affect. Inspect the suggested model and effort, or choose your own. Workers on one epic coordinate edits on its branch. Another epic can run alongside it in its own Git worktree.
+1. **Say what you want.** “Pressing Escape should close the mobile menu and return focus to the button.” MemCode puts it in a goal. Work that touches code another goal is already changing joins that goal, small fixes join **Quick changes**, and bigger work becomes a new goal that your connected coding agent breaks into tasks you can edit.
+2. **Pick a worker, or let MemCode route it.** Memtrace measures complexity in the relevant code and traces what a change could affect. Inspect the suggested model and effort, or choose your own. Tasks in one goal coordinate edits on its branch, which starts from your team's integration branch. Another goal runs alongside it in its own Git worktree.
 3. **Review what changed.** Move the story to **Code review**. Open a finding at the source, compare complexity before and after, and see which checks ran on this change. Ask the reviewer a question, send a follow-up to the worker, or accept the story.
+4. **Ship the goal.** When its tasks are in review, **Create pull request** commits, pushes and opens the PR with a description written for reviewers. **Merge** it once GitHub approves. Open goals that use the same files are marked **Needs update**, and **Update from dev** brings them current.
 
 ### Smart routing and measured code review
 

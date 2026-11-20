@@ -41,6 +41,24 @@ An incomplete review can proceed to acceptance only with an explicit saved cover
 note. That decision preserves its incomplete result; it does not mark missing
 checks as passed. Findings and stale or failed reviews still require attention.
 
+## Ship a goal
+
+A goal is one branch, so its tasks ship together in one pull request. When every
+task is in review, the goal card shows **Create pull request** (or **Ship quick
+changes** for the Quick changes batch). The sheet lists each step before it runs:
+commit the goal's files, push its branch, open the PR. The GitHub CLI creates it
+when installed; otherwise GitHub opens with the title and description filled in.
+
+The description is written for reviewers: a summary, each task's change in the
+agent's own report with local paths made repo-relative, decisions a person made,
+and a test plan. The fleet receipt is folded at the end. **Add a MemCode line**
+adds one line inside it and an `Orchestrated-by:` trailer to the commit.
+
+With the GitHub CLI, the sheet also shows the PR's review and checks. **Merge pull
+request** is available when GitHub would merge it, using the repository's merge
+method; otherwise the sheet says why. Merging closes the goal, moves its reviewed
+tasks to Done and marks open goals that use the same files **Needs update**.
+
 ## Save annotations, then send a follow-up
 
 Saving a comment creates a local annotation. It does not add a conversation

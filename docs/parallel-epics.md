@@ -30,9 +30,24 @@ current source facts always come from the selected epic.
 
 ## Bringing changes together
 
-Worktrees isolate ongoing edits. Integrating branches remains a Git operation;
-MemCode does not merge, push or deploy behind the developer's back. Stop affected
-workers before changing their branch, then run the relevant checks after integration.
+Worktrees isolate ongoing edits. MemCode integrates only when you click, after
+listing each step: **Create pull request** commits and pushes a goal's branch and
+opens its PR, **Merge** merges an approved PR through the GitHub CLI, and **Update
+from dev** brings the integration branch into a goal. It never deploys.
+
+New goals branch from the team's integration branch, read from where merged pull
+requests actually went (`dev` before `main` when both exist), and follow the team's
+branch naming. When a goal merges, MemCode compares the files it changed with each
+open goal's files. Only goals that share files are marked **Needs update**; the open
+Quick changes batch always is, because its base moved. Updating saves the goal's
+work as a commit, merges the newer integration branch, and refreshes that goal's
+code graph (about a minute on a mid-size repository). A conflicting update is
+aborted in full and names the files. Stop affected workers before updating, then
+run the relevant checks.
+
+Small tasks without a goal share one **Quick changes** batch per project: one
+worktree, one branch, one pull request. A batch closes when its PR merges; a batch
+whose base moved takes no new tasks, so the next small task starts a fresh one.
 
 A cross-epic prerequisite being marked Done is insufficient. Before starting the
 dependent worker, MemCode checks that its checkpointed prerequisite file content is

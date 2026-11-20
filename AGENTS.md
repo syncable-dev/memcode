@@ -17,6 +17,9 @@ engine binaries. Keep managed engines separate from a user's global CLI setup.
 - Do not invent live workers, successful tests, metric values or confidence.
   The example project must remain visibly labelled as example data.
 - A worker exit creates a review candidate, never an automatically verified change.
+- Every task belongs to a goal (epic). Commit, push, pull-request creation, merge and
+  Update from dev happen only from explicit actions that list each step first.
+  Never deploy.
 
 ## Engineering
 
