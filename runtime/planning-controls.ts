@@ -78,7 +78,7 @@ export function registerPlanningControls(
     cycleId: id,
     label: z.string().max(100),
     kind: z.string().max(100),
-    harness: z.enum(["all", "codex", "claude", "cursor"]),
+    harness: z.enum(["all", "codex", "claude", "cursor", "copilot", "dsh"]),
     archived: z.boolean(),
   });
   register(

@@ -4,6 +4,10 @@ import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
+import { StartupPublicationTimeout } from "../runtime/memtrace-peer-index";
+import { prepareWorkerAnalysis } from "../runtime/worker-analysis";
+import { previousProviderSession } from "../runtime/provider-session";
+import { checkSourceBinding } from "../runtime/verification";
 import { captureStoryReview } from "../runtime/code-review-snapshot";
 import { git } from "../runtime/local";
 import type { WorkItem } from "../src/shared";
@@ -392,3 +396,102 @@ test("legacy baselines remain readable but cannot certify ownership", async () =
   assert.match(result.patch, /const n=1/);
   assert.match(result.limitations.join(" "), /older scoped baseline/);
 });
+
+async function queuedWorker() {
+  const f = await fixture();
+  await f.checkpoint(undefined, "export const value = 1;\n");
+  const task = f.task;
+  task.epicId = "epic";
+  Object.assign(task.run, {
+    changeRunId: "run-0",
+    sessionId: "history",
+    sessionBinding: { harness: "codex", workspace: f.root, branch: task.run.branch, epicId: task.epicId },
+  });
+  task.messages.push({ id: "followup", role: "user", at: task.updatedAt, text: "Continue", followupState: "queued" });
+  const previous = previousProviderSession(task);
+  const source = await checkSourceBinding(f.root);
+  const project = { id: "epic", name: "Epic", description: "", createdAt: task.createdAt,
+    analysis: "ready" as const, analysisCheckout: "owned-worktree-v1" as const,
+    repoId: "native", branch: task.run.branch!, path: f.root };
+  const options = { previous, source, changedBranch: false, update: () => {}, signal: new AbortController().signal };
+  return { f, task, previous, project, options };
+}
+
+test("an automatic follow-up refreshes only its previous provider's verified edits", async (t) => {
+  const { f, task, previous, project, options } = await queuedWorker();
+  t.after(() => rm(f.root, { recursive: true, force: true }));
+  const calls: string[] = [];
+  const engine = {
+    watch: async () => {
+      calls.push("inspect");
+      throw Error("unverified native publication");
+    },
+    analyze: async () => { calls.push("normal"); throw new StartupPublicationTimeout("timed out"); },
+    call: async () => { throw Error("unexpected call"); },
+    releaseEpic: async () => {},
+  };
+  await assert.rejects(prepareWorkerAnalysis(engine, project, task, options), /unverified native publication/);
+  assert.deepEqual(calls.splice(0), ["normal", "inspect"]);
+  for (const change of [
+    { previous: undefined },
+    { previous: { ...previous!, epicId: "other" } },
+    { source: "changed" },
+    { changedBranch: true },
+  ]) {
+    await assert.rejects(prepareWorkerAnalysis(engine, project, task, { ...options, ...change }), /timed out/);
+  }
+  task.run.changeRunId = "other-run";
+  await assert.rejects(prepareWorkerAnalysis(engine, project, task, options), /timed out/);
+  task.run.changeRunId = "run-0";
+  task.messages[0].followupState = "cancelled";
+  await assert.rejects(prepareWorkerAnalysis(engine, project, task, options), /timed out/);
+  assert.deepEqual(calls, Array(6).fill("normal"));
+});
+
+
+for (const failure of ["drift", "cancel", "queue cancellation", "foreign", "unattributed"] as const)
+  test("a queued worker submits no graph refresh after " + failure, async (t) => {
+    const { f, task, project, options } = await queuedWorker();
+    t.after(() => rm(f.root, { recursive: true, force: true }));
+    const controller = new AbortController();
+    let submitted = false;
+    let inspectedJobs = false;
+    const engine: Parameters<typeof prepareWorkerAnalysis>[0] = {
+      releaseEpic: async () => {},
+      watch: async () => ({
+        state: "watching", repoId: project.repoId, path: f.root, branch: project.branch,
+        origin: "memcode", verifiedAt: task.updatedAt,
+      }),
+      analyze: async (_p, _update, force, _previous, _signal, beforeIndex) => {
+        if (!force) throw new StartupPublicationTimeout("timed out");
+        await beforeIndex!(project.repoId);
+        submitted = true;
+        throw Error("unexpected index");
+      },
+      call: async (_p, name) => {
+        if (name === "list_jobs") {
+          inspectedJobs = true;
+          if (failure === "drift") await writeFile(join(f.root, "source.ts"), "unrelated source");
+          if (failure === "cancel") controller.abort();
+          if (failure === "queue cancellation") task.messages[0].followupState = "cancelled";
+          return { jobs: [{ repo_id: project.repoId, branch: project.branch, path: f.root, status: "completed" }] };
+        }
+        assert.equal(name, "get_query_revision");
+        return {
+          repo_id: failure === "foreign" ? "other" : project.repoId, branch: project.branch, worktree: f.root,
+          checkout_mode: "owned-worktree-v1", graph_scope: "owned_worktree_graph",
+          ready: false, status: "partial", source_revision: "source", indexing_revision: "index", token: "query",
+          requested_source_matches: true, requested_revision_matches: true, retry_query_group: false,
+          default_branch_matches: true, source_unchanged_during_observation: true, ambiguous_indexed_files: false,
+          source_file_count: 1, indexed_file_count: 1, mismatched_files: 1,
+          mismatched_paths: [failure === "unattributed" ? "other.ts" : "source.ts"],
+          publication: { status: "published", token: "publication" },
+          _meta: { graph_revision: { status: "published", token: "publication", publication_unchanged_during_call: true } },
+        };
+      },
+    };
+    await assert.rejects(prepareWorkerAnalysis(engine, project, task, { ...options, signal: controller.signal }),
+      failure === "drift" ? /checkout changed/ : failure === "cancel" ? /abort/i : failure === "queue cancellation" ? /no longer queued/ : /could not verify/);
+    assert.equal(inspectedJobs, ["drift", "cancel", "queue cancellation"].includes(failure));
+    assert.equal(submitted, false);
+  });

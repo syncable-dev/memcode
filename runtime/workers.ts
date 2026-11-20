@@ -36,8 +36,10 @@ import { watchArtifacts } from "./artifact-watch";
 import { collectedArtifactFiles, reconcileArtifacts } from "./artifact-catalog";
 import { WorkerInputs } from "./worker-input";
 import { startHarnessSession } from "./agents";
+import { prepareWorkerAnalysis } from "./worker-analysis";
 import { WorkerStartupQueue } from "./worker-startup";
-import { workerTurnContext } from "./worker-turn";
+import { workerCheckoutBrief, workerContextForPrompt, workerTurnContext } from "./worker-turn";
+import { previousProviderSession, resumableProviderSession } from "./provider-session";
 import { effectivePermissionMode } from "../src/permissions";
 import type { AgentEvent } from "./agents/types";
 import { trackTurnActivity } from "./agents/activity";
@@ -59,6 +61,7 @@ import {
 
 /** Team claims guard official runs; local Fleet still coordinates source edits. */
 export interface TeamWorkerClaims {
+  prepareFollowups?(task: WorkItem): Promise<void>;
   acquire(taskId: string, projectId: string): Promise<void>;
   release(taskId: string, projectId: string): Promise<void>;
 }
@@ -144,6 +147,8 @@ export function harnessArgs(
         `Read ${briefPath} for this work item. Follow its scope and return a reviewable implementation.`,
       ],
     };
+  if (id === "copilot") return { args: ["--acp", "--stdio"] };
+  if (id === "dsh") return { args: ["--profile", "acp"] };
   throw new Error("Unsupported worker harness.");
 }
 
@@ -256,13 +261,17 @@ export class WorkerManager {
     await Promise.allSettled(ids.map((id) => this.stop(id, "paused")));
   }
   implementationCount(): number {
-    return (
-      this.state().tasks.filter((task) => !task.example && isActive(task))
-        .length + this.cancellingReview.size
-    );
+    return new Set([
+      ...this.state().tasks.filter((task) => !task.example && isActive(task)).map(task => task.id),
+      ...this.cancellingReview,
+      ...this.children.keys(),
+    ]).size;
   }
   implementationStarting(taskId: string): boolean {
-    return this.cancellingReview.has(taskId);
+    // A provider can exit before its final checkpoint and resource drain finish.
+    // Reviews must wait for that contribution to settle, even if the UI already
+    // shows the turn as finished.
+    return this.cancellingReview.has(taskId) || this.children.has(taskId);
   }
   async releaseIdleAnalysis(
     task: WorkItem,
@@ -288,7 +297,8 @@ export class WorkerManager {
           (other) =>
             other.projectId === task.projectId &&
             other.epicId === task.epicId &&
-            (isActive(other) || other.codeReview?.state === "running"),
+            (isActive(other) || other.codeReview?.state === "running" ||
+              queuedFollowups(other).length > 0),
         )
       )
         return;
@@ -536,7 +546,16 @@ export class WorkerManager {
         this.cancellingReview.delete(task.id);
       }
     }
-    const previousAttempt = task.harness === "claude" && task.run.sessionId ? { ...task, run: { ...task.run } } : undefined;
+    const previousProvider = previousProviderSession(task);
+    const previousSource = task.run.finishedSourceBinding;
+    const sessionBinding = previousProvider ? {
+      harness: previousProvider.harness, workspace: previousProvider.workspace,
+      branch: previousProvider.branch, epicId: previousProvider.epicId,
+    } : undefined;
+    const previousAttempt = task.harness === "claude" && task.run.sessionId &&
+      (!sessionBinding || sessionBinding.harness === "claude")
+      ? { ...task, run: { ...task.run, workspace: sessionBinding?.workspace ?? task.run.workspace } }
+      : undefined;
     task.run = {
       ...task.run,
       nativeEditCapture: undefined,
@@ -546,7 +565,7 @@ export class WorkerManager {
       startedAt: now(),
       finishedAt: undefined,
       exitCode: undefined,
-      sessionId: undefined,
+      sessionBinding,
       measurements: undefined,
       checks: undefined,
       finishedSourceBinding: undefined,
@@ -637,7 +656,10 @@ export class WorkerManager {
       await this.teamClaims?.acquire(task.id, project.id);
       teamClaimHeld = !!this.teamClaims;
       continuing();
-      if (this.prepareProject && (project.analysis !== "ready" || !project.repoId)) {
+      const ownedCheckout =
+        typeof this.engine.ownedWorktreeSupport === "function" &&
+        (await this.engine.ownedWorktreeSupport(project));
+      if (!ownedCheckout && this.prepareProject && (project.analysis !== "ready" || !project.repoId)) {
         await progress("Connecting to the project code graph");
         await Promise.race([this.prepareProject(project.id), aborted]);
       }
@@ -687,15 +709,21 @@ export class WorkerManager {
         }
       }
       await progress("Opening the epic checkout");
-      if (project.analysis !== "ready" || !project.repoId)
+      if (!ownedCheckout && (project.analysis !== "ready" || !project.repoId))
         throw new Error("Connect Memtrace before starting a Fleet worker.");
-      const ownedCheckout =
-        typeof this.engine.ownedWorktreeSupport === "function" &&
-        (await this.engine.ownedWorktreeSupport(project));
       const activation = await this.workspaces.activate(task, project, {
         ownedCheckout,
       });
       analysisProject = epicAnalysisProject(project, task);
+      // A branch already open in the selected folder must keep using that
+      // checkout; only independent epic graphs can skip the primary analysis.
+      if (ownedCheckout && analysisProject === project && (project.analysis !== "ready" || !project.repoId)) {
+        await progress("Connecting to this checkout's code graph");
+        if (this.prepareProject)
+          await Promise.race([this.prepareProject(project.id), aborted]);
+        if (project.analysis !== "ready" || !project.repoId)
+          throw new Error("Connect Memtrace before starting a Fleet worker.");
+      }
       await assertEpicDependencies(this.state(), task, task.run.workspace!);
       continuing();
       if (ownedCheckout) {
@@ -718,17 +746,17 @@ export class WorkerManager {
         analysisProject.analysis = "indexing";
         await progress("Connecting to the epic code graph");
         try {
-          analysisProject.repoId = await this.engine.analyze(
-            analysisProject,
-            (note) => {
+          analysisProject.repoId = await prepareWorkerAnalysis(this.engine, analysisProject, task, {
+            previous: previousProvider,
+            source: previousSource,
+            changedBranch: activation.changedBranch,
+            signal: cancelledPreparation.signal,
+            update: (note) => {
               if (task.run.state !== "preparing" || task.run.activity?.label === note) return;
               task.run.activity = { phase: "working", label: note, at: now() };
               void this.changed().catch(() => {});
             },
-            activation.changedBranch,
-            undefined,
-            cancelledPreparation.signal,
-          );
+          });
           analysisProject.analysis = "ready";
           if (analysisProject !== project)
             task.run.analysisRepoId = analysisProject.repoId;
@@ -738,9 +766,12 @@ export class WorkerManager {
         }
       }
       await progress("Measuring story scope and checking available workers");
+      const routingTask = previousProvider && previousProvider.epicId === task.epicId && task.assignment === "auto"
+        ? { ...task, assignment: "manual" as const, harness: previousProvider.harness }
+        : task;
       const [evidence, catalog] = await Promise.all([
         this.engine.qualify(analysisProject, task),
-        this.catalog(assignedHarness(task, permissionSettings)),
+        this.catalog(assignedHarness(routingTask, permissionSettings)),
       ]);
       continuing();
       task.evidence = evidence;
@@ -758,7 +789,7 @@ export class WorkerManager {
       if (!approved.length)
         throw Error("Connect a worker in Workers before starting a worker.");
       task.route = planRoute(
-        { ...task, permissionMode: permissionPreference },
+        { ...routingTask, permissionMode: permissionPreference },
         task.evidence,
         approved,
         permissionSettings,
@@ -787,7 +818,13 @@ export class WorkerManager {
       task.run.changeRunId = randomUUID();
       await this.fleet.before(project, task);
       const workspace = task.run.workspace!;
+      const resumeSessionId = await resumableProviderSession(previousProvider, task, workspace);
       continuing();
+      // Graph preparation and Fleet admission are serialized within an epic.
+      // Brief retrieval and provider startup are per-worker reads: holding the
+      // checkout queue through those stalls every other story unnecessarily.
+      releaseCheckout?.();
+      releaseCheckout = undefined;
       this.preparations.set(task.id, {
         cancel: async () => {
           cancelledPreparation.abort();
@@ -963,17 +1000,20 @@ export class WorkerManager {
         ]);
         continuing();
       }
+      await this.teamClaims?.prepareFollowups?.(task);
+      continuing();
       conversation = claimReviewContext(task.messages, now());
       await this.changed();
-      const turn = workerTurnContext(task, conversation);
+      const turn = workerTurnContext(task, conversation, resumeSessionId ? 0 : 8000);
+      const contextForPrompt = (value: unknown) => contextConfig
+        ? workerContextForPrompt(value, workspace, project.path!)
+        : JSON.stringify(value);
       const prompt = [
         "You are implementing a work item in MemCode, a local coding-worker suite.",
         turn.intro,
         `Project: ${project.name}\nProject purpose: ${project.description}`,
         `Original work item (background) ${task.identifier}: ${task.title}\n${task.description}`,
-        task.scope?.length
-          ? "Declared source scope:\n" + task.scope.join("\n")
-          : "",
+        workerCheckoutBrief(workspace, project.path, task.scope),
         `You share this checkout with other Fleet story workers on epic branch ${task.run.branch}. Your agent identity is memcode:${task.id}. Never switch branches, reset, stash, commit, push, deploy, or undo another worker's changes. Follow AGENTS.md. ${contextConfig ? "The host owns Fleet reservations, heartbeat, conflict checks and post-edit episodes. Use the memcode-context gateway for source context; it exposes no Fleet mutation tools. Honor host pauses and stop for scope expansion or a conflict requiring human resolution." : "Follow Memtrace Fleet: read branch context, declare intent before each edit, re-read shared source, record episodes, and honor wait/defer directives. If scope expands or an overlap cannot be reconciled, stop and ask for a human decision."} The host reserves the declared scope; it does not fence arbitrary filesystem writes. Run appropriate checks and report what actually ran.`,
         `Put your reports, screenshots and artifacts only under ${artifactRoot.replaceAll("\\", "/")}. Preserve other workers' output.`,
         "Keep user-facing deliverables and the final report at the output folder's top level. Put diagnostic logs, exploratory helpers and verification scripts in its evidence/ subfolder; those remain available as collapsed supporting evidence.",
@@ -982,7 +1022,7 @@ export class WorkerManager {
         "After a source edit group, call coordinate action checkpoint to record its Fleet episode. Then inspect again before the next source edit. Artifact writes inside your private output folder do not claim shared source ownership.",
         "Use memcode-context terminal for PERSISTENT user-visible processes: dev servers, watchers, interactive REPLs and running apps. Start the actual program with its argument array (for example program=node, args=[tools/server.mjs]); do not detach it or redirect its output. The card shows the same PTY, live output and user input. Observe using sessionId and after=last seq. Reuse a running session instead of starting duplicates. Sessions remain available after your turn. Short grep/read/test tool commands remain native tool history, not card terminals. Never report a private detached process as a shared terminal.",
         "Current Fleet plans and branch context:\n" +
-          JSON.stringify(fleetContext),
+          contextForPrompt(fleetContext),
         "If a tool or test command is denied, report that exact blocker and continue independent work. Do not repeatedly try equivalent commands or change permission settings to get around it.",
         task.checklist.length
           ? "Runbook:\n" +
@@ -992,10 +1032,10 @@ export class WorkerManager {
           : "",
         initialContext
           ? "Initial host context (read constraint continuations before editing):\n" +
-            JSON.stringify(initialContext)
+            contextForPrompt(initialContext)
           : task.evidence
             ? "Memtrace evidence (may be incomplete):\n" +
-              JSON.stringify(task.evidence)
+              contextForPrompt(task.evidence)
             : "Memtrace context is not attached. Read and qualify the relevant source before changing it.",
         turn.history,
         turn.current,
@@ -1050,6 +1090,7 @@ export class WorkerManager {
         task.run.changeRunId,
       );
       const observeActivity = trackTurnActivity();
+      const messageStreamScope = task.run.changeRunId ?? randomUUID();
       const onEvent = (event: AgentEvent) => {
         if (settled) return;
         if (event.type === "raw") {
@@ -1071,11 +1112,16 @@ export class WorkerManager {
           saveEvent();
           return;
         }
-        if (event.type === "session") task.run.sessionId = event.sessionId;
+        if (event.type === "session") {
+          task.run.sessionId = event.sessionId;
+          task.run.sessionBinding = { harness: launchedHarness, workspace, branch: task.run.branch, epicId: task.epicId };
+        }
         if (event.type === "message") {
-          const existing = event.messageId
+          // ACP message counters can restart when the native conversation resumes.
+          const streamId = event.messageId ? `${messageStreamScope}:${event.messageId}` : undefined;
+          const existing = streamId
             ? task.messages.find(
-                (message) => message.streamId === event.messageId,
+                (message) => message.streamId === streamId,
               )
             : event.delta && task.messages.at(-1)?.role === event.role
               ? task.messages.at(-1)
@@ -1086,8 +1132,8 @@ export class WorkerManager {
             ).slice(-30000);
           else if (event.text) {
             this.message(task, event.role, event.text);
-            if (event.messageId)
-              task.messages.at(-1)!.streamId = event.messageId;
+            if (streamId)
+              task.messages.at(-1)!.streamId = streamId;
           }
         }
         if (event.type === "error") {
@@ -1117,7 +1163,11 @@ export class WorkerManager {
         /* Optional reporting cannot block launch. */
       }
       await progress(`Starting ${harnessNames[launchedHarness]}`);
+      const pickedUpFollowup = conversation.some(message => message.pickedUpAt && !message.promptedAt);
+      if (pickedUpFollowup && task.run.sessionId && !resumeSessionId)
+        this.message(task, "system", "Starting a new provider session with the saved story conversation. The previous session could not be tied to this worker and checkout.");
       const session = this.sessionFactory(launchedHarness, {
+        resumeSessionId,
         command,
         cwd: workspace,
         model: task.route.model,
@@ -1321,6 +1371,7 @@ export class WorkerManager {
           : cancelled
             ? "stopped"
             : "failed";
+      task.run.finishedAt = now();
       task.run.error = cancelled ? undefined : (error as Error).message;
       if (cancelled || error instanceof FleetBlocked)
         task.stage = task.run.workspace ? "review" : "planned";

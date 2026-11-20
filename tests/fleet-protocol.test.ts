@@ -211,6 +211,72 @@ test("only a rejected semantic alternative creates a human decision; unrelated w
   }
 });
 
+test("directory scopes keep Class B checkpoints and reread tracked and newly extracted source", async () => {
+  const f = await fixture();
+  try {
+    const task = f.tasks[0];
+    task.scope = ["parts/"];
+    task.evidence = undefined;
+    await mkdir(join(f.root, "parts"));
+    await writeFile(
+      join(f.root, "parts", "before.ts"),
+      "export const before = 1;\n",
+    );
+    await git(f.root, ["add", "parts"]);
+    await f.fleet.coordinate(f.project, task, {
+      action: "inspect",
+      plan: "Extract a helper under parts/.",
+    });
+    await writeFile(
+      join(f.root, "parts", "after.ts"),
+      "export const after = 2;\n",
+    );
+    const result = await f.fleet.coordinate(f.project, task, {
+      action: "checkpoint",
+    });
+    assert.equal(result.directive, "recorded");
+    assert.ok(
+      task.changesRevision,
+      "The actual contribution remains attributed",
+    );
+    const reread = await rereadFleetSource(f.project, task);
+    assert.deepEqual(reread.files.map((file) => file.file).sort(), [
+      "parts/after.ts",
+      "parts/before.ts",
+    ]);
+    assert.equal(reread.truncated, false);
+  } finally {
+    await f.release();
+  }
+});
+
+test("directory rereads preserve literal paths and report bounded coverage", async () => {
+  const f = await fixture();
+  try {
+    await mkdir(join(f.root, "[parts]"));
+    await mkdir(join(f.root, "parts"));
+    await writeFile(
+      join(f.root, "parts", "unrelated.ts"),
+      "Never read the glob match",
+    );
+    for (let i = 0; i < 23; i++)
+      await writeFile(
+        join(f.root, "[parts]", `helper ${i}.ts`),
+        "export const value = 1;\n",
+      );
+    const result = await rereadFleetSource(f.project, {
+      ...f.tasks[0],
+      scope: ["[parts]/"],
+      evidence: undefined,
+    });
+    assert.equal(result.files.length, 20);
+    assert.equal(result.truncated, true);
+    assert.ok(result.files.every((file) => file.file.startsWith("[parts]/")));
+  } finally {
+    await f.release();
+  }
+});
+
 test("Fleet rereads a selected project alias but still rejects a source link outside its canonical root", async () => {
   const f = await fixture(),
     outside = await realpath(
@@ -243,6 +309,13 @@ test("Fleet rereads a selected project alias but still rejects a source link out
       outside,
       join(f.root, "escape"),
       process.platform === "win32" ? "junction" : "dir",
+    );
+    await assert.rejects(
+      rereadFleetSource(
+        { ...f.project, path: alias },
+        { ...f.tasks[0], scope: ["escape/"] },
+      ),
+      /resolves outside/,
     );
     await assert.rejects(
       rereadFleetSource(

@@ -20,7 +20,7 @@ const storyPlanningSchema = z.object({
 const projectPlanningSchema = z.object({
   workflowStates: z.array(z.object({ id, name: z.string().max(200), stage: z.enum(["planned", "working", "review", "done"]), color: z.string().max(100), order: z.number().finite(), wipLimit: count.nullable().optional() }).strict()).max(100),
   customFields: z.array(z.object({ id, name: z.string().max(200), type: z.enum(["text", "number", "select"]), options: z.array(z.string().max(200)).max(200) }).strict()).max(100),
-  savedViews: z.array(z.object({ id, name: z.string().max(200), mode: z.enum(["board", "list", "timeline", "calendar"]), groupBy: z.enum(["status", "epic", "priority", "harness", "cycle", "none"]), sortBy: z.enum(["priority", "updated", "created", "due", "estimate"]), filters: z.object({ query: z.string().max(2000), priority: z.enum(["high", "medium", "low", "all"]), epicId: id, cycleId: id, label: z.string().max(200), kind: z.string().max(200), harness: z.enum(["codex", "claude", "cursor", "all"]), archived: z.boolean() }).strict() }).strict()).max(200),
+  savedViews: z.array(z.object({ id, name: z.string().max(200), mode: z.enum(["board", "list", "timeline", "calendar"]), groupBy: z.enum(["status", "epic", "priority", "harness", "cycle", "none"]), sortBy: z.enum(["priority", "updated", "created", "due", "estimate"]), filters: z.object({ query: z.string().max(2000), priority: z.enum(["high", "medium", "low", "all"]), epicId: id, cycleId: id, label: z.string().max(200), kind: z.string().max(200), harness: z.enum(["codex", "claude", "cursor", "copilot", "dsh", "all"]), archived: z.boolean() }).strict() }).strict()).max(200),
 }).strict();
 const observationSchema = z.object({
   stage: z.enum(["planned", "working", "review", "done"]),

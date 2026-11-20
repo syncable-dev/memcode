@@ -6,6 +6,8 @@ import {
   beginProjectGuide,
   firstRunGuide,
   projectGuide,
+  previousGuideStep,
+  needsAccountSetup,
 } from "../src/onboarding";
 import { registerOnboarding } from "../runtime/onboarding";
 import { projectSharedState, sharedCommands } from "../runtime/team/projection";
@@ -32,6 +34,44 @@ function harness() {
     },
   };
 }
+test("launch asks signed-out users to connect and preserves approved or temporarily unavailable sessions", () => {
+  const beta = {
+    state: "disconnected",
+    accessMode: "beta",
+    detail: "",
+    loginPending: false,
+  } as const;
+  assert.equal(needsAccountSetup(beta), true);
+  assert.equal(needsAccountSetup({ ...beta, state: "expired" }), true);
+  assert.equal(needsAccountSetup({ ...beta, state: "connected" }), false);
+  assert.equal(needsAccountSetup({ ...beta, state: "unavailable" }), false);
+  assert.equal(needsAccountSetup(), false);
+  const cli = { ...beta, accessMode: "installed-cli" } as const;
+  const account = {
+    status: "needs-sign-in",
+    label: "",
+    detail: "",
+    loginPending: false,
+  } as const;
+  assert.equal(needsAccountSetup(cli), false);
+  assert.equal(needsAccountSetup(cli, account), true);
+  assert.equal(
+    needsAccountSetup(cli, { ...account, status: "connected" }),
+    false,
+  );
+  assert.equal(
+    needsAccountSetup(cli, { ...account, status: "unavailable" }),
+    true,
+  );
+  assert.equal(
+    needsAccountSetup(cli, {
+      ...account,
+      status: "unknown",
+      sessionVerified: true,
+    }),
+    false,
+  );
+});
 test("first-run guidance appears for a new workspace, without taking over an existing project", () => {
   assert.equal(
     firstRunGuide({
@@ -51,6 +91,27 @@ test("first-run guidance appears for a new workspace, without taking over an exi
     }),
     false,
   );
+});
+
+test("optional local tools have a saved setup step without changing model preferences", async () => {
+  const h = harness(),
+    project = {
+      ...h.state.projects[0],
+      id: "local-tools-project",
+      example: false,
+    };
+  h.state.projects.push(project);
+  const settings = structuredClone(h.state.settings);
+  await h.call({ projectId: project.id, step: "worker" });
+  await h.call({ step: "local-tools" });
+  await h.call({ dismissed: true });
+  const restored = JSON.parse(JSON.stringify(h.state));
+  assert.equal(projectGuide(restored, project.id)?.step, "local-tools");
+  assert.equal(previousGuideStep("local-tools"), "worker");
+  assert.equal(previousGuideStep("epic"), "local-tools");
+  assert.deepEqual(h.state.settings, settings);
+  await h.call({ dismissed: false, step: "epic" });
+  assert.deepEqual(h.state.settings, settings);
 });
 test("guide progress validates project ownership and can pause, complete and explicitly restart", async () => {
   const h = harness(),

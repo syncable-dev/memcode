@@ -115,6 +115,9 @@ export function epicAnalysisProject(project: Project, task: WorkItem): Project {
     branch: task.run.branch,
     repoId: task.run.analysisRepoId,
     analysis: task.run.analysisRepoId ? "ready" : "idle",
-    analysisCheckout: "owned-worktree-v1",
+    analysisCheckout: task.run.analysisProjectId.endsWith(":source")
+      ? undefined
+      : "owned-worktree-v1",
+    analysisCurrentSource: true,
   };
 }

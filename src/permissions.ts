@@ -26,13 +26,19 @@ export function supportsPermissionMode(
   mode: PermissionMode,
 ): boolean {
   // Cursor's installed ACP transport does not run its CLI Smart Auto classifier.
-  return harness !== "cursor" || mode !== "auto";
+  return mode !== "auto" || harness === "codex" || harness === "claude";
 }
 
 export function permissionDescription(
   harness: Harness,
   mode: PermissionMode,
 ): string {
+  if (harness === "copilot" || harness === "dsh")
+    return mode === "auto"
+      ? "This ACP connection supports Review and Full access. Native Smart auto is not advertised."
+      : mode === "full-access"
+        ? "MemCode allows permission requests for this worker. Provider sandbox and administrator rules still apply; questions and Fleet decisions come to you."
+        : "Provider permission requests appear beside the conversation. Your existing provider rules remain in effect.";
   if (mode === "full-access")
     return "Bypasses tool approvals and the harness sandbox where supported. Installed deny rules and administrator policies may still apply. Questions and Fleet decisions still come to you.";
   if (mode === "auto")

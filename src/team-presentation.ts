@@ -1,11 +1,54 @@
-import type { TeamWorkspaceState } from "./shared";
+import type { TeamWorkspaceState, WorkItem } from "./shared";
+
+/** Display a shared session without turning it into a locally running worker. */
+export function presentedTask(local: WorkItem): WorkItem {
+  const shared = local.sharedSession;
+  return shared
+    ? {
+        ...local,
+        harness: shared.harness,
+        route: shared.route,
+        modelOverride: shared.actualModel ?? shared.requestedModel,
+        messages: shared.messages,
+        run: {
+          state: shared.state,
+          startedAt: shared.startedAt,
+          finishedAt: shared.finishedAt,
+          error: shared.error,
+        },
+        codeReview: shared.review
+          ? {
+              runId: shared.review.id,
+              state: shared.review.state,
+              outcome: shared.review.outcome,
+              updatedAt: shared.review.updatedAt,
+              findingCount: shared.review.findings.length,
+            }
+          : undefined,
+      }
+    : local;
+}
 
 export function teamClaimForStory(
   team: TeamWorkspaceState | undefined,
   storyId: string,
 ) {
   if (!team) return undefined;
-  const claim = team.workspace.claims.find((item) => item.storyId === storyId);
+  const session = team.sessions
+    ?.filter((s) => s.storyId === storyId)
+    .sort((a, b) => b.epoch - a.epoch)[0];
+  const claim =
+    team.workspace.claims.find((item) => item.storyId === storyId) ??
+    (session
+      ? {
+          storyId,
+          attemptId: session.id,
+          epoch: session.epoch,
+          memberId: session.owner.memberId,
+          deviceId: session.owner.deviceId,
+          acquiredAt: session.startedAt ?? session.updatedAt,
+        }
+      : undefined);
   if (!claim) return undefined;
   const member = team.workspace.members.find(
     (item) => item.id === claim.memberId,
@@ -13,7 +56,13 @@ export function teamClaimForStory(
   const device = member?.devices.find((item) => item.id === claim.deviceId);
   return {
     claim,
-    activity: team.workerActivity?.find((row) => row.storyId === storyId && row.attemptId === claim.attemptId && row.epoch === claim.epoch),
+    session: session?.id === claim.attemptId ? session : undefined,
+    activity: team.workerActivity?.find(
+      (row) =>
+        row.storyId === storyId &&
+        row.attemptId === claim.attemptId &&
+        row.epoch === claim.epoch,
+    ),
     name: member?.name ?? "Workspace member",
     device: device?.name ?? "Another device",
     local: claim.memberId === team.memberId && claim.deviceId === team.deviceId,
@@ -29,7 +78,11 @@ export function teamStartBlocked(
   if (team.connection === "offline" || team.connection === "connecting")
     return "Reconnect Team Sync before starting a shared story. MemCode must confirm its claim first.";
   const owner = teamClaimForStory(team, storyId);
-  if (owner && !owner.local)
+  if (
+    owner &&
+    !owner.local &&
+    team.workspace.claims.some((c) => c.storyId === storyId)
+  )
     return `${owner.name} holds this story on ${owner.device}. Wait for that claim to be released before starting here.`;
   return undefined;
 }

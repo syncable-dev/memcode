@@ -14,3 +14,13 @@ and do not imply sponsorship or endorsement. Marks remain owned by their holders
   This is the OpenAI mark used for the Codex adapter, not a recreated product icon.
 
 Retrieved 14 November 2026. Original geometry and colors are preserved.
+
+- `copilot.svg`: GitHub's Copilot Octicon from
+  <https://raw.githubusercontent.com/primer/octicons/main/icons/copilot-24.svg>
+  (Primer Octicons, MIT).
+- `dsh.svg`: the official DeepSeek Harness whale mark from
+  <https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/master/apps/web/public/favicon.svg>.
+
+The two additional marks were retrieved 20 November 2026, unmodified, solely
+to identify compatible adapters. See DeepSeek Harness's
+[brand guidelines](https://github.com/deepseek-ai/deepseek-harness/blob/master/BRAND_GUIDELINES.md).

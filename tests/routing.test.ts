@@ -113,7 +113,7 @@ test("unavailable catalogs produce an actionable failure rather than a fabricate
         [],
         state.settings,
       ),
-    /No eligible installed harness/,
+    /No eligible connected worker/,
   );
 });
 test("Cursor routing uses live session variants for automatic routes and validates saved overrides", () => {

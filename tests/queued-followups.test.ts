@@ -38,8 +38,11 @@ async function fixture(
     fail?: boolean;
     spawnFails?: boolean;
     preparationFails?: boolean;
+    ownedCheckout?: boolean;
     slots?: number;
     pickupGate?: boolean;
+    settlementGate?: boolean;
+    repeatedStreamId?: boolean;
   } = {},
 ) {
   const root = await mkdtemp(join(tmpdir(), "memcode-queue-")),
@@ -116,9 +119,16 @@ async function fixture(
   const pickupGate = new Promise<void>((resolve) => {
     releasePickup = resolve;
   });
+  let releaseSettlement!: () => void;
+  const settlementGate = new Promise<void>((resolve) => {
+    releaseSettlement = resolve;
+  });
+  const resumedSessions: (string | undefined)[] = [];
   const manager = new WorkerManager(
     () => state,
     async () => {
+      if (options.settlementGate && tasks[0].run.state === "finished")
+        await settlementGate;
       if (
         options.pickupGate &&
         !pickupHeld &&
@@ -134,6 +144,7 @@ async function fixture(
       manager.dispatchQueued();
     },
     {
+      ownedWorktreeSupport: async () => options.ownedCheckout === true,
       analyze: async () => "fixture",
       qualify: async () => {
         if (options.preparationFails) throw Error("Fixture preparation failed");
@@ -146,6 +157,8 @@ async function fixture(
         };
       },
       call: async (_project: unknown, name: string) => {
+        if (name === "fleet_branch_context" && options.ownedCheckout)
+          return { canonicalScope: "file::" + join(repo, "scope-0.ts"), recalled: JSON.stringify({ workspace_scope: repo }) };
         if (name === "fleet_acquire_lease")
           return { state: "granted", lease_id: "queue-lease" };
         if (name === "fleet_release_lease") releases++;
@@ -176,19 +189,28 @@ async function fixture(
       })),
     undefined,
     undefined,
-    startPrintFixtureSession,
+    (harness, session) => {
+      resumedSessions.push(session.resumeSessionId);
+      session.onEvent({ type: "session", sessionId: "fixture-provider-session" });
+      if (options.repeatedStreamId) {
+        for (const text of [`Reply for turn ${resumedSessions.length}`, " is complete."])
+          session.onEvent({type: "message", role: "assistant", text, delta: true,
+            messageId: "cursor:fixture-provider-session:1"});
+      }
+      return startPrintFixtureSession(harness, session);
+    },
   );
   const runs = async (task: WorkItem) =>
     JSON.parse(
       await readFile(
-        join(repo, ".memcode/gates", task.id, "runs.json"),
+        join(task.run.workspace ?? repo, ".memcode/gates", task.id, "runs.json"),
         "utf8",
       ).catch(() => "[]"),
     ) as Array<{ index: number; prompt: string; at: number }>;
   const release = async (task: WorkItem, index: number) => {
-    await mkdir(join(repo, ".memcode/gates", task.id), { recursive: true });
+    await mkdir(join(task.run.workspace ?? repo, ".memcode/gates", task.id), { recursive: true });
     await writeFile(
-      join(repo, ".memcode/gates", task.id, index + ".release"),
+      join(task.run.workspace ?? repo, ".memcode/gates", task.id, index + ".release"),
       "release",
     );
   };
@@ -206,13 +228,16 @@ async function fixture(
     project,
     tasks,
     manager,
+    resumedSessions,
     runs,
     release,
     enqueue,
     releasePickup,
+    releaseSettlement,
     releases: () => releases,
     async cleanup() {
       releasePickup();
+      releaseSettlement();
       await manager.close();
       assert.ok(
         within(tmpdir(), root) && basename(root).startsWith("memcode-queue-"),
@@ -222,13 +247,93 @@ async function fixture(
   };
 }
 
+test("a follow-up can reuse a verified older save, but never an unverified provider or different checkout", async () => {
+  for (const source of ["matching legacy", "changed provider", "unverified legacy", "different checkout"]) {
+    const f = await fixture(["codex"]), task = f.tasks[0];
+    try {
+      await f.manager.start(task, f.project);
+      await until(async () => (await f.runs(task)).length === 1, "initial native pass");
+      await f.release(task, 1);
+      await until(() => task.run.state === "finished" && !f.manager.implementationStarting(task.id), "initial pass settled");
+      task.run = {state: "finished", sessionId: "original-local-session", workspace: f.repo, branch: task.run.branch};
+      if (source !== "unverified legacy")
+        task.run.measurements = {modelIds: [], modelSource: source === "changed provider" ? "claude-assistant" : "codex-thread"};
+      if (source === "different checkout") task.run.workspace = join(f.root, "previous-repo");
+      f.enqueue(task, "Run the follow-up on the correct workspace.");
+      try {
+        await until(async () => (await f.runs(task)).length === 2, "queued pass started");
+      } catch (cause) {
+        throw new Error(`Queued legacy follow-up (${source}) failed: ${JSON.stringify({ state: task.run.state, error: task.run.error, activity: task.run.activity })}`, { cause });
+      }
+      assert.deepEqual(f.resumedSessions, [undefined, source === "matching legacy" ? "original-local-session" : undefined]);
+      await f.release(task, 2);
+      await until(() => task.run.state === "finished", "queued pass finished");
+    } finally { await f.cleanup(); }
+  }
+});
+
+test("resumed provider streams cannot append a reply to an earlier worker pass", async () => {
+  for (const provider of providers) {
+    const f = await fixture([provider], { repeatedStreamId: true }), task = f.tasks[0];
+    try {
+      await f.manager.start(task, f.project);
+      await until(async () => (await f.runs(task)).length === 1, "first stream");
+      const first = task.messages.find(message => message.text === "Reply for turn 1 is complete.");
+      assert.ok(first);
+      const firstAt = first.at;
+      const followup = f.enqueue(task, "Continue the same native conversation.");
+      await f.release(task, 1);
+      await until(async () => (await f.runs(task)).length === 2, "resumed stream");
+      assert.equal(first.text, "Reply for turn 1 is complete.");
+      assert.equal(first.at, firstAt);
+      const second = task.messages.find(message => message.text === "Reply for turn 2 is complete.");
+      assert.ok(second);
+      assert.notEqual(second.id, first.id);
+      assert.notEqual(second.streamId, first.streamId);
+      assert.ok(task.messages.indexOf(second) > task.messages.indexOf(followup));
+      assert.deepEqual(f.resumedSessions, [undefined, "fixture-provider-session"]);
+      await f.release(task, 2);
+      await until(() => task.run.state === "finished", "resumed stream finished");
+    } finally { await f.cleanup(); }
+  }
+});
+
+test("a finished provider still occupies its slot until its final contribution has settled", async () => {
+  const f = await fixture(["codex"], { settlementGate: true }),
+    task = f.tasks[0];
+  try {
+    await f.manager.start(task, f.project);
+    await until(
+      async () => (await f.runs(task)).length === 1,
+      "provider started",
+    );
+    await f.release(task, 1);
+    await until(() => task.run.state === "finished", "provider exited");
+    assert.equal(
+      f.manager.implementationStarting(task.id),
+      true,
+      "Review capture must wait for the final journal and drain",
+    );
+    assert.equal(f.manager.implementationCount(), 1);
+    f.releaseSettlement();
+    await until(
+      () => !f.manager.implementationStarting(task.id),
+      "contribution settled",
+    );
+    assert.equal(f.manager.implementationCount(), 0);
+  } finally {
+    await f.cleanup();
+  }
+});
+
 test("all three adapters automatically coalesce busy follow-ups after Fleet cleanup, without duplicate passes", async () => {
   for (const provider of providers) {
-    const f = await fixture([provider]),
+    const f = await fixture([provider], { ownedCheckout: true }),
       task = f.tasks[0];
     try {
       await f.manager.start(task, f.project);
       await until(async () => (await f.runs(task)).length === 1, "first pass");
+      task.assignment = "auto";
       const one = f.enqueue(
           task,
           "First queued review: exact quote and page 2",
@@ -246,7 +351,17 @@ test("all three adapters automatically coalesce busy follow-ups after Fleet clea
         f.releases() > 0,
         "previous Fleet lease released before next pass",
       );
-      const prompt = (await f.runs(task))[1].prompt;
+      const passes = await f.runs(task);
+      assert.notEqual(task.run.workspace, f.repo);
+      for (const { prompt } of passes) {
+        const fleet = JSON.parse(prompt.split("Current Fleet plans and branch context:\n")[1].split("\n")[0]);
+        assert.equal(fleet.engine.canonicalScope, "file::" + join(task.run.workspace!, "scope-0.ts"));
+        assert.equal(JSON.parse(fleet.engine.recalled).workspace_scope, task.run.workspace);
+        assert.ok(!prompt.includes(f.repo), "neither the fresh nor resumed provider prompt exposes the shared base");
+      }
+      const prompt = passes[1].prompt;
+      assert.ok(prompt.includes(`Source checkout: ${task.run.workspace}`));
+      assert.ok(prompt.includes(join(task.run.workspace!, task.scope![0])));
       assert.ok(prompt.includes(one.text));
       assert.ok(prompt.includes(two.text));
       const current = prompt.lastIndexOf("CURRENT REQUESTS");
@@ -256,6 +371,8 @@ test("all three adapters automatically coalesce busy follow-ups after Fleet clea
       );
       assert.ok(prompt.endsWith(two.text));
       assert.equal(prompt.split(one.text).length - 1, 1);
+      assert.deepEqual(f.resumedSessions, [undefined, "fixture-provider-session"]);
+      assert.equal(prompt.includes("HISTORICAL CONVERSATION"), false, "native resumed turns do not replay the transcript");
       assert.equal(one.followupState, "included");
       assert.equal(two.followupState, "included");
       assert.ok(one.promptedAt);
@@ -455,6 +572,7 @@ test("preparation and spawn failures pause authorized input without marking it i
         () => task.run.state === "failed" && queued.followupState === "paused",
         "failed launch",
       );
+      assert.ok(task.run.finishedAt, "the failed preparation has a completion timestamp");
       assert.equal(queued.promptedAt, undefined);
       assert.equal((await f.runs(task)).length, 0);
     } finally {

@@ -1,5 +1,7 @@
 /** Explicit public identifiers only. Unknown/private provider labels never leave the device. */
 export const publicModelIds = [
+  "gpt-6.2-astra",
+  "gpt-6.2-sol",
   "gpt-6-luna",
   "gpt-5.6-luna",
   "gpt-6.1-terra",

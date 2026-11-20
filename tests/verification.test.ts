@@ -144,6 +144,46 @@ test("managed checks bind the exact finished worker source and consume full raw 
   }
 });
 
+test("PTY titles never hide a complete TAP header or supply machine-report content", async () => {
+  const tap =
+    "TAP version 13\r\n# tests 8\r\n# pass 8\r\n# fail 0\r\n# cancelled 0\r\n# skipped 0\r\n# todo 0\r\n";
+  for (const title of [
+    "\x1b]0;C:\\Tools\\node.exe\x07",
+    "\x1b]2;node test\x1b\\",
+    "\x9d0;node test\x9c",
+  ]) {
+    assert.deepEqual(parseCheckCounts(title + tap, "tap"), {
+      passed: 8,
+      failed: 0,
+    });
+    assert.deepEqual(parseCheckCounts(title + marker, "memcode-json"), {
+      passed: 19,
+      failed: 0,
+    });
+  }
+  for (const hidden of ["\x1b]0;" + tap + "\x07", "\x1b]0;" + tap])
+    assert.deepEqual(parseCheckCounts(hidden, "tap"), {
+      passed: null,
+      failed: null,
+    });
+
+  const f = await fixture();
+  try {
+    const output =
+      "\x1b[?9001h\x1b[m\x1b]0;C:\\Tools\\node.exe\x07\x1b[?25h" + tap;
+    const result = await runTaskVerification(
+      () => f.state,
+      f.manager((request) => reply(request.after, output)),
+      { ...f.input, format: "tap" },
+    );
+    assert.equal(result.linked, true);
+    assert.equal(result.passed, 8);
+    assert.equal(result.failed, 0);
+  } finally {
+    await f.close();
+  }
+});
+
 test("manual edits before verification cannot be attributed to the earlier worker even when source stays stable during checks", async () => {
   const f = await fixture();
   try {
@@ -375,7 +415,25 @@ test("source bindings frame filenames and bytes, retain leading whitespace and b
     const bom = await checkSourceBinding(f.root);
     await writeFile(join(f.root, "\ufeffbom.mjs"), "second");
     assert.notEqual(await checkSourceBinding(f.root), bom);
-    await writeFile(join(f.root, "too-large.mjs"), Buffer.alloc(2_000_001));
+    await writeFile(
+      join(f.root, "vendored-archive.tar.gz"),
+      Buffer.alloc(3_000_000),
+    );
+    const archive = await checkSourceBinding(f.root);
+    assert.ok(
+      archive,
+      "A normal vendored asset must not make all review measurements unavailable",
+    );
+    await writeFile(
+      join(f.root, "vendored-archive.tar.gz"),
+      Buffer.alloc(3_000_000, 1),
+    );
+    assert.notEqual(
+      await checkSourceBinding(f.root),
+      archive,
+      "Binary changes remain part of the exact source fingerprint",
+    );
+    await writeFile(join(f.root, "too-large.mjs"), Buffer.alloc(8_000_001));
     assert.equal(await checkSourceBinding(f.root), null);
   } finally {
     await f.close();

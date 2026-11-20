@@ -72,7 +72,7 @@ import {
 const identifier = z.string().min(1).max(200),
   nonempty = z.string().trim().min(1),
   stage = z.enum(["planned", "working", "review", "done"]),
-  harness = z.enum(["codex", "claude", "cursor"]),
+  harness = z.enum(["codex", "claude", "cursor", "copilot", "dsh"]),
   kind = z.enum(["feature", "fix", "refactor", "research", "test"]),
   priority = z.enum(["high", "medium", "low"]);
 const taskPatch = z
@@ -220,6 +220,7 @@ export async function createRuntime(
       terminals,
       undefined,
       {
+        prepareFollowups: (item) => team?.prepareFollowups(item) ?? Promise.resolve(),
         acquire: (taskId, projectId) =>
           team?.acquire(taskId, projectId) ?? Promise.resolve(),
         release: (taskId, projectId) =>
@@ -291,6 +292,26 @@ export async function createRuntime(
     openExternal: (url) => host.call("open_memcode_identity", { url }),
   });
   team = new TeamSyncClient(state, store.dir, changed, {
+    loadReview: (taskId) => codeReviews?.get(taskId) ?? Promise.resolve(null),
+    onSessionCommand: async (item, command) => {
+      if (command.kind === "followup") {
+        let message = item.messages.find(m => m.id === command.id);
+        if (message?.promptedAt || message?.pickedUpAt) return;
+        if (!message) {
+          message = {id: command.id, role: "user", text: command.text, at: command.createdAt,
+            actor: command.author, sourceCommandId: command.id};
+          item.messages.push(message);
+          workers.enqueue(item, message.id);
+        } else { message.text = command.text; message.actor = command.author; }
+        item.updatedAt = command.updatedAt;
+        await changed();
+      } else if (command.kind === "review-start") {
+        if (!isCodeReviewTask(state(), item)) throw Error("Move this story to Code review before starting its review.");
+        await codeReviews.start(item.id);
+      } else {
+        await codeReviews.discuss(item.id, command.reviewRunId!, command.text, {id: command.id, actor: command.author});
+      }
+    },
     onWorkerActivity: () => emit("workspace:state", store.state),
     identityProof: teamIdentity,
     identityAvailable: teamIdentity.available,
@@ -473,15 +494,17 @@ export async function createRuntime(
     },
   );
   const analyses = new Map<string, Promise<void>>();
-  const runAnalysis = async (id: string) => {
+  let analysisAccount = new AbortController();
+  const runAnalysis = async (id: string, signal: AbortSignal) => {
     const item = project(id);
     if (item.example || !item.path)
       throw new Error("Choose a local project folder first.");
     await beta?.initialize();
-    if (
+    const missingEngine =
       !beta?.usesBeta() &&
-      !(await findCommand("memtrace", store.state.settings.memtracePath))
-    ) {
+      !(await findCommand("memtrace", store.state.settings.memtracePath));
+    signal.throwIfAborted();
+    if (missingEngine) {
       item.analysis = "idle";
       item.analysisNote =
         "Connect Memtrace beta from your account or project setup to prepare the local engine. You can keep planning while it connects.";
@@ -494,21 +517,28 @@ export async function createRuntime(
     item.analysisNote = "Connecting to local Memtrace…";
     await changed();
     try {
-      await ensureProjectRepository(item);
-      item.repoId = await engine.analyze(
+      signal.throwIfAborted();
+      await ensureProjectRepository(item, signal);
+      signal.throwIfAborted();
+      const repoId = await engine.analyze(
         item,
         (note) => {
+          if (signal.aborted) return;
           item.analysis = "indexing";
           item.analysisNote = note;
           void changed();
         },
         false,
         previousFailure,
+        signal,
       );
+      signal.throwIfAborted();
+      item.repoId = repoId;
       item.analysis = "ready";
       item.analysisNote = "Project code context is connected.";
       await changed();
     } catch (error) {
+      signal.throwIfAborted();
       item.analysis = "error";
       item.analysisNote = (error as Error).message;
       await changed();
@@ -516,9 +546,15 @@ export async function createRuntime(
     }
   };
   const analyze = (id: string): Promise<void> => {
+    if (beta?.isChanging())
+      return Promise.reject(
+        new Error("Finish or cancel beta sign-in before refreshing code analysis."),
+      );
     const existing = analyses.get(id);
     if (existing) return existing;
-    const pending = runAnalysis(id).finally(() => analyses.delete(id));
+    const pending = runAnalysis(id, analysisAccount.signal).finally(() => {
+      if (analyses.get(id) === pending) analyses.delete(id);
+    });
     analyses.set(id, pending);
     return pending;
   };
@@ -536,6 +572,7 @@ export async function createRuntime(
       return Promise.resolve();
     const pending = resumedWatches.get(id);
     if (pending) return pending;
+    const signal = analysisAccount.signal;
     const path = item.path,
       repoId = item.repoId;
     const reconnect = (async () => {
@@ -545,6 +582,7 @@ export async function createRuntime(
       await beta?.initialize();
       const stillCurrent = () =>
         !closed &&
+        !signal.aborted &&
         item.path === path &&
         item.repoId === repoId &&
         item.analysis === "ready";
@@ -602,12 +640,18 @@ export async function createRuntime(
         );
     },
     beforeIdentityChange: async () => {
+      analysisAccount.abort(
+        new Error("Memtrace access changed during code analysis."),
+      );
+      analysisAccount = new AbortController();
+      analyses.clear();
       await telemetry.accountChanged();
       requireFreshWorkerContext = true;
       teamIdentity.cancel();
       await team?.suspendAccount();
+      // Drain owned engine clients before binding the new account. Retired
+      // requests cannot publish even if an external analysis outlives its client.
       await engine.reconnect();
-      await Promise.allSettled([...analyses.values()]);
       for (const item of store.state.projects)
         if (!item.example && item.path) {
           item.analysis = "idle";
@@ -714,7 +758,7 @@ export async function createRuntime(
       latest,
       latest.evidence,
       installed,
-      store.state.settings,
+      store.state,
     );
     latest.harness = latest.route.harness;
     latest.updatedAt = now();
@@ -1134,8 +1178,18 @@ export async function createRuntime(
     changed,
     () => preview.publishComments(),
     workers,
+    {
+      remoteSend: (item, body) => team?.remoteSession(item.id) ? team.sendSessionCommand(item.id, "followup", body) : Promise.resolve(undefined),
+      actor: (item) => team?.sessionActor(item.projectId),
+      edit: async (item, messageId, text, cancel) => {
+        if (!team?.remoteSession(item.id) && !item.messages.some(m => m.id === messageId && m.sourceCommandId)) return false;
+        await team!.editSessionCommand(item.id, messageId, text, cancel);
+        return true;
+      },
+    },
   );
   codeReviews = new CodeReviewManager(store.dir, state, engine, changed, {
+    onSaved: (run) => team?.reviewSaved(run),
     actor: (item) =>
       team?.identity(item.projectId) ?? connections.account.current.principal,
     reviewProject: (item, parent) => epicAnalysisProject(parent, item),
@@ -1144,12 +1198,13 @@ export async function createRuntime(
     implementationCount: () => workers.implementationCount(),
     implementationStarting: (taskId) => workers.implementationStarting(taskId),
     capacityChanged: () => workers.dispatchQueued(),
-    prepare: async (item, selected, update, assertActive) => {
+    prepare: async (item, selected, update, assertActive, capturedPaths) => {
       const prepared = await prepareReviewAnalysis(
         engine,
         selected,
         update,
         assertActive,
+        capturedPaths,
       );
       if (prepared.analysisCheckout === "owned-worktree-v1")
         item.run.analysisRepoId = prepared.repoId;
@@ -1196,11 +1251,17 @@ export async function createRuntime(
         "Move this story to the Code review lane to run a review or change its outcome.",
       );
   };
-  register("code-review:get", reviewTask, ({ taskId }) =>
-    codeReviews.get(taskId),
-  );
-  register("code-review:start", reviewTask, ({ taskId }) => {
+  register("code-review:get", reviewTask, ({ taskId }) => {
+    const remote = team?.remoteSession(taskId);
+    return remote ? task(taskId).sharedSession?.review ?? (remote.review ? {...remote.review, taskId} : null) : codeReviews.get(taskId);
+  });
+  register("code-review:start", reviewTask, async ({ taskId }) => {
     requireReviewLane(taskId);
+    const remote = team?.remoteSession(taskId);
+    if (remote) {
+      await team!.sendSessionCommand(taskId, "review-start", "Run code review for this story's recorded changes.");
+      return task(taskId).sharedSession?.review ?? null;
+    }
     return codeReviews.start(taskId);
   });
   register("code-review:cancel", reviewRun, ({ taskId, runId }) =>
@@ -1237,7 +1298,12 @@ export async function createRuntime(
   register(
     "code-review:discuss",
     reviewRun.extend({ text: nonempty.max(20000) }).strict(),
-    ({ taskId, runId, text }) => codeReviews.discuss(taskId, runId, text),
+    async ({ taskId, runId, text }) => {
+      const remote = team?.remoteSession(taskId);
+      if (!remote) return codeReviews.discuss(taskId, runId, text);
+      await team!.sendSessionCommand(taskId, "review-question", text, runId);
+      return task(taskId).sharedSession?.review ?? {...remote.review!, taskId};
+    },
   );
   register(
     "code-review:request-fixes",

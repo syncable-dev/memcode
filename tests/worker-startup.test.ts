@@ -213,6 +213,69 @@ async function observe(signal: Promise<void>, description: string) {
   }
 }
 
+test("a slow worker brief does not hold another story's epic admission", async () => {
+  const root = await mkdtemp(join(tmpdir(), "memcode-brief-admission-"));
+  const source = join(root, "source"), state = initialState();
+  const project: Project = { ...state.projects[0], path: source, branch: "main", analysis: "indexing" };
+  state.projects = [project];
+  state.epics = [{ id: "a", identifier: "EP-A", title: "A", projectId: project.id,
+    branch: "epic/a", description: "", phase: "now", color: "mint", order: 0 }];
+  const template = state.tasks[0];
+  state.tasks = ["first", "peer"].map(id => ({ ...template, id, projectId: project.id,
+    epicId: "a", example: false, stage: "planned", dependsOn: [], harness: "codex",
+    assignment: "manual", messages: [], run: { state: "idle" } }));
+  state.settings.maxWorkers = 2;
+  approveFixtureWorker(state, "codex");
+  const briefEntered = deferred(), releaseBrief = deferred(), peerQualified = deferred();
+  let holdingBrief = false;
+  const manager = new WorkerManager(() => state, async () => {
+    if (!holdingBrief && state.tasks[0].run.activity?.label === "Preparing the worker brief") {
+      holdingBrief = true;
+      briefEntered.resolve();
+      await releaseBrief.promise;
+      throw Error("Fixture stopped before brief");
+    }
+  }, {
+    ownedWorktreeSupport: async () => true,
+    analyze: async () => "private-epic",
+    qualify: async (_project: Project, task: WorkItem) => {
+      if (task.id === "peer") {
+        peerQualified.resolve();
+        throw Error("Fixture peer admitted");
+      }
+      return { state: "partial", symbols: [], incomplete: true, note: "Fixture", measuredAt: new Date().toISOString() };
+    },
+    call: async () => ({}),
+  } as unknown as MemtraceEngine, join(root, "profile"),
+  async () => ({ command: process.execPath, prefix: [] }),
+  async () => [{ id: "codex", name: "Fixture", available: true, path: process.execPath,
+    models: [{ id: "fixture-model", label: "Fixture", source: "cache", tier: "balanced" }] }]);
+  Object.assign(manager, { fleet: { before: async () => {}, release: async () => {} } });
+  const starts: Promise<unknown>[] = [];
+  try {
+    await mkdir(source);
+    await git(source, ["init", "--initial-branch=main"]);
+    await writeFile(join(source, "source.ts"), "export const value = 1;\n");
+    await git(source, ["add", "source.ts"]);
+    await git(source, ["-c", "user.name=MemCode test", "-c", "user.email=test@example.invalid", "commit", "-m", "fixture"]);
+    const first = manager.start(state.tasks[0], project).catch((error: Error) => error.message);
+    starts.push(first);
+    await observe(briefEntered.promise, "first worker brief");
+    const peer = manager.start(state.tasks[1], project).catch((error: Error) => error.message);
+    starts.push(peer);
+    await observe(peerQualified.promise, "peer admission while the brief is held");
+    assert.equal(state.tasks[0].run.workspace, state.tasks[1].run.workspace);
+    assert.equal(await peer, "Fixture peer admitted");
+    releaseBrief.resolve();
+    assert.equal(await first, "Fixture stopped before brief");
+  } finally {
+    releaseBrief.resolve();
+    await Promise.allSettled(starts);
+    await manager.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 for (const owned of [true, false]) {
   test(owned
     ? "different epic worktrees qualify concurrently while another story waits for its own epic"
@@ -220,7 +283,8 @@ for (const owned of [true, false]) {
     const root = await mkdtemp(join(tmpdir(), "memcode-startup-"));
     const source = join(root, "source");
     const state = initialState();
-    const project: Project = { ...state.projects[0], path: source, branch: "main", analysis: "ready", repoId: "startup-fixture" };
+    // A held primary history import must not gate independent owned epics.
+    const project: Project = { ...state.projects[0], path: source, branch: "main", analysis: owned ? "indexing" : "ready", repoId: owned ? undefined : "startup-fixture" };
     state.projects = [project];
     state.epics = ["a", "b"].map((id, order) => ({
       id, identifier: "EP-" + id, title: id, projectId: project.id, branch: "epic/" + id,
@@ -244,7 +308,10 @@ for (const owned of [true, false]) {
       if (other.run.activity?.label === "Waiting for local worker startup") waitingOther.resolve();
     }, {
       ownedWorktreeSupport: async () => owned,
-      analyze: async (p: Project) => p.id,
+      analyze: async (p: Project) => {
+        if (owned) assert.notEqual(p.id, project.id, "Primary history import must not be awaited");
+        return p.id;
+      },
       qualify: async (_project: Project, task: WorkItem) => {
         entered.push(task.id);
         if (task.id === first.id) {
@@ -279,6 +346,8 @@ for (const owned of [true, false]) {
       if (owned) {
         await observe(otherEntered.promise, "second epic to qualify while the first is still running");
         assert.notEqual(first.run.workspace, other.run.workspace);
+        assert.equal(project.analysis, "indexing");
+        assert.equal(project.repoId, undefined, "An epic certificate cannot promote the primary graph");
         assert.equal(await git(source, ["branch", "--show-current"]), "main");
         const cancelled = start(same);
         await observe(waitingSame.promise, "same-epic queue");

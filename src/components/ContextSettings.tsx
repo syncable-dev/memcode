@@ -133,7 +133,7 @@ export function ContextSettings({
       <div>
         <Network size={17} />
         <span>
-          <strong>Focused code context</strong>
+          <strong>Local retrieval assistant</strong>
           <small>
             Memtrace finds the code. A local assistant helps plan the search.
           </small>
@@ -168,6 +168,7 @@ export function ContextSettings({
       )}
       {settings.enabled && managed && (
         <div className="local-model-card" aria-busy={installing || checking}>
+          <small>{settings.model.replace(/^.*\//, "")}</small>
           <div className="local-model-status">
             {installing || (checking && !status) ? (
               <Spinner />

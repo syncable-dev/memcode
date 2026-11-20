@@ -1,26 +1,27 @@
 import type {
   Evidence,
   HarnessRuntime,
-  Settings,
+  AppState,
   WorkItem,
 } from "../src/shared";
 import { planRoute } from "./router";
+import { connectedRuntimes } from "./worker-connections";
 
 /**
  * Name the harness and model for a story that is already defined.
- * Installed harnesses are enough. An approved Workers connection is required
- * only when the worker actually starts. This function does not start one.
+ * Planning and execution share the same path-bound connection requirement.
+ * Installing a tool is not permission to assign work to it.
  */
 export function planDefinedStory(
   task: WorkItem,
   evidence: Evidence | undefined,
   runtimes: HarnessRuntime[],
-  settings: Settings,
+  state: AppState,
 ) {
   return planRoute(
     task,
     evidence,
-    runtimes.filter((runtime) => runtime.available),
-    settings,
+    connectedRuntimes(state, runtimes),
+    state.settings,
   );
 }

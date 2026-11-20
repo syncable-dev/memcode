@@ -1,4 +1,22 @@
 import type { AppState, Project } from "./shared";
+import type { MemCodeBetaStatus } from "./beta";
+import type { MemtraceAccount } from "./connections";
+
+/** Unknown/offline credentials are not proof of sign-out. No update reapproval. */
+export function needsAccountSetup(
+  beta?: MemCodeBetaStatus,
+  account?: MemtraceAccount,
+) {
+  if (!beta || !["disconnected", "expired"].includes(beta.state)) return false;
+  if (beta.accessMode === "installed-cli")
+    return (
+      !!account &&
+      !account.loginPending &&
+      !account.sessionVerified &&
+      account.status !== "connected"
+    );
+  return true;
+}
 
 export const guideSteps = [
   "welcome",
@@ -6,6 +24,7 @@ export const guideSteps = [
   "context",
   "memtrace",
   "worker",
+  "local-tools",
   "epic",
   "story",
   "ready",
@@ -36,8 +55,15 @@ export type GuideAction =
   | "view-review"
   | "review-docs"
   | "account"
+  | "dictation"
+  | "retrieval"
   | "analyze"
   | "team";
+
+export function previousGuideStep(step: GuideStep): GuideStep | undefined {
+  const index = guideSteps.indexOf(step);
+  return index > 0 ? guideSteps[index - 1] : undefined;
+}
 
 /** Device-local progress; Team projection never shares setup/preferences. */
 export function projectGuide(

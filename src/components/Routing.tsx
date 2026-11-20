@@ -43,7 +43,7 @@ export function RoutingCard({
         <span className={"tier-label " + route.tier}>{route.tier}</span>
       </div>
       <div className="routing-model">
-        <strong>{route.model}</strong>
+        <strong>{route.modelLabel || route.model}</strong>
         <span>
           {harnessNames[route.harness]} · {route.effort} effort
         </span>

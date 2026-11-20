@@ -4,6 +4,7 @@ import {
   GitBranch,
   Layers3,
   Link2,
+  RefreshCw,
   ShieldCheck,
   X,
 } from "lucide-react";
@@ -14,6 +15,7 @@ import type {
   RuntimeInfo,
   TeamWorkspaceState,
   WorkItem,
+  ModelOption,
 } from "../shared";
 import { ModelSelect } from "./ModelSelect";
 import { harnessNames } from "../shared";
@@ -55,12 +57,29 @@ export function WorkerAssignment({
   const owner = teamClaimForStory(team, task.id);
   const claimBlock = teamStartBlocked(team, task.id);
   const readiness = workerReadiness(task, runtime.harnesses, connections);
+  const [refreshedModels, setRefreshedModels] = useState<ModelOption[]>();
+  const [refreshingModels, setRefreshingModels] = useState(false);
+  const [modelsError, setModelsError] = useState("");
+  useEffect(() => {
+    setRefreshedModels(undefined);
+    setModelsError("");
+  }, [task.harness]);
   const remoteCatalog =
-    runtime.harnesses.find((h) => h.id === task.harness)?.models ?? [];
-  const catalog = settings.localModel && task.harness === "codex"
-    ? [task.modelOverride, settings.model].filter((id, index, ids): id is string => !!id && ids.indexOf(id) === index)
-      .map(id => ({ id, label: id + " · local", source: "alias" as const }))
-    : remoteCatalog;
+    refreshedModels ??
+    runtime.harnesses.find((h) => h.id === task.harness)?.models ??
+    [];
+  const catalog =
+    settings.localModel && task.harness === "codex"
+      ? [task.modelOverride, settings.model]
+          .filter(
+            (id, index, ids): id is string => !!id && ids.indexOf(id) === index,
+          )
+          .map((id) => ({
+            id,
+            label: id + " · local",
+            source: "alias" as const,
+          }))
+      : remoteCatalog;
   return (
     <>
       {team && (
@@ -106,19 +125,63 @@ export function WorkerAssignment({
           <option value="codex">Codex</option>
           <option value="claude">Claude Code</option>
           <option value="cursor">Cursor</option>
+          <option value="copilot">GitHub Copilot</option>
+          <option value="dsh">DeepSeek Harness</option>
         </Select>
       </label>
       <label className="inspector-field">
-        <span>Model</span>
-          <ModelSelect
-            label="Assigned model"
-            harness={task.harness}
-            models={catalog}
-            value={task.modelOverride}
-            automaticLabel={automatic ? (task.route?.model ?? "Memtrace chooses") : "Match task complexity"}
+        <span>
+          Model{" "}
+          <button
+            type="button"
+            className="icon-button"
+            aria-label="Refresh available models"
+            title="Refresh this account’s available models"
+            disabled={refreshingModels || isActive(task)}
+            onClick={async () => {
+              setRefreshingModels(true);
+              setModelsError("");
+              try {
+                const fresh = await window.memcode.refreshWorkerCatalog();
+                setRefreshedModels(
+                  fresh.harnesses.find((h) => h.id === task.harness)?.models ??
+                    [],
+                );
+              } catch (error) {
+                setModelsError((error as Error).message);
+              } finally {
+                setRefreshingModels(false);
+              }
+            }}
+          >
+            <RefreshCw
+              size={11}
+              className={refreshingModels ? "spin" : undefined}
+            />
+          </button>
+        </span>
+        <ModelSelect
+          label="Assigned model"
+          harness={task.harness}
+          models={catalog}
+          value={task.modelOverride}
+          automaticLabel={
+            automatic
+              ? (task.route?.model ?? "Memtrace chooses")
+              : "Match task complexity"
+          }
           disabled={isActive(task) || automatic}
-            onChange={modelOverride => update({ modelOverride })}
-          />
+          onChange={(modelOverride) => update({ modelOverride })}
+        />
+        {modelsError && <small role="status">{modelsError}</small>}
+        {task.harness === "codex" &&
+          catalog.length > 0 &&
+          catalog.every((m) => !/^gpt-6/.test(m.id)) && (
+            <small>
+              Only these models were offered by this Codex account and runtime.
+              Refresh after updating Codex or switching its account.
+            </small>
+          )}
       </label>
       <div className="inspector-field">
         <span>Execution</span>
@@ -142,7 +205,7 @@ export function WorkerAssignment({
           <p>
             {automatic
               ? task.route
-                ? `${harnessNames[task.route.harness]} / ${task.route.model} is named for this story. Connect it in Workers before starting. The assignment does not start the work.`
+                ? `${harnessNames[task.route.harness]} / ${task.route.modelLabel || task.route.model} is named for this story. Connect it in Workers before starting. The assignment does not start the work.`
                 : "Memtrace names a harness and model from the measured story. Connect a worker in Workers before starting."
               : readiness.runtimeKnown
                 ? `${harnessNames[task.harness]} is installed. Approve its connection before starting work.`

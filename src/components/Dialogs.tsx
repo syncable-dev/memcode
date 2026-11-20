@@ -43,6 +43,12 @@ import type { MemtraceAccount } from "../connections";
 import { AppUpdates } from "./AppUpdates";
 import { BetaAccess } from "./BetaAccess";
 import { TelemetrySettings } from "./TelemetrySettings";
+import { WorkerConnections } from "./WorkerConnections";
+import type { AppState } from "../shared";
+import "../styles-setup-settings.css";
+
+export type SettingsSection =
+  "account" | "workers" | "dictation" | "retrieval" | "updates" | "privacy";
 
 export function Modal({
   title,
@@ -189,7 +195,10 @@ export function NewTaskDialog({
         await window.memcode.createTask({
           projectId: project.id,
           title: resolvedTitle,
-          ...(initialStatusId && (cycleId === "none" || !isBacklogStatus(initialStatusId)) ? { statusId: initialStatusId } : {}),
+          ...(initialStatusId &&
+          (cycleId === "none" || !isBacklogStatus(initialStatusId))
+            ? { statusId: initialStatusId }
+            : {}),
           description: description.trim(),
           harness,
           assignment: assignment === "auto" ? "auto" : "manual",
@@ -306,6 +315,8 @@ export function NewTaskDialog({
                 <option value="codex">Codex</option>
                 <option value="claude">Claude Code</option>
                 <option value="cursor">Cursor</option>
+                <option value="copilot">GitHub Copilot</option>
+                <option value="dsh">DeepSeek Harness</option>
               </Select>
             </label>
             <label className="field">
@@ -640,21 +651,30 @@ export function NewProjectDialog({
 
 export function SettingsDialog({
   settings,
+  state,
   runtime,
   onClose,
   onSaved,
   notify,
   onAccountStatus,
+  initialSection = "account",
+  onSetupGuide,
 }: {
   settings: Settings;
+  state: AppState;
   runtime: RuntimeInfo;
   onClose: () => void;
   onSaved: (runtime: RuntimeInfo) => void;
   notify: (s: string) => void;
   onAccountStatus?: (account: MemtraceAccount) => void;
+  initialSection?: SettingsSection;
+  onSetupGuide: () => void;
 }) {
   const [draft, setDraft] = useState(settings);
-  const models = runtime.harnesses.find((harness) => harness.id === draft.defaultHarness)?.models ?? [];
+  const [section, setSection] = useState<SettingsSection>(initialSection);
+  const models =
+    runtime.harnesses.find((harness) => harness.id === draft.defaultHarness)
+      ?.models ?? [];
   const previousSettings = useRef(settings);
   useEffect(() => {
     const previous = previousSettings.current;
@@ -681,152 +701,236 @@ export function SettingsDialog({
       close={onClose}
     >
       <form onSubmit={save}>
+        <nav className="settings-navigation" aria-label="Settings sections">
+          {(
+            [
+              ["account", "Account"],
+              ["workers", "Workers"],
+              ["dictation", "Dictation"],
+              ["retrieval", "Local retrieval"],
+              ["updates", "Updates"],
+              ["privacy", "Privacy"],
+            ] as const
+          ).map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              aria-current={section === id ? "page" : undefined}
+              onClick={() => setSection(id)}
+            >
+              {label}
+            </button>
+          ))}
+        </nav>
         <div className="modal-body settings-body">
-          <BetaAccess
-            notify={notify}
-            existingCLI
-            onAccountStatus={onAccountStatus}
-          />
-          <AppUpdates
-            currentVersion={runtime.appVersion}
-            beforeRestart={async () => {
-              onSaved(await window.memcode.saveSettings(draft));
-            }}
-            automaticDownloads={draft.automaticUpdateDownloads !== false}
-            onAutomaticDownloadsChange={(value) =>
-              setDraft((draft) => ({
-                ...draft,
-                automaticUpdateDownloads: value,
-              }))
-            }
-          />
-          <TelemetrySettings notify={notify} />
-          <div className="settings-section">
-            <div>
-              <GitBranch size={17} />
-              <span>
-                <strong>Memtrace engine</strong>
-                <small>
-                  Optional existing CLI setup. Beta uses its separately managed
-                  local engine.
-                </small>
-              </span>
-              <span
-                className={
-                  "connection-label " +
-                  (runtime.memtraceAvailable ? "available" : "")
-                }
-              >
-                <span />
-                {runtime.memtraceAvailable ? "Detected" : "Not found"}
-              </span>
-            </div>
-            <label className="field">
-              <span>Executable or JavaScript entry point</span>
-              <input
-                aria-label="Memtrace executable"
-                placeholder="Auto-detect from PATH"
-                value={draft.memtracePath}
-                onChange={(e) =>
-                  setDraft({ ...draft, memtracePath: e.target.value })
+          {section === "account" && (
+            <>
+              <BetaAccess
+                notify={notify}
+                existingCLI
+                onAccountStatus={onAccountStatus}
+              />
+              <div className="settings-setup-link">
+                <span>
+                  <strong>A clear place to start.</strong>
+                  <small>
+                    Walk through your account, worker defaults and optional
+                    local tools.
+                  </small>
+                </span>
+                <button
+                  type="button"
+                  className="button secondary"
+                  onClick={onSetupGuide}
+                >
+                  Project setup <ArrowRight size={13} />
+                </button>
+              </div>
+            </>
+          )}
+          {section === "updates" && (
+            <>
+              <AppUpdates
+                currentVersion={runtime.appVersion}
+                beforeRestart={async () => {
+                  onSaved(await window.memcode.saveSettings(draft));
+                }}
+                automaticDownloads={draft.automaticUpdateDownloads !== false}
+                onAutomaticDownloadsChange={(value) =>
+                  setDraft((draft) => ({
+                    ...draft,
+                    automaticUpdateDownloads: value,
+                  }))
                 }
               />
-            </label>
-          </div>
-          <div className="settings-section">
-            <div>
-              <WorkflowIcon />
-              <span>
-                <strong>Worker defaults</strong>
-                <small>
-                  Execution stays local. Your harness controls model
-                  authentication.
-                </small>
-              </span>
-            </div>
-            <div className="form-row">
-              <label className="field">
-                <span>Default harness</span>
-                <Select
-                  value={draft.defaultHarness}
-                  onValueChange={(e) =>
-                    setDraft({
-                      ...draft,
-                      defaultHarness: e as Harness,
-                      model: e === draft.defaultHarness || draft.localModel ? draft.model : "",
-                    })
-                  }
-                >
-                  <option value="codex">Codex</option>
-                  <option value="claude">Claude Code</option>
-                  <option value="cursor">Cursor</option>
-                </Select>
-              </label>
-              <label className="field">
-                <span>Worker slots</span>
-                <Select
-                  value={draft.maxWorkers}
-                  onValueChange={(e) =>
-                    setDraft({ ...draft, maxWorkers: Number(e) })
-                  }
-                >
-                  {[1, 2, 3, 4, 6, 8].map((n) => (
-                    <option key={n} value={n}>
-                      {n} workers
-                    </option>
-                  ))}
-                </Select>
-              </label>
-            </div>
-            <label className="field">
-              <span>Model override</span>
-              {draft.localModel ? <input
-                aria-label="Model override"
-                placeholder="Installed Ollama model name"
-                value={draft.model}
-                onChange={(e) => setDraft({ ...draft, model: e.target.value })}
-              /> : <ModelSelect
-                label="Model override"
-                harness={draft.defaultHarness}
-                models={models}
-                value={draft.model}
-                automaticLabel="Automatic · match task complexity"
-                onChange={model => setDraft({ ...draft, model: model ?? "" })}
-              />}
-            </label>
-            <label className="checkbox-label">
-              <input
-                type="checkbox"
-                checked={draft.localModel}
-                onChange={(e) =>
-                  setDraft({ ...draft, localModel: e.target.checked, model: "" })
-                }
+            </>
+          )}
+          {section === "privacy" && <TelemetrySettings notify={notify} />}
+          {section === "account" && (
+            <details className="settings-engine-advanced">
+              <summary>Advanced · use an existing Memtrace CLI</summary>
+              <div className="settings-section">
+                <div>
+                  <GitBranch size={17} />
+                  <span>
+                    <strong>Memtrace engine</strong>
+                    <small>
+                      Optional existing CLI setup. Beta uses its separately
+                      managed local engine.
+                    </small>
+                  </span>
+                  <span
+                    className={
+                      "connection-label " +
+                      (runtime.memtraceAvailable ? "available" : "")
+                    }
+                  >
+                    <span />
+                    {runtime.memtraceAvailable ? "Detected" : "Not found"}
+                  </span>
+                </div>
+                <label className="field">
+                  <span>Executable or JavaScript entry point</span>
+                  <input
+                    aria-label="Memtrace executable"
+                    placeholder="Auto-detect from PATH"
+                    value={draft.memtracePath}
+                    onChange={(e) =>
+                      setDraft({ ...draft, memtracePath: e.target.value })
+                    }
+                  />
+                </label>
+              </div>
+            </details>
+          )}
+          {section === "workers" && (
+            <>
+              <WorkerConnections
+                state={state}
+                runtime={runtime}
+                notify={notify}
+                onRuntime={onSaved}
+                compact
               />
-              <span>
-                Use a local Ollama model with Codex
-                <small>
-                  Requires a model name and an existing local Ollama
-                  installation.
-                </small>
-              </span>
-            </label>
-          </div>
-          <DictationSettings
-            settings={draft}
-            change={(speech, endpoint) =>
-              setDraft((value) => ({
-                ...value,
-                speech,
-                ...(endpoint !== undefined ? { speechEndpoint: endpoint } : {}),
-              }))
-            }
-          />
-          <ContextSettings
-            value={draft.contextAssistant}
-            change={(contextAssistant) =>
-              setDraft((value) => ({ ...value, contextAssistant }))
-            }
-          />
+              <div className="settings-section">
+                <div>
+                  <WorkflowIcon />
+                  <span>
+                    <strong>Worker defaults</strong>
+                    <small>
+                      Execution stays local. Your harness controls model
+                      authentication.
+                    </small>
+                  </span>
+                </div>
+                <div className="form-row">
+                  <label className="field">
+                    <span>Default harness</span>
+                    <Select
+                      value={draft.defaultHarness}
+                      onValueChange={(e) =>
+                        setDraft({
+                          ...draft,
+                          defaultHarness: e as Harness,
+                          model:
+                            e === draft.defaultHarness || draft.localModel
+                              ? draft.model
+                              : "",
+                        })
+                      }
+                    >
+                      <option value="codex">Codex</option>
+                      <option value="claude">Claude Code</option>
+                      <option value="cursor">Cursor</option>
+                      <option value="copilot">GitHub Copilot</option>
+                      <option value="dsh">DeepSeek Harness</option>
+                    </Select>
+                  </label>
+                  <label className="field">
+                    <span>Worker slots</span>
+                    <Select
+                      value={draft.maxWorkers}
+                      onValueChange={(e) =>
+                        setDraft({ ...draft, maxWorkers: Number(e) })
+                      }
+                    >
+                      {[1, 2, 3, 4, 6, 8].map((n) => (
+                        <option key={n} value={n}>
+                          {n} workers
+                        </option>
+                      ))}
+                    </Select>
+                  </label>
+                </div>
+                <label className="field">
+                  <span>Model override</span>
+                  {draft.localModel ? (
+                    <input
+                      aria-label="Model override"
+                      placeholder="Installed Ollama model name"
+                      value={draft.model}
+                      onChange={(e) =>
+                        setDraft({ ...draft, model: e.target.value })
+                      }
+                    />
+                  ) : (
+                    <ModelSelect
+                      label="Model override"
+                      harness={draft.defaultHarness}
+                      models={models}
+                      value={draft.model}
+                      automaticLabel="Automatic · match task complexity"
+                      onChange={(model) =>
+                        setDraft({ ...draft, model: model ?? "" })
+                      }
+                    />
+                  )}
+                </label>
+                <label className="checkbox-label">
+                  <input
+                    type="checkbox"
+                    checked={draft.localModel}
+                    onChange={(e) =>
+                      setDraft({
+                        ...draft,
+                        localModel: e.target.checked,
+                        model: "",
+                      })
+                    }
+                  />
+                  <span>
+                    Use a local Ollama model with Codex
+                    <small>
+                      Requires a model name and an existing local Ollama
+                      installation.
+                    </small>
+                  </span>
+                </label>
+              </div>
+            </>
+          )}
+          {section === "dictation" && (
+            <DictationSettings
+              settings={draft}
+              change={(speech, endpoint) =>
+                setDraft((value) => ({
+                  ...value,
+                  speech,
+                  ...(endpoint !== undefined
+                    ? { speechEndpoint: endpoint }
+                    : {}),
+                }))
+              }
+            />
+          )}
+          {section === "retrieval" && (
+            <ContextSettings
+              value={draft.contextAssistant}
+              change={(contextAssistant) =>
+                setDraft((value) => ({ ...value, contextAssistant }))
+              }
+            />
+          )}
           <div className="storage-note">
             <ShieldCheck size={14} />
             <span>

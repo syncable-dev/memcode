@@ -45,8 +45,8 @@ export function epicBranch(epic: Epic): string {
   );
 }
 
-// One checkout can host many story workers on the same epic branch.
-// Switching that checkout to another epic is serialized and requires a quiet fleet.
+// Supported engines give every epic its own checkout. Only the compatibility
+// path below switches a single shared checkout and requires a quiet fleet.
 export class EpicWorkspace {
   private locks = new Map<string, Promise<unknown>>();
   constructor(
@@ -97,15 +97,12 @@ export class EpicWorkspace {
       task.run.workspace = checkout.workspace;
       task.run.branch = branch;
       task.run.baseline = epic.baseRevision;
-      if (checkout.workspace !== canonical) {
-        const id = `${project.id}:epic:${epic.id}`;
-        if (task.run.analysisProjectId !== id)
-          task.run.analysisRepoId = undefined;
-        task.run.analysisProjectId = id;
-      } else {
-        task.run.analysisProjectId = undefined;
+      // Even when the epic is already open in the primary folder, use a
+      // separate current-source view. Its history import must not gate work.
+      const id = `${project.id}:epic:${epic.id}${checkout.workspace === canonical ? ":source" : ""}`;
+      if (task.run.analysisProjectId !== id)
         task.run.analysisRepoId = undefined;
-      }
+      task.run.analysisProjectId = id;
       task.updatedAt = now();
       return { epic, changedBranch: false };
     }
@@ -117,7 +114,7 @@ export class EpicWorkspace {
     );
     if (peers.some((peer) => peer.epicId !== epic.id))
       throw new Error(
-        "Another epic has active workers in this project. Stop or finish that fleet before switching epic branches.",
+        "The connected Memtrace engine does not support parallel epic checkouts. Reconnect the bundled Memtrace engine in Settings, then retry. Your running workers and their changes have been preserved.",
       );
     // Local runtime stores are not source changes. Install these exclusions
     // before checking whether it is safe to switch an otherwise clean project.

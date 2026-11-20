@@ -53,7 +53,10 @@ export async function ensureLocalRuntimeIgnored(root: string): Promise<void> {
 }
 
 /** Empty folders opened as projects need the same foundation as a new project. */
-export async function ensureProjectRepository(project: Project): Promise<void> {
+export async function ensureProjectRepository(
+  project: Project,
+  signal?: AbortSignal,
+): Promise<void> {
   if (!project.path) throw Error("Choose a local project folder first.");
   const path = project.path;
   let root: string | undefined;
@@ -74,12 +77,23 @@ export async function ensureProjectRepository(project: Project): Promise<void> {
         `Select the Git repository root (${root}) to connect this project.`,
       );
     await ensureLocalRuntimeIgnored(path);
+    const branch = await git(path, ["branch", "--show-current"]);
+    signal?.throwIfAborted();
+    if (!branch) throw Error("Choose a named local Git branch before analyzing this project.");
+    if (branch !== project.branch) {
+      if (project.analysisCheckout || project.analysisCurrentSource)
+        throw Error("This epic checkout changed branch. Its earlier analysis was not adopted.");
+      project.branch = branch;
+      if (project.analysis === "ready") project.analysis = "idle";
+      project.analysisNote = "Reading the current local branch.";
+    }
     return;
   }
   if ((await readdir(path)).length)
     throw Error(
       "This folder is not a Git repository. Initialize Git in it, then refresh code context, or select an existing repository.",
     );
+  signal?.throwIfAborted();
   await git(path, ["init", "--initial-branch=main"]);
   await writeFile(
     join(path, "README.md"),
@@ -101,5 +115,6 @@ export async function ensureProjectRepository(project: Project): Promise<void> {
     "-m",
     "Start project from MemCode brief",
   ]);
+  signal?.throwIfAborted();
   project.branch = "main";
 }

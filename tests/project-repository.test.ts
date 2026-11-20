@@ -91,6 +91,22 @@ async function existingRepository() {
   };
 }
 
+test("analysis follows the actual primary branch after restart without switching files or accepting a foreign epic branch", async () => {
+  const f = await existingRepository();
+  try {
+    await git(f.path, ["switch", "-c", "epic/current"]);
+    await writeFile(join(f.path, "source.ts"), "export const ready = false; // keep this edit\n");
+    const item = { ...project(f.path), analysis: "ready" as const, repoId: "existing" };
+    await ensureProjectRepository(item);
+    assert.equal(item.branch, "epic/current");
+    assert.equal(item.analysis, "idle");
+    assert.equal(item.repoId, "existing");
+    assert.match(await readFile(join(f.path, "source.ts"), "utf8"), /keep this edit/);
+    await assert.rejects(ensureProjectRepository({ ...item, branch: "epic/foreign", analysisCurrentSource: true }), /epic checkout changed branch/);
+    assert.equal(await git(f.path, ["branch", "--show-current"]), "epic/current");
+  } finally { await rm(f.directory, { recursive: true, force: true }); }
+});
+
 test("existing repository analysis preparation ignores runtime stores before they are created without adding a source ignore file", async () => {
   const f = await existingRepository();
   try {

@@ -3,6 +3,17 @@ import assert from "node:assert/strict";
 import { initialState } from "../src/seed";
 import type { TeamSnapshot } from "../src/team";
 import { applySharedSnapshot, emptySharedProjection, projectSharedState, sharedCommands } from "../runtime/team/projection";
+import { teamCommandSchema } from "../runtime/team/protocol";
+
+test("directory scopes produce portable bootstrap commands", () => {
+  const { state, task } = fixture();
+  task.scope = ["src/components/", "src\\hooks\\", "src/work.ts", "C:/PRIVATE/secret.ts", "src/../secret.ts", "src//invalid.ts", "src/\u0000invalid.ts"];
+  const projection = projectSharedState(state, task.projectId);
+  assert.deepEqual(projection.stories[0].scope, ["src/components", "src/hooks", "src/work.ts"]);
+  for (const command of sharedCommands(emptySharedProjection(), projection))
+    assert.equal(teamCommandSchema.safeParse(command).success, true);
+  assert.equal(task.scope[0], "src/components/", "local source scope is preserved");
+});
 
 function fixture() {
   const state = initialState();

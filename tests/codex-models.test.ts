@@ -41,6 +41,17 @@ test("an unavailable catalog delegates automatic choices to native defaults and 
   assert.throws(() => selectCodexModel(offline, "old", false), /cannot confirm access/);
 });
 
+test("current Astra, Sol and 6.1 account models remain selectable and explicit refresh retires an old denial", async () => {
+  const request = async (method: string) => method === "account/read" ? {account:{type:"chatgpt",id:"new-models"}} :
+    {data:["gpt-6.2-astra","gpt-6.2-sol","gpt-6.1-sol","gpt-6.1-terra","gpt-6-astra","gpt-5.6-sol"].map(model=>({model,displayName:model}))};
+  const catalog=await readCodexCatalog(command,{},request);
+  assert.equal(selectCodexModel(catalog,"gpt-6.2-astra",false),"gpt-6.2-astra");
+  assert.equal(selectCodexModel(catalog,"gpt-6.1-sol",false),"gpt-6.1-sol");
+  recordCodexModelFailure(catalog,"gpt-6.1-sol",{code:"model_not_found"});
+  assert.ok(!(await readCodexCatalog(command,{},request)).models.some(m=>m.id==="gpt-6.1-sol"));
+  assert.ok((await readCodexCatalog(command,{},request,true)).models.some(m=>m.id==="gpt-6.1-sol"));
+});
+
 test("automatic routing respects authenticated denials, falls back across harnesses, and preserves account isolation", async () => {
   const state = initialState();
   const task = { ...state.tasks[0], kind: "test" as const, assignment: "auto" as const };

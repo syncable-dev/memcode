@@ -18,10 +18,12 @@ export function FollowupQueue({
   task,
   comments,
   notify,
+  memberId,
 }: {
   task: WorkItem;
   comments: ReviewComment[];
   notify: (text: string) => void;
+  memberId?: string;
 }) {
   const key = "memcode-queue-edit:" + task.id;
   const [stored] = useState(() => {
@@ -189,36 +191,47 @@ export function FollowupQueue({
                     ? "Picked up"
                     : message.followupState === "paused"
                       ? "Paused for attention"
-                      : "Waiting for worker"}
+                      : message.deliveryState === "received"
+                        ? "Received on worker's device"
+                        : "Queued for worker"}
                 </strong>
                 <Time at={message.queuedAt ?? message.at} />
-                {!locked && editing !== message.id && (
-                  <div className="queue-actions">
-                    <button
-                      onClick={() => {
-                        setEditing(message.id);
-                        setText(message.reviewText ?? message.text);
-                        setEdits(
-                          Object.fromEntries(
-                            attached.map((note) => [note.id, note.text]),
-                          ),
-                        );
-                      }}
-                      aria-label={"Edit queued follow-up " + (index + 1)}
-                    >
-                      <Pencil size={12} />
-                      Edit
-                    </button>
-                    <button
-                      onClick={() => void cancel(message)}
-                      disabled={busy}
-                      aria-label={"Cancel queued follow-up " + (index + 1)}
-                    >
-                      <X size={12} />
-                      Cancel
-                    </button>
-                  </div>
+                {message.actor && (
+                  <span className="message-origin">
+                    {message.actor.name} · {message.actor.device}
+                  </span>
                 )}
+                {!locked &&
+                  (!message.actor ||
+                    !memberId ||
+                    message.actor.memberId === memberId) &&
+                  editing !== message.id && (
+                    <div className="queue-actions">
+                      <button
+                        onClick={() => {
+                          setEditing(message.id);
+                          setText(message.reviewText ?? message.text);
+                          setEdits(
+                            Object.fromEntries(
+                              attached.map((note) => [note.id, note.text]),
+                            ),
+                          );
+                        }}
+                        aria-label={"Edit queued follow-up " + (index + 1)}
+                      >
+                        <Pencil size={12} />
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => void cancel(message)}
+                        disabled={busy}
+                        aria-label={"Cancel queued follow-up " + (index + 1)}
+                      >
+                        <X size={12} />
+                        Cancel
+                      </button>
+                    </div>
+                  )}
               </header>
               {editing === message.id && !locked ? (
                 <form
@@ -299,8 +312,8 @@ export function FollowupQueue({
               )}
               {message.followupState === "paused" && !locked && (
                 <small className="queue-note">
-                  The worker needs attention. Your request is preserved; resolve
-                  the issue before continuing.
+                  {message.deliveryError ??
+                    "The worker needs attention. Your request is preserved; resolve the issue before continuing."}
                 </small>
               )}
             </article>

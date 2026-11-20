@@ -17,6 +17,8 @@ import { join } from "node:path";
 import { z } from "zod";
 import { TeamSpaceStore } from "./spaces";
 import { acceptWorkerReport, workerReport } from "./worker-activity";
+import { emptySessions, applySessionRecord, sessionPublish, sessionCommandInput, sessionCommandEdit, sessionReceipt, sessionActor, publishSession, addSessionCommand, editSessionCommand, receiptSessionCommand, type SessionRecord } from "./session-protocol";
+import type { TeamSessions } from "../../src/team-session";
 import { createMemtraceIdentityVerifier, teamIdentityAudience, type TeamIdentityChallenge, type TeamIdentityProofVerifier } from "../team-identity";
 import { sanitizeRepositoryURL } from "../repository-onboarding";
 import { teamInvitationLanding } from "./landing";
@@ -44,6 +46,7 @@ import {
 
 type Actor = { memberId: string; deviceId: string };
 type RecordEntry =
+  | SessionRecord
   | {
       kind: "create";
       snapshot: TeamSnapshot;
@@ -64,6 +67,7 @@ type RecordEntry =
   | { kind: "workflow_roles"; dedup: string; commandHash: string; event: TeamEvent; roles: TeamWorkflowRoles; assignLegacyReview?: true }
   | { kind: "planning_timestamps_repair"; dedup: string; commandHash: string; event: TeamEvent; sourceImportOpId: string; sourceImportHash: string; corrections: Array<{id:string;from:string;to:string}> };
 interface Room {
+  sessions: TeamSessions;
   workerActivity?: Map<string, TeamWorkerActivity>;
   snapshot: TeamSnapshot;
   history: TeamPlanningHistory;
@@ -172,6 +176,10 @@ function reply(response: ServerResponse, status: number, value: unknown) {
   response.end(JSON.stringify(value));
 }
 function applyRecord(room: Room, record: RecordEntry) {
+  if (record.kind === "worker_session" || record.kind === "worker_command") {
+    applySessionRecord(room.sessions, record);
+    return;
+  }
   const before = room.snapshot;
   if (record.kind === "invite")
     room.invitations.set(record.hash, {
@@ -245,6 +253,7 @@ function applyRecord(room: Room, record: RecordEntry) {
 }
 function roomFrom(record: Extract<RecordEntry, { kind: "create" }>): Room {
   return {
+    sessions: emptySessions(),
     snapshot: teamSnapshotSchema.parse(record.snapshot),
     history: emptyPlanningHistory(record.snapshot.workspaceId, record.snapshot.members[0]?.joinedAt ?? new Date(0).toISOString()),
     workflowRoles: emptyWorkflowRoles(record.snapshot.workspaceId),
@@ -521,7 +530,7 @@ export async function startTeamRelay(
         if (!allowedHosts.has(url.hostname))
           return error("HOST", "Unrecognized relay host.", 403);
         if (request.method === "GET" && url.pathname === "/v1/service")
-          return reply(response, 200, { version: 1, selfServiceTeams: options.selfServiceTeams === true, accountTeamLimit, workflowRoles: 1, workerActivity: 1 });
+          return reply(response, 200, { version: 1, selfServiceTeams: options.selfServiceTeams === true, accountTeamLimit, workflowRoles: 1, workerActivity: 1, workerSessions: 1 });
         if (request.method === "GET" && url.pathname === "/v1/team-auth/challenge") {
           for (const [key, value] of challenges) if (Date.parse(value.expiresAt) <= Date.now()) challenges.delete(key);
           if (challenges.size >= 500) return error("LIMIT", "Too many pending identity requests. Try again shortly.", 429);
@@ -840,6 +849,31 @@ export async function startTeamRelay(
             const event=teamEvent(room.snapshot,actor,input.opId,new Date().toISOString(),[],`Recovered ${corrections.length} original story timestamps from the immutable planning import`,"planning.timestamps-recovered");
             await commit(room,{kind:"planning_timestamps_repair",dedup:key,commandHash:hash,event,sourceImportOpId:room.history.import!.opId,sourceImportHash:room.history.import!.hash,corrections});
             return reply(response,200,{history:room.history,corrected:corrections.length,replayed:false});
+          });
+        }
+        if (url.pathname === "/v1/worker-sessions" && request.method === "GET") {
+          const { room } = authenticate(request, teamId.parse(url.searchParams.get("workspaceId")));
+          const after = Math.max(0, Number(url.searchParams.get("after") ?? 0));
+          if (!Number.isSafeInteger(after)) return error("SESSION_CURSOR", "Invalid worker session cursor.", 400);
+          return reply(response, 200, {version: 1, cursor: room.sessions.cursor,
+            sessions: room.sessions.sessions.filter(s => s.sequence > after),
+            commands: room.sessions.commands.filter(c => c.sequence > after)});
+        }
+        const sessionRoutes = ["/v1/worker-sessions", "/v1/session-commands", "/v1/session-commands/edit", "/v1/session-commands/receipt"];
+        if (request.method === "POST" && sessionRoutes.includes(url.pathname)) {
+          const path = url.pathname;
+          const schema = path === "/v1/worker-sessions" ? sessionPublish : path === "/v1/session-commands" ? sessionCommandInput : path.endsWith("/edit") ? sessionCommandEdit : sessionReceipt;
+          const input: any = schema.parse(await json(request, 8 * 1024 * 1024));
+          const { room, actor } = authenticate(request, input.workspaceId);
+          return await serialized(room, async () => {
+            const who = sessionActor(room.snapshot, actor), now = new Date().toISOString();
+            const record = path === "/v1/worker-sessions" ? publishSession(room.sessions, room.snapshot, who, input, now)
+              : path === "/v1/session-commands" ? addSessionCommand(room.sessions, room.snapshot, who, input, now)
+              : path.endsWith("/edit") ? editSessionCommand(room.sessions, who, input, now)
+              : receiptSessionCommand(room.sessions, room.snapshot, who, input, now);
+            const value = record.kind === "worker_session" ? record.session : record.command;
+            if (value.sequence > room.sessions.cursor) await commit(room, record);
+            return reply(response, 200, record.kind === "worker_session" ? room.sessions.sessions.find(s => s.id === record.session.id) : value);
           });
         }
         if (url.pathname === "/v1/worker-activity" && request.method === "GET") {

@@ -20,12 +20,14 @@ export function BetaAccess({
   existingCLI = false,
   onStatus,
   onAccountStatus,
+  welcome = false,
 }: {
   notify: (message: string) => void;
   compact?: boolean;
   existingCLI?: boolean;
   onStatus?: (status: MemCodeBetaStatus) => void;
   onAccountStatus?: (account: MemtraceAccount) => void;
+  welcome?: boolean;
 }) {
   const [status, setStatus] = useState<MemCodeBetaStatus>();
   const [error, setError] = useState("");
@@ -120,12 +122,16 @@ export function BetaAccess({
           <strong>
             {connected
               ? (status.account?.name ?? "Memtrace connected")
-              : "Connect Memtrace beta"}
+              : welcome
+                ? "Your Memtrace account"
+                : "Connect Memtrace beta"}
           </strong>
           <small>
             {connected && status.account?.email
               ? status.account.email
-              : "Your account. Your local code engine."}
+              : welcome
+                ? "One account for MemCode and Memtrace."
+                : "Your account. Your local code engine."}
           </small>
         </div>
         <span className={"beta-access-state " + (connected ? "connected" : "")}>
@@ -133,6 +139,8 @@ export function BetaAccess({
             <>
               <Check size={12} /> Connected
             </>
+          ) : welcome ? (
+            "In your browser"
           ) : (
             "Noncommercial beta"
           )}
@@ -149,10 +157,12 @@ export function BetaAccess({
         )}
       </header>
       <p>
-        {status?.detail ??
-          "Approve access with your Memtrace account. MemCode prepares the local engine for you."}
+        {welcome && !connected && !pending
+          ? "Continue in your browser to sign in or create a free account. Approve MemCode, then return here; we’ll connect automatically."
+          : (status?.detail ??
+            "Approve access with your Memtrace account. MemCode prepares the local engine for you.")}
       </p>
-      {!connected && !pending && (
+      {!welcome && !connected && !pending && (
         <p className="beta-access-note">
           Unlimited local Memtrace analysis during the noncommercial beta.
           Coding models use your own accounts and credits.
@@ -193,9 +203,11 @@ export function BetaAccess({
             <>
               <span className="beta-access-pending">
                 <Spinner />{" "}
-                {status?.canCancel === false
-                  ? "Preparing local engine…"
-                  : "Waiting for browser approval…"}
+                {status?.connectionPhase === "finishing" || status?.canCancel === false
+                  ? "Finishing sign-in…"
+                  : status?.connectionPhase === "starting"
+                    ? "Getting sign-in ready…"
+                    : "Waiting for browser approval…"}
               </span>
               {status?.canCancel !== false && (
                 <button
@@ -215,7 +227,11 @@ export function BetaAccess({
                 disabled={!status}
                 onClick={() => void act("connect")}
               >
-                {connected ? "Change account" : "Connect Memtrace beta"}
+                {connected
+                  ? "Change account"
+                  : welcome
+                    ? "Sign in or create account"
+                    : "Connect Memtrace beta"}
                 <ArrowUpRight size={13} />
               </button>
               {status?.accessMode === "beta" && (

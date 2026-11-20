@@ -4,10 +4,21 @@ import { teamWorkerPhases, type TeamClaim, type TeamWorkerActivity, type TeamWor
 import { teamId } from "./protocol";
 
 const modelId = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._:+-]{0,127}$/);
+function activityModel(harness: WorkItem["harness"], value: unknown) {
+  if (harness === "dsh" && typeof value === "string") {
+    try {
+      const route = JSON.parse(value);
+      if (Array.isArray(route) && route.length === 2 && route.every(part => typeof part === "string"))
+        value = route[1];
+    } catch { /* Plain IDs remain subject to the same allowlist. */ }
+  }
+  if (harness === "cursor" && typeof value === "string") value = value.split("[", 1)[0];
+  return modelId.safeParse(value).data;
+}
 const report = z.object({
   storyId: teamId, attemptId: teamId, epoch: z.number().int().positive(),
   startedAt: z.string().datetime(), phase: z.enum(teamWorkerPhases),
-  harness: z.enum(["claude", "codex", "cursor"]).optional(),
+  harness: z.enum(["claude", "codex", "cursor", "copilot", "dsh"]).optional(),
   requestedModel: modelId.optional(), actualModel: modelId.optional(),
 });
 export const workerReport = report.extend({ workspaceId: teamId }).strict();
@@ -43,7 +54,7 @@ export function reportWorker(task: WorkItem, claim: TeamClaim, workspaceId: stri
   return {
     workspaceId, storyId: claim.storyId, attemptId: claim.attemptId, epoch: claim.epoch,
     startedAt: run.startedAt, phase,
-    ...(routed ? { harness: task.harness, requestedModel: modelId.safeParse(task.route?.model).data } : {}),
+    ...(routed ? { harness: task.harness, requestedModel: activityModel(task.harness, task.route?.model) } : {}),
     actualModel: modelId.safeParse(actual).data,
   };
 }

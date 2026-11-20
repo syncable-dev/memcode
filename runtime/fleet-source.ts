@@ -2,7 +2,7 @@ import { readFile, realpath, stat, mkdir, writeFile } from "node:fs/promises";
 import { join, resolve, relative, isAbsolute } from "node:path";
 import { createHash } from "node:crypto";
 import type { Project, WorkItem } from "../src/shared";
-import { within, now } from "./local";
+import { within, now, git } from "./local";
 
 /** A Class B refresh reads the current bounded source, rather than escalating overlap. */
 export async function rereadFleetSource(project: Project, task: WorkItem) {
@@ -14,10 +14,16 @@ export async function rereadFleetSource(project: Project, task: WorkItem) {
       ...(task.scope ?? []),
       ...(task.evidence?.symbols ?? []).map((symbol) => symbol.file),
     ]),
-  ].slice(0, 20);
+  ];
   const records = [];
+  const seen = new Set<string>();
+  let truncated = false;
   let remaining = 16000;
   for (const file of files) {
+    if (records.length >= 20) {
+      truncated = true;
+      break;
+    }
     const candidate = resolve(workspace, file);
     if (
       !within(workspace, candidate) &&
@@ -36,7 +42,37 @@ export async function rereadFleetSource(project: Project, task: WorkItem) {
     }
     if (!within(root, path))
       throw Error("Fleet source scope resolves outside this project.");
+    if (seen.has(path)) continue;
+    seen.add(path);
     const info = await stat(path);
+    if (info.isDirectory()) {
+      // A declared folder is a normal refactoring scope. Resolve it to the
+      // same tracked/untracked Git inventory used by change attribution;
+      // never recursively walk caches or follow a directory outside the repo.
+      const scope = relative(root, path).replaceAll("\\", "/") || ".";
+      const children = (
+        await git(root, [
+          "--literal-pathspecs",
+          "ls-files",
+          "--cached",
+          "--others",
+          "--exclude-standard",
+          "-z",
+          "--",
+          scope,
+        ])
+      )
+        .split("\0")
+        .filter(Boolean)
+        .filter(
+          (child) =>
+            !/(^|\/)(\.git|\.memcode|\.memdb|\.memtrace|node_modules)(\/|$)/.test(
+              child,
+            ),
+        );
+      files.push(...children);
+      continue;
+    }
     if (!info.isFile())
       throw Error("Choose exact source files for a shared Fleet edit.");
     if (info.size > 1_000_000)
@@ -59,7 +95,12 @@ export async function rereadFleetSource(project: Project, task: WorkItem) {
       truncated: text.length < fullText.length,
     });
   }
-  const result = { at: now(), basis: "literal current files", files: records };
+  const result = {
+    at: now(),
+    basis: "literal current files",
+    files: records,
+    truncated,
+  };
   if (task.run.workspace) {
     const directory = join(task.run.workspace, ".memcode", "workers", task.id);
     await mkdir(directory, { recursive: true });
