@@ -30,8 +30,10 @@ Official references:
 
 Strict ACP fixtures verify the launch file, allowlist and unchanged original
 config. A real Copilot `claude-haiku-5.5` turn called a private test MCP tool and
-returned its unpredictable response in 6,559 ms. Full native MemCode gateway
-continuation is being recorded separately; the small probe does not replace it.
+returned its unpredictable response in 6,559 ms. The subsequent real native
+continuation also passed: MemCode understand, Fleet inspect and checkpoint were
+observed, the same provider conversation continued, and all eight tests passed.
+Checkpoint correctly requires a new inspection before another edit.
 
 ## Windows evidence and limits
 
@@ -47,9 +49,9 @@ continuation is being recorded separately; the small probe does not replace it.
   the Mac's already configured provider if available; never paste keys into Git.
 - Missing provider token counters remain unavailable, not zero or estimated.
 - Hosted Team accepts Copilot/DSH and advertises `workerSessions:1`. Matching web
-  collector/admin fixes are at private Memtrace branch
-  `fix/memcode-beta18-connectors-telemetry`, commit `2b13c82d9`. Its 36 targeted
-  tests, typecheck and production build pass. That web change is not yet deployed.
+  collector/admin fixes were merged through Memtrace PR #1965 as `fac8e49df`.
+  Its 36 targeted tests, typecheck and production build pass. Vercel reports a
+  successful deployment and the public MemCode page returns HTTP 200.
 
 ## Mac validation
 

@@ -39,16 +39,40 @@ Private receipts are under Windows `tmp/memcode-beta18-final-verification`:
 `optimized-big-review.private.json` and `beta18-final-app-tests.log`.
 Do not publish source text, credentials or private account details.
 
-## Latest fix requiring native repetition
+## Final Windows native repetition
 
 Claude's preparation timed out when a native source-verification walk was treated
 as an unreported startup job. The source-only view now follows verification
 directly. A stable completed peer save can request ordinary incremental catch-up;
 writer arbitration and a fresh certificate remain mandatory. Partial revisions
 are not accepted and primary history validation is unchanged. The 61 targeted
-publication checks and full suite pass. The new native Claude retry, Copilot
-full-gateway continuation, repeated refresh and reopen checks are recorded
-separately. A separate fresh optimized import is also running.
+publication checks and full suite pass. The actual Claude retry completed with
+confirmed `claude-opus-5-5` and nine passing tests. Copilot continued the same
+conversation, used MemCode understand and Fleet inspect/checkpoint, and passed
+eight tests with `claude-haiku-5.5`.
+
+The final native Improve refreshes took 30,935 and 15,689 ms and produced current
+checkpoints. Insights displayed actual source measurements. Both normal app
+reopens preserved the same store, seven projects, 15 stories, saved review/checks
+and worker approvals. The second cold diagnostic exceeded its short limit;
+a subsequent native check certified the exact source with no failures. A fresh
+review on app `ef14119` completed in 88,101 ms, including its separate model
+reviewer. All 51 function rows and 255 metric cells render, including explicit
+before-only/after-only values for removed and added functions. The 30 passing
+checks remain linked. The real native smoke and graceful shutdown also pass.
+
+The fresh optimized import completed 155 episodes (517,973 ms for its
+embedding/replay stage, with embeddings deliberately skipped). Its historical
+cutoff also has 25,421 unique nodes and 127,225 unique edges, no duplicates and
+`needs_replay: false`. The recovered store still preserves all 400 sampled
+records and nine full payloads; 315 redundant intervals alone were closed.
+
+See [sanitized Windows receipt](beta18-windows-ef14119-native-acceptance.json).
+This is native functional validation with a rebuilt runtime override, not the
+final signed-installer acceptance. The CLI-mode test's external owner had to be
+restarted after the cold backup; it is not evidence of app-managed ownership of
+an external manifest. Mac must still validate its bundled managed-engine flow.
+No matching Mac result/archive or final two-device receipt has arrived.
 
 Do not package rejected engine `cee3849`: its payload-equality guard rejected
 parser annotation versions. Candidate `69e7a3c0b` reconciles redundant closed
