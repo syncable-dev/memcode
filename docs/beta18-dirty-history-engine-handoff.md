@@ -35,7 +35,22 @@ its payload-equality guard incorrectly rejected annotation versions such as a
 type-only import. The failed attempt retained the store ID and exact old journal
 prefix, with the same 315 duplicate historical rows. Do not package that engine.
 `69e7a3c0b` corrects that guard and adds a real MemDB fixture retaining two
-different annotation payloads. Its new tests/build/native checks are in progress.
+different annotation payloads. All 235 graph and 84 replay tests now pass on
+Windows. A dev-engine native run recovered the retained store: its saved Git
+cutoff contains 25,421 unique nodes and 127,225 unique edges, with zero duplicate
+identities. The original journal prefix and store ID survive. All 400 sampled
+prior relationship records and nine full payload samples remain unchanged;
+315 redundant intervals were shortened. Two subsequent native Improve refreshes
+finished in 4,056 and 4,055 ms, created current checkpoints, and Insights showed
+the real measurements and aligned source. This is functional proof with an
+unoptimized dev engine, not acceptance of the optimized release binary.
+
+The first cold dev-engine refresh exceeded the UI probe's four-minute window
+and produced a partial checkpoint while source verification settled. A new
+Copilot native story also reached a graph-navigation preparation timeout before
+provider execution. Both observations are recorded failures, not waived gates.
+The optimized build and retained replay/worker/review checks are still running;
+repeat the cold native paths with the optimized build before accepting them.
 
 The c3644b9 Windows native desktop smoke passed, including planning, isolated
 artifact rendering and graceful shutdown. The saved MC-007 review displayed all
