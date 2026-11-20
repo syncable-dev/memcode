@@ -1,95 +1,95 @@
 {
   "bundles": {
     "macos-aarch64": {
-      "id": "1d0e8cb4a-beta.1",
-      "engineVersion": "1.2.21",
+      "id": "3a87836d4-beta.1",
+      "engineVersion": "1.2.22",
       "purpose": "memcode-engine-beta",
       "platform": "macos",
       "arch": "aarch64",
-      "url": "https://d12b8r6xagt10r.cloudfront.net/releases/memtrace-engine/1d0e8cb4a/1d0e8cb4a-beta.1-macos-aarch64-3ed166eb0081ff62.zip",
-      "sha256": "3ed166eb0081ff629a632af06a0c63ea67ca27134dd39637e6674dcd3539db36",
-      "bytes": 75074884,
+      "url": "https://d12b8r6xagt10r.cloudfront.net/releases/memtrace-engine/3a87836d4/3a87836d4-beta.1-macos-aarch64-e8b0565600d5a587.zip",
+      "sha256": "e8b0565600d5a587c0085295890361644f49e133c9401c2f8aacc70dc75a2138",
+      "bytes": 75170025,
       "files": [
         {
-          "name": "memtrace",
-          "sha256": "55f65a3a0acfe49595eea8a0f92b08fd203f67109acd8fb2842f96a8b3293fb6",
-          "bytes": 168161936
-        },
-        {
-          "name": "memcore-server",
-          "sha256": "9f3bda7e7d4fef601d538ad79ead7cf3b76fa0359020ae28c5e1b890f9eb334a",
-          "bytes": 22524576
-        },
-        {
-          "name": "memcortex-daemon",
-          "sha256": "2f8746a956f909d5683cebc20138dfc36e01140856e59bed1f25b8fa45ede1bf",
-          "bytes": 41304592
-        },
-        {
-          "name": "memcortex-mcp",
-          "sha256": "e978058599b8d95def3b656f70ff12d7d0127315516d165c2daeeca725c76f26",
-          "bytes": 10557584
-        },
-        {
           "name": "BETA-USAGE.txt",
-          "sha256": "391cf5739b15b518f5bb0c7957b606926538c2f879d09abb49019d6b0cc645a1",
-          "bytes": 1221
-        },
-        {
-          "name": "LICENSE",
-          "sha256": "a312a2fe4dc83634aa35f115a1bff571a1bdc1e3a4ed604a5be7941b566ea3a6",
-          "bytes": 3049
-        },
-        {
-          "name": "LICENSE-MEMDB.txt",
-          "sha256": "5bb41bad8c267da43e09fbb35a7acba43864aafb40e3f91a0a880795e7c7cef5",
-          "bytes": 1737
-        },
-        {
-          "name": "NOTICE",
-          "sha256": "ac6d438a063247a369d154722f4c8c210baa3e79d55dcf2686a5b9b1efaa981e",
-          "bytes": 781
-        },
-        {
-          "name": "THIRD-PARTY-NOTICES.txt",
-          "sha256": "8b6b2440f7b60a79adfb1026eb790db6f91c469d606c5cab2777d30750a32f5a",
-          "bytes": 10819
+          "bytes": 1221,
+          "sha256": "391cf5739b15b518f5bb0c7957b606926538c2f879d09abb49019d6b0cc645a1"
         },
         {
           "name": "ENGINE-PROVENANCE.json",
-          "sha256": "a2087584eb86340386f700b8154952ec457587ee3ed63666b056c07b8dd29a0c",
-          "bytes": 2338
+          "bytes": 2101,
+          "sha256": "448db11cc05729b97d715af3c59e8a68da11fa9f0e7562d0c4d94a80592db527"
+        },
+        {
+          "name": "LICENSE",
+          "bytes": 3049,
+          "sha256": "a312a2fe4dc83634aa35f115a1bff571a1bdc1e3a4ed604a5be7941b566ea3a6"
+        },
+        {
+          "name": "LICENSE-MEMDB.txt",
+          "bytes": 1737,
+          "sha256": "5bb41bad8c267da43e09fbb35a7acba43864aafb40e3f91a0a880795e7c7cef5"
+        },
+        {
+          "name": "NOTICE",
+          "bytes": 781,
+          "sha256": "ac6d438a063247a369d154722f4c8c210baa3e79d55dcf2686a5b9b1efaa981e"
+        },
+        {
+          "name": "THIRD-PARTY-NOTICES.txt",
+          "bytes": 10819,
+          "sha256": "8b6b2440f7b60a79adfb1026eb790db6f91c469d606c5cab2777d30750a32f5a"
+        },
+        {
+          "name": "memcore-server",
+          "bytes": 22549504,
+          "sha256": "f9fb7bbadab6526a00dac61e4d44784bb2fe782ca6694bd46c42b807d4b2cf7e"
+        },
+        {
+          "name": "memcortex-daemon",
+          "bytes": 41364992,
+          "sha256": "adb7537676d08432b5b9c44116257b2c5b386d6d79594c5303b41f4ecb4ad019"
+        },
+        {
+          "name": "memcortex-mcp",
+          "bytes": 10590496,
+          "sha256": "d184cac00b6fbe2ca27375b092265239d7d5073c937ba6454ace2f234d1412ec"
+        },
+        {
+          "name": "memtrace",
+          "bytes": 168177984,
+          "sha256": "e6bb42a38cae134273951487f92ea95e6d9efb8c570a90f1ed2da2b99d429c0f"
         }
       ]
     },
     "windows-x86_64": {
-      "id": "1d0e8cb4a-beta.1",
-      "engineVersion": "1.2.21",
+      "id": "3a87836d4-beta.1",
+      "engineVersion": "1.2.22",
       "purpose": "memcode-engine-beta",
       "platform": "windows",
       "arch": "x86_64",
-      "url": "https://d12b8r6xagt10r.cloudfront.net/releases/memtrace-engine/1d0e8cb4a/1d0e8cb4a-beta.1-windows-x86_64-cc43db5e490c3c43.zip",
-      "sha256": "cc43db5e490c3c43b4787070c5dc36b97885ee82719b4498c143b9fb04ec45bc",
-      "bytes": 73888307,
+      "url": "https://d12b8r6xagt10r.cloudfront.net/releases/memtrace-engine/3a87836d4/3a87836d4-beta.1-windows-x86_64-9c01729f996e2cdf.zip",
+      "sha256": "9c01729f996e2cdfb71c64d42d1d7a2d5a63377fa84550f915814cae7ea3a3fe",
+      "bytes": 74000361,
       "files": [
         {
           "name": "memtrace.exe",
-          "sha256": "5bca9c5ef52417abd909a89a8c878f74760f322895561de8b0da3ce73ad6c4b7",
-          "bytes": 191740928
+          "sha256": "c7420b266a8ca415a977b10af5b0134e5b895bb6f10b82eb0ae4bc026e5ed6c8",
+          "bytes": 191953920
         },
         {
           "name": "memcore-server.exe",
-          "sha256": "75daf4bd90f597ce0fb37bed45b1678e17a5d592e7e1dcfb63d4fc540087c1cc",
-          "bytes": 23886848
+          "sha256": "2a07bd56570da76d2a65ecbbec287aadaf1be092335f37f80d4dd150c98efd24",
+          "bytes": 23914496
         },
         {
           "name": "memcortex-daemon.exe",
-          "sha256": "bf5793deb7b8553cdb9b476b930e68727478acce9fb77a1b09712017f16d9d17",
-          "bytes": 17302016
+          "sha256": "92c67ca7a3d5d7621247c0810321d6746210d968f05c0145b64f465480cfa26a",
+          "bytes": 17356800
         },
         {
           "name": "memcortex-mcp.exe",
-          "sha256": "3a67d4f3ef78bbbcb8bc36a8657e6667bc3d3562f8db8dcb31e58369acf59311",
+          "sha256": "f440da4d245335a1f2db3a3e32d586f0be6a225cf5d9d4f6be9cc70594f32b73",
           "bytes": 9394688
         },
         {
@@ -154,8 +154,8 @@
         },
         {
           "name": "ENGINE-PROVENANCE.json",
-          "sha256": "0d20dd3a1a363774dae3c25b80854352973bb001f054010b906825b5a3424331",
-          "bytes": 11212
+          "sha256": "802dc9ea8ff0e4ebf7c2afef58e78ba413f8c41932a46e9ea561176ab8b0660c",
+          "bytes": 5650
         }
       ]
     }
