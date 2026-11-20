@@ -195,6 +195,10 @@ try {
   });
   await page.getByRole("button", { name: "Workspace", exact: true }).click();
   await page.getByRole("button", { name: /^Settings/ }).click();
+  await page
+    .getByRole("navigation", { name: "Settings sections" })
+    .getByRole("button", { name: "Updates", exact: true })
+    .click();
   await expect(page.getByText("Development build", { exact: true })).toBeVisible();
   await page.screenshot({ path: join(out, "tauri-native-settings.png"), animations: "disabled" });
   await page.getByRole("button", { name: "Cancel", exact: true }).click();

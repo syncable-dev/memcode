@@ -54,7 +54,7 @@ export function WorkerMark({
   task: WorkItem;
   small?: boolean;
 }) {
-  return task.assignment === "auto" && !task.route ? (
+  return task.assignment === "auto" && !task.route && !task.sharedSession ? (
     <span
       title="Automatic assignment"
       className={"harness-mark auto " + (small ? "small" : "")}
@@ -62,7 +62,7 @@ export function WorkerMark({
       <Sparkles size={small ? 12 : 17} />
     </span>
   ) : (
-    <HarnessMark id={task.harness} small={small} />
+    <HarnessMark id={task.sharedSession?.harness ?? task.harness} small={small} />
   );
 }
 

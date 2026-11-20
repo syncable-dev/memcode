@@ -64,6 +64,8 @@ const harnessNames: Record<Harness, string> = {
   codex: "Codex",
   claude: "Claude Code",
   cursor: "Cursor",
+  copilot: "GitHub Copilot",
+  dsh: "DeepSeek Harness",
 };
 
 function assignGroups(
@@ -115,7 +117,7 @@ function priorityGroups(tasks: WorkItem[]): WorkGroup[] {
 function harnessGroups(tasks: WorkItem[]): WorkGroup[] {
   const definitions = [
     { id: "auto", name: "Automatic routing", color: "#67a78b" },
-    ...(["codex", "claude", "cursor"] as const).map((harness) => ({
+    ...(["codex", "claude", "cursor", "copilot", "dsh"] as const).map((harness) => ({
       id: harness,
       name: harnessNames[harness],
       color: "#9aaba0",

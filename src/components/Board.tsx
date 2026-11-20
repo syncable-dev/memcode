@@ -253,7 +253,7 @@ function BoardContent({
     />
   );
   const assignment = (task: WorkItem) =>
-    task.assignment === "auto" && !task.route
+    task.sharedSession ? harnessNames[task.sharedSession.harness] : task.assignment === "auto" && !task.route
       ? "Automatic"
       : harnessNames[task.harness];
   if (mode === "list")

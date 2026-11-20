@@ -41,6 +41,48 @@ const verifyIdentity: TeamIdentityProofVerifier = async (proof, challenge) => {
     email: value.subject + "@example.test",
   };
 };
+
+test("a rejected initial share preserves the original story and worker evidence", async () => {
+  const f = await fixture();
+  const ownerState = workspace("share-preservation");
+  ownerState.tasks[0].run = { state: "finished", sessionId: "local-provider-session", workspace: "/private/epic" };
+  const original = structuredClone(ownerState.tasks[0]);
+  const ownerDir = join(f.root, "owner");
+  let rejectStory = true, rejectedRequests = 0;
+  const owner = new TeamSyncClient(() => ownerState, ownerDir, async () => {}, {
+    background: false,
+    identityProof: async (challenge) => JSON.stringify({ ...challenge, subject: "alice" }),
+    fetch: (input, init) => {
+      if (rejectStory && String(input).includes("/v1/commands") && String(init?.body).includes('"type":"story.put"')) {
+        rejectedRequests++;
+        return Promise.resolve(Response.json({ error: { code: "INVALID_INPUT", message: "Fixture rejects the initial story" } }, { status: 400 }));
+      }
+      return fetch(input, init);
+    },
+  });
+  try {
+    await owner.initialize();
+    await writeFile(join(ownerDir, "team", "service.private.json"), JSON.stringify({ endpoint: f.relay.url, bootstrapSecret: f.relay.adminCapability }));
+    const team = await owner.createTeamWorkspace({ name: "Preserve original work" });
+    await assert.rejects(owner.shareProject({ teamId: team.id, projectId: "share-preservation" }), /imported planning must match/);
+    assert.deepEqual(ownerState.tasks, [original], "a partial shared board cannot delete original local work");
+    assert.equal(owner.status("share-preservation")?.planningHistory?.state, "error");
+    await owner.synchronize("share-preservation").catch(() => {});
+    assert.equal(rejectedRequests, 1, "unchanged rejected creates must not loop");
+    rejectStory = false;
+    ownerState.tasks[0].scope = ["src/corrected/"];
+    await owner.synchronize("share-preservation");
+    const status = owner.status("share-preservation")!;
+    assert.equal(status.workspace.stories.length, 1);
+    assert.equal(status.planningHistory?.state, "synced");
+    assert.deepEqual(status.workspace.stories[0].scope, ["src/corrected"]);
+    assert.equal(ownerState.tasks[0].run.sessionId, original.run.sessionId);
+    assert.deepEqual(ownerState.tasks[0].messages, original.messages);
+  } finally {
+    await owner.close();
+    await f.close();
+  }
+});
 function workspace(id: string): AppState {
   const state = initialState(),
     at = "2026-11-15T12:00:00Z";
@@ -260,7 +302,8 @@ test("two devices on one account see only the current claim owner's reported wor
     await waitForPeer(() => peerClaim()?.activity?.phase === "testing", "an open teammate's board receives phase changes without a manual refresh");
     story.run.state = "finished";
     await owner.release(story.id, projectId);
-    await waitForPeer(() => !peerClaim(), "the remote worker disappears automatically when its claim is released");
+    await waitForPeer(() => !peer.status(joined.projectId)?.workspace.claims.some(c => c.storyId === remoteStory.id), "the running claim disappears automatically when released");
+    assert.equal(peerClaim()?.session?.state, "finished", "the finished conversation stays available for teammates to continue");
     await peer.acquire(remoteStory.id, joined.projectId);
     await owner.synchronize(projectId);
     assert.equal(peerClaim()?.activity, undefined);

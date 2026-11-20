@@ -109,6 +109,7 @@ export class MemtraceAccountManager {
   private signedOut = false;
   private reconnectRequired = false;
   private policyReady = false;
+  private sessionVerified = false;
   private policyFailure = false;
   private readonly ready: Promise<void>;
   private writes: Promise<void> = Promise.resolve();
@@ -128,6 +129,7 @@ export class MemtraceAccountManager {
       authMode: managedBy.length ? "environment" : "session",
       managedBy,
       signedOut: this.signedOut,
+      sessionVerified: !this.signedOut && !this.reconnectRequired && this.sessionVerified,
       reconnectRequired: this.reconnectRequired,
       // A cached workspace owner is not proof of the newly chosen person.
       ...(this.signedOut || this.reconnectRequired ? { principal: undefined, organizationId: undefined } : {}),
@@ -160,6 +162,8 @@ export class MemtraceAccountManager {
     if (this.changing || this.login) throw Error("Wait for the Memtrace account action before starting a worker.");
     if (this.signedOut) throw Error("Sign in with Memtrace before starting a worker.");
     if (this.reconnectRequired) throw Error("Restart MemCode after changing the Memtrace session before starting workers. Restart any separately running Memtrace workspace too.");
+    if (!this.sessionVerified && !memtraceManagedAuth(this.environment()).length)
+      throw Error("Connect your Memtrace account in Settings before starting a worker. Choose Connect Memtrace beta, or explicitly connect your existing CLI setup.");
   }
   private invalidate() {
     this.generation++;
@@ -195,13 +199,15 @@ export class MemtraceAccountManager {
     const generation = this.generation;
     const command = await findCommand("memtrace", this.configuredPath());
     if (this.closing || generation !== this.generation) return this.current;
-    if (!command)
+    if (!command) {
+      this.sessionVerified = false;
       return (this.current = this.decorated({
         status: "unavailable",
         label: "Memtrace not found",
         detail: "Install Memtrace or choose its executable in Settings.",
         loginPending: !!this.login,
       }));
+    }
     try {
       this.statusAbort = new AbortController();
       const { stdout } = await execute(
@@ -220,6 +226,7 @@ export class MemtraceAccountManager {
       const raw = JSON.parse(stdout.slice(start));
       if (this.closing || generation !== this.generation) return this.current;
       const result = parseMemtraceStatus(raw);
+      this.sessionVerified = raw.auth_session?.state === "Valid" && raw.auth_session?.degraded === false;
       if (
         this.confirmedByLoginAt &&
         result.status === "unknown" &&
@@ -238,6 +245,7 @@ export class MemtraceAccountManager {
       });
     } catch {
       if (this.closing || generation !== this.generation) return this.current;
+      this.sessionVerified = false;
       this.current = this.decorated({
         status: "unknown",
         label: "Memtrace status unavailable",

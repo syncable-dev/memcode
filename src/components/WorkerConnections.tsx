@@ -65,7 +65,7 @@ export function WorkerConnections({
     [savingDefault, setSavingDefault] = useState<Harness>();
   const selectedHarness = selected?.harness;
   const readyToApprove =
-    selected?.auth === "authenticated" || selected?.auth === "local";
+    selected?.auth === "authenticated" || selected?.auth === "local" || selected?.auth === "provider-managed";
   const busyRef = useRef(busy);
   busyRef.current = busy;
   const onRuntimeRef = useRef(onRuntime);
@@ -242,6 +242,7 @@ export function WorkerConnections({
           </p>
         </div>
         <button
+          type="button"
           className="button secondary worker-connections-refresh"
           onClick={() => void refresh(true)}
           disabled={loading || busy || !health.available}
@@ -390,6 +391,7 @@ export function WorkerConnections({
                     </span>
                     {onCreateWork && (
                       <button
+                        type="button"
                         className="text-button"
                         onClick={() => onCreateWork(installed.id)}
                       >
@@ -397,6 +399,7 @@ export function WorkerConnections({
                       </button>
                     )}
                     <button
+                      type="button"
                       className="icon-button"
                       aria-label={"Disconnect " + installed.name}
                       title={
@@ -413,6 +416,7 @@ export function WorkerConnections({
                 ) : approvalSaved ? (
                   <>
                     <button
+                      type="button"
                       className="button secondary worker-connect-button"
                       disabled={loading || busy}
                       onClick={() => void refresh(true)}
@@ -421,6 +425,7 @@ export function WorkerConnections({
                       Check again
                     </button>
                     <button
+                      type="button"
                       className="text-button"
                       onClick={() => {
                         if (status?.installed) showConnection(status);
@@ -434,6 +439,7 @@ export function WorkerConnections({
                       <ArrowUpRight size={12} />
                     </button>
                     <button
+                      type="button"
                       className="icon-button"
                       aria-label={"Disconnect " + installed.name}
                       disabled={busy || active > 0}
@@ -444,6 +450,7 @@ export function WorkerConnections({
                   </>
                 ) : !available ? (
                   <button
+                    type="button"
                     className="button secondary worker-connect-button"
                     disabled={loading || busy}
                     onClick={() =>
@@ -459,6 +466,7 @@ export function WorkerConnections({
                   </button>
                 ) : (
                   <button
+                    type="button"
                     className="button secondary worker-connect-button"
                     disabled={busy || loading}
                     onClick={() => {
@@ -506,6 +514,7 @@ export function WorkerConnections({
             <header>
               <HarnessMark id={selected.harness} />
               <button
+                type="button"
                 className="icon-button"
                 aria-label="Close connection approval"
                 onClick={() => setSelected(undefined)}
@@ -534,6 +543,7 @@ export function WorkerConnections({
                     <code>{selected.loginCommand}</code>
                     <div className="connection-sign-in-actions">
                       <button
+                        type="button"
                         className="button secondary"
                         onClick={() =>
                           void copySignInCommand(selected.loginCommand)
@@ -543,6 +553,7 @@ export function WorkerConnections({
                       </button>
                       {desktopPlatform() === "macos" && (
                         <button
+                          type="button"
                           className="button secondary"
                           onClick={() =>
                             void window.memcode
@@ -566,6 +577,7 @@ export function WorkerConnections({
                 )}
                 <div className="connection-sign-in-actions">
                   <button
+                    type="button"
                     className="button primary"
                     disabled={loading}
                     onClick={() => void checkSignIn()}
@@ -610,6 +622,8 @@ export function WorkerConnections({
                   <p>
                     {selected.auth === "local"
                       ? "Using the configured local model."
+                      : selected.auth === "provider-managed"
+                        ? "This CLI manages provider sign-in and confirms model access when work starts. If needed, use the CLI’s sign-in or provider setup first."
                       : "An existing provider sign-in was detected."}
                   </p>
                 </details>
@@ -625,6 +639,7 @@ export function WorkerConnections({
                 <footer>
                   <small>Connecting does not start a coding task.</small>
                   <button
+                    type="button"
                     className="button primary"
                     disabled={!approved || busy}
                     onClick={() => void connect()}

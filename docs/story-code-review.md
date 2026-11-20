@@ -3,7 +3,10 @@
 Move a finished story into **Code review** to queue its review. Open its card and
 choose **Code review** between Changes and Artifacts to follow the checks. You can
 also start or repeat a review manually while the story is in that lane. The initial
-checks run in the local engine; the reviewer model is used when you ask it a question.
+checks run in the local engine. A separate read-only model reviewer then explains
+the captured patch and measurements; you can ask follow-up questions in that same
+review discussion. It normally uses the story's selected harness and model, with
+the confirmed reviewer model shown in the report.
 
 The review captures the story's attributed changes, runs Memtrace's native code
 review detectors, measures the changed functions, traces their impact, and links
@@ -25,6 +28,18 @@ function name to open its current source or inspect the captured changes for a
 removed declaration. **Matched function averages** shows how maintainability,
 cognitive complexity, cyclomatic complexity and nesting changed across functions
 with both measurements. Each chart gives its own matched function count.
+
+A native maintainability value of **0** is a measured result. It is different
+from a dash, which means the engine did not supply that measurement. Reducing
+complexity does not guarantee that every other metric increases.
+
+In a team project, the saved review appears on every member's card, including
+all per-function measurements and coverage notes. Ask a question from either
+computer; the existing review host answers in the same shared discussion.
+**Review on [device]** requests a new review on that host while the story is in
+the Code review lane. The implementation session and its approvals stay there.
+If the host is offline, the request remains queued. The application does not
+run a second review against a different local checkout.
 
 Both sides are measured by Memtrace's native AST parser from the captured source,
 without changing your checkout or opening another index. New and removed

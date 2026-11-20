@@ -86,7 +86,7 @@ function fixture() {
       return reads.shift() ?? certificate();
     },
   };
-  const run = () =>
+  const run = (capturedPaths: string[] = []) =>
     prepareReviewAnalysis(
       engine,
       project,
@@ -94,6 +94,7 @@ function fixture() {
       () => {
         if (cancelled) throw Error("cancelled by user");
       },
+      capturedPaths,
     );
   return {
     project,
@@ -115,13 +116,11 @@ function fixture() {
   };
 }
 
-test("private review preparation joins owner retirement, analysis and watch before accepting the exact native certificate", async () => {
+test("private review preparation reuses the live owner without retirement or duplicate analysis", async () => {
   const f = fixture(),
     before = structuredClone(f.project);
   const result = await f.run();
   assert.deepEqual(f.calls, [
-    "release",
-    "analyze:cached",
     "watch",
     "get_query_revision",
   ]);
@@ -135,8 +134,6 @@ test("one real incremental repair completes a known unfinished publication witho
   f.reads.splice(0, 1, f.certificate("partial"), f.certificate());
   assert.equal((await f.run()).repoId, "repo");
   assert.deepEqual(f.calls, [
-    "release",
-    "analyze:cached",
     "watch",
     "get_query_revision",
     "analyze:repair",
@@ -145,6 +142,36 @@ test("one real incremental repair completes a known unfinished publication witho
   ]);
   assert.equal(f.progress.length, 1);
   assert.match(f.progress[0], /one incremental refresh/);
+});
+
+for (const reason of ["index_verification_running", "branch_publication_incomplete", "index_write_in_progress"])
+  test(`review follows native ${reason} progress to its exact certificate without a retry or duplicate index`, async () => {
+    const f = fixture();
+    const pending = {
+      repo_id: "repo", worktree: f.project.path, branch: f.project.branch,
+      checkout_mode: "owned-worktree-v1", graph_scope: "owned_worktree_graph",
+      source_revision: "same-source", token: null, indexing_revision: null,
+      status: "partial", ready: false, reason,
+      requested_source_matches: true, requested_revision_matches: true, retry_query_group: false,
+    };
+    f.reads.splice(0, 1, pending, f.certificate());
+    assert.equal((await f.run()).repoId, "repo");
+    assert.deepEqual(f.calls, ["watch", "get_query_revision", "get_query_revision"]);
+    assert.match(f.progress.join(" "), /automatically/);
+  });
+
+test("a native verification wait never adopts a changed source or a foreign owned graph", async () => {
+  for (const field of ["source_revision", "worktree", "repo_id", "branch", "graph_scope"]) {
+    const f = fixture();
+    const pending = { repo_id: "repo", worktree: f.project.path, branch: f.project.branch,
+      checkout_mode: "owned-worktree-v1", graph_scope: "owned_worktree_graph",
+      source_revision: "same-source", token: null, indexing_revision: null,
+      status: "partial", ready: false, reason: "index_verification_running",
+      requested_source_matches: true, requested_revision_matches: true, retry_query_group: false };
+    f.reads.splice(0, 1, pending, { ...f.certificate(), [field]: "different" });
+    await assert.rejects(f.run(), /source changed|could not verify/);
+    assert.equal(f.calls.some(call => call.startsWith("analyze")), false);
+  }
 });
 
 const invalid: Record<string, (value: Record<string, any>) => void> = {
@@ -238,12 +265,14 @@ test("watch failure, indexing errors and cancellation cannot turn into a repair 
   await assert.rejects(watch.run(), /watch failed/);
   assert.equal(watch.calls.includes("get_query_revision"), false);
   const index = fixture();
+  delete index.project.repoId;
   index.engine.analyze = async () => {
     throw Error("index failed");
   };
   await assert.rejects(index.run(), /index failed/);
   assert.equal(index.calls.includes("watch"), false);
   const cancel = fixture();
+  delete cancel.project.repoId;
   cancel.afterAnalyze(() => cancel.cancel());
   await assert.rejects(cancel.run(), /cancelled/);
   assert.equal(cancel.calls.includes("watch"), false);
@@ -266,6 +295,16 @@ test("non-owned legacy preparation keeps its existing behavior and starts no ext
   delete f.project.analysisCheckout;
   assert.equal(await f.run(), f.project);
   assert.deepEqual(f.calls, []);
+});
+
+test("a primary-folder epic verifies its separate current-source graph instead of the history graph", async () => {
+  const f = fixture();
+  delete f.project.analysisCheckout;
+  f.project.analysisCurrentSource = true;
+  const result = await f.run();
+  assert.equal(result.analysisCurrentSource, true);
+  assert.equal(result.repoId, f.project.repoId);
+  assert.deepEqual(f.calls, ["analyze:cached"]);
 });
 
 test("late publication recovery repairs the current owner without retirement, reopening or cached analysis", async () => {
@@ -328,6 +367,19 @@ function transition(
   };
   return value;
 }
+
+test("review reads again when the native graph starts publishing during inspection", async () => {
+  const f = fixture();
+  const starting = f.certificate("partial");
+  starting._meta.graph_revision = {
+    before: { status: "unavailable", token: null },
+    after: { status: "partial", token: "pending" },
+    publication_unchanged_during_call: false,
+  };
+  f.reads.splice(0, 1, starting, f.certificate());
+  await f.run();
+  assert.deepEqual(f.calls, ["watch", "get_query_revision", "get_query_revision"]);
+});
 
 test("a native publication completed during inspection requires a fresh strict read, not another index", async () => {
   for (const shape of [
@@ -448,4 +500,166 @@ test("unknown, malformed, missing and foreign transition metadata never gets a f
     );
     assert.deepEqual(f.calls, ["watch", "get_query_revision"]);
   }
+});
+
+function pendingBranch(f: ReturnType<typeof fixture>): Record<string, any> {
+  return {
+    ready: false,
+    status: "partial",
+    reason: "branch_publication_incomplete",
+    repo_id: f.project.repoId,
+    worktree: f.project.path,
+    branch: f.project.branch,
+    checkout_mode: "owned-worktree-v1",
+    graph_scope: "owned_worktree_graph",
+    requested_source_matches: true,
+    requested_revision_matches: true,
+    retry_query_group: false,
+    source_commit: "commit",
+    source_revision: "same-source",
+    indexing_revision: null,
+    token: null,
+    _meta: {
+      graph_revision: {
+        status: "partial",
+        token: "pending",
+        publication_unchanged_during_call: false,
+      },
+    },
+  };
+}
+
+test("an edited epic with a pending branch view gets one incremental refresh after a second observation", async () => {
+  const f = fixture();
+  const transition = pendingBranch(f);
+  transition._meta = {
+    stale: true,
+    graph_revision: {
+      before: { status: "partial", token: "previous" },
+      after: { status: "partial", token: "pending" },
+      publication_unchanged_during_call: false,
+    },
+  };
+  f.reads.splice(0, 1, transition, pendingBranch(f), f.certificate());
+  await f.run(["src/owned.ts"]);
+  assert.deepEqual(f.calls, [
+    "watch",
+    "get_query_revision",
+    "watch",
+    "get_query_revision",
+    "analyze:repair",
+    "watch",
+    "get_query_revision",
+  ]);
+});
+
+test("a pending branch view cannot authorize recovery on a changed source or a foreign checkout", async () => {
+  for (const mutate of [
+    (value: any) => {
+      value.source_revision = "changed";
+    },
+    (value: any) => {
+      value.worktree += "-foreign";
+    },
+    (value: any) => {
+      value.requested_source_matches = false;
+    },
+    (value: any) => {
+      value._meta.graph_revision.status = "unavailable";
+    },
+    (value: any) => {
+      value.mismatched_files = 1;
+    },
+    (value: any) => {
+      value.error_code = "BROKEN";
+    },
+  ]) {
+    const f = fixture(),
+      followup = pendingBranch(f);
+    mutate(followup);
+    f.reads.splice(0, 1, pendingBranch(f), followup);
+    await assert.rejects(f.run(["src/owned.ts"]));
+    assert.equal(f.calls.includes("analyze:repair"), false);
+  }
+});
+
+test("a pending branch view after repair cannot authorize review or a second index", async () => {
+  const f = fixture();
+  f.reads.splice(
+    0,
+    1,
+    pendingBranch(f),
+    pendingBranch(f),
+    pendingBranch(f),
+    pendingBranch(f),
+  );
+  await assert.rejects(
+    f.run(["src/owned.ts"]),
+    /after one incremental refresh/,
+  );
+  assert.equal(f.calls.filter((call) => call === "analyze:repair").length, 1);
+});
+
+test("only the current story’s captured files can explain a stale native index", async () => {
+  for (const authorized of [true, false]) {
+    const f = fixture(),
+      lag = f.certificate();
+    Object.assign(lag, {
+      ready: false,
+      status: "partial",
+      mismatched_files: 1,
+      mismatched_paths: ["src/owned.ts"],
+    });
+    f.reads.splice(0, 1, lag, lag, f.certificate());
+    if (authorized) {
+      await f.run(["src/owned.ts"]);
+      assert.equal(
+        f.calls.filter((call) => call === "analyze:repair").length,
+        1,
+      );
+    } else {
+      await assert.rejects(f.run(["src/another.ts"]), /No automatic repair/);
+      assert.equal(f.calls.includes("analyze:repair"), false);
+    }
+  }
+});
+
+test("a captured mismatch can cross a publication boundary during its confirming read", async () => {
+  const f = fixture(),
+    lag = f.certificate(),
+    pending = pendingBranch(f);
+  Object.assign(lag, {
+    ready: false,
+    status: "partial",
+    mismatched_files: 1,
+    mismatched_paths: ["src/owned.ts"],
+  });
+  pending._meta = {
+    stale: true,
+    graph_revision: {
+      before: { status: "published", token: "old" },
+      after: { status: "partial", token: "new" },
+      publication_unchanged_during_call: false,
+    },
+  };
+  f.reads.splice(0, 1, lag, pending, pendingBranch(f), f.certificate());
+  await f.run(["src/owned.ts"]);
+  assert.equal(f.calls.filter((call) => call === "analyze:repair").length, 1);
+  assert.equal(
+    f.calls.filter((call) => call === "get_query_revision").length,
+    4,
+  );
+});
+
+test("a worker publication transition gives the native writer time before consuming another read", async (t) => {
+  const f = fixture();
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  f.reads.splice(0, 1, transition(f), f.certificate());
+  const result = f.run(["src/owned.ts"]);
+  await new Promise(resolve => setImmediate(resolve));
+  const reads = () => f.calls.filter(call => call === "get_query_revision").length;
+  assert.equal(reads(), 1);
+  t.mock.timers.tick(1000);
+  await result;
+  assert.equal(reads(), 2);
 });

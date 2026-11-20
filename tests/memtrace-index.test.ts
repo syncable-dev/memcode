@@ -1,7 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { MemtraceEngine } from "../runtime/memtrace.ts";
+import { currentSourceNeedsIndex } from "../runtime/memtrace-peer-index.ts";
 import type { Project } from "../src/shared.ts";
+import { prepareWorkerAnalysis } from "../runtime/worker-analysis";
 
 const project = {
   id: "selected-project",
@@ -50,6 +52,74 @@ function fixture(
   };
   return { engine, calls };
 }
+
+const savedPeerRevision = {
+  ...verified,
+  ready: false,
+  status: "partial",
+  source_revision: "after-peer-save",
+  default_branch_matches: true,
+  ambiguous_indexed_files: false,
+  mismatched_files: 2,
+  mismatched_paths: ["one.ts", "two.ts"],
+};
+
+test("a source verification walk followed by a completed peer save re-enters incremental analysis, never the history queue", async () => {
+  const current = { ...project, analysisCurrentSource: true };
+  const f = fixture([repository], verified);
+  const original = f.engine.call;
+  let reads = 0;
+  f.engine.call = async (p, name, args) => {
+    if (name === "get_query_revision") {
+      if (++reads === 1) return {
+        ...verified, ready: false, status: "partial", reason: "index_verification_running",
+        token: null, indexing_revision: null, retry_query_group: false,
+        source_revision: "after-peer-save",
+      };
+      if (!f.calls.some(call => call.name === "index_directory")) return savedPeerRevision;
+    }
+    return original(p, name, args);
+  };
+  const result = await prepareWorkerAnalysis(f.engine, current, {} as any, {
+    changedBranch: false, update: () => {}, signal: new AbortController().signal,
+  });
+  assert.equal(result, project.repoId);
+  assert.equal(f.calls.filter(call => call.name === "index_directory").length, 1);
+  assert.equal(f.calls.some(call => call.name === "list_jobs"), false);
+  assert.equal(reads, 4);
+});
+
+test("a published epic graph behind peer saves gets one incremental catch-up and still needs certification", async () => {
+  const current = { ...project, analysisCurrentSource: true };
+  const f = fixture([repository], verified);
+  const original = f.engine.call;
+  let reads = 0;
+  f.engine.call = async (p, name, args) => {
+    if (name === "get_query_revision" && ++reads === 1)
+      return savedPeerRevision;
+    return original(p, name, args);
+  };
+  assert.equal(await f.engine.analyze(current, () => {}), project.repoId);
+  assert.deepEqual(f.calls.filter(call => call.name === "index_directory").map(call => call.args), [{
+    path: current.path, repo_id: current.repoId, incremental: true,
+    skip_embed: true, branch: current.branch,
+  }]);
+  assert.equal(reads, 2, "the queued catch-up must be followed by a ready source boundary");
+});
+
+test("peer-save catch-up never applies to primary history, another checkout or an unfinished publication", () => {
+  const current = { ...project, analysisCurrentSource: true };
+  assert.equal(currentSourceNeedsIndex(savedPeerRevision, current, project.repoId!), true);
+  assert.equal(currentSourceNeedsIndex(savedPeerRevision, project, project.repoId!), false);
+  for (const patch of [
+    {worktree: "/other"}, {branch: "other"}, {repo_id: "other"},
+    {publication: {status: "partial"}}, {reason: "index_write_in_progress"},
+    {_meta: {graph_revision: {publication_unchanged_during_call: false}}},
+    {source_unchanged_during_observation: false}, {requested_source_matches: false},
+    {requested_revision_matches: false}, {ambiguous_indexed_files: true},
+    {default_branch_matches: false}, {retry_query_group: true}, {mismatched_files: 0},
+  ]) assert.equal(currentSourceNeedsIndex({...savedPeerRevision, ...patch}, current, project.repoId!), false, JSON.stringify(patch));
+});
 
 for (const [shape, rows] of [
   ["array", [repository]],

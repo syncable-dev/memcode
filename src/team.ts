@@ -88,7 +88,7 @@ export interface TeamWorkerActivity {
   attemptId: string;
   epoch: number;
   phase: TeamWorkerPhase;
-  harness?: "claude" | "cursor" | "codex";
+  harness?: "claude" | "cursor" | "codex" | "copilot" | "dsh";
   requestedModel?: string;
   actualModel?: string;
   startedAt: string;

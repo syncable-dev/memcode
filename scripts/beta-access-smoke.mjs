@@ -25,7 +25,9 @@ import React from 'react';import{createRoot}from'react-dom/client';import{BetaAc
 const mode=new URLSearchParams(location.search).get('mode');window.calls=[];window.submitCount=0;let listeners=new Set();let status={state:'disconnected',accessMode:'installed-cli',loginPending:false,detail:'Approve access with your Memtrace account. MemCode prepares the local engine for you.'};const emit=()=>{for(const listener of listeners)listener({...status})};
 window.memcode={betaStatus:async()=>status,onBetaStatus:listener=>{listeners.add(listener);return()=>listeners.delete(listener)},connectBeta:async()=>{window.calls.push('connect');status={...status,state:'connecting',loginPending:true,canCancel:true,detail:'Approve noncommercial beta access in your Memtrace browser session.'};emit();return await new Promise(resolve=>{window.approve=()=>{status={state:'connected',accessMode:'beta',loginPending:false,account:{id:'fixture-user',name:'Alex Example'},detail:'Unlimited local Memtrace engine usage for the noncommercial beta. Model accounts and credits remain separate.'};emit();resolve(status)};window.cancelPending=()=>{status={state:'disconnected',accessMode:'installed-cli',loginPending:false,detail:'Sign-in cancelled. Connect when ready.'};emit();resolve(status)}})},cancelBeta:async()=>{window.calls.push('cancel');window.cancelPending?.();return status},refreshBeta:async()=>{window.calls.push('refresh');return status},signOutBeta:async()=>{window.calls.push('sign-out');status={state:'disconnected',accessMode:'beta',loginPending:false,detail:'Connect your Memtrace account for noncommercial beta access.'};emit();return status},useExistingMemtraceCLI:async()=>{window.calls.push('use-cli');status={state:'disconnected',accessMode:'installed-cli',loginPending:false,detail:'Your existing CLI setup is selected.'};emit();return status},selectFolder:async()=>'/fixture/local-project',createProject:async input=>{window.calls.push(['project',input]);},speechStatus:async()=>({state:'unavailable',detail:'Fixture'}),accountStatus:async()=>({status:'signed-out',detail:'Existing CLI account',loginPending:false})};
 const notify=message=>window.lastNotice=message;const state=initialState();
-createRoot(document.getElementById('root')).render(mode==='project'?<NewProjectDialog needsEngine notify={notify} onClose={()=>{}} onCreated={()=>window.created=true}/>:mode==='onboarding'?<Onboarding needsEngine notify={notify} progress={{step:'welcome',dismissed:false}} state={state} project={state.projects[0]} epics={[]} connected={false} hidden={false} onUpdate={()=>{}} onAction={()=>{}} onDocs={()=>{}}/>:<main style={{maxWidth:620,margin:'40px auto'}}><form onSubmit={event=>{event.preventDefault();window.submitCount++}}><BetaAccess compact={mode==='compact'} existingCLI notify={notify}/></form></main>);
+window.finishApproval=()=>{status={...status,connectionPhase:'finishing',canCancel:false,detail:'Saving your approved beta connection securely.'};emit()};
+const guide=mode==='onboarding'||mode==='onboarding-beta';
+createRoot(document.getElementById('root')).render(mode==='project'?<NewProjectDialog needsEngine notify={notify} onClose={()=>{}} onCreated={()=>window.created=true}/>:guide?<Onboarding needsEngine notify={notify} progress={{step:mode==='onboarding'?'welcome':'memtrace',dismissed:false}} state={state} project={{...state.projects[0],path:'/fixture/local-project'}} epics={[]} connected={false} hidden={false} onUpdate={()=>{}} onAction={()=>{}} onDocs={()=>{}}/>:<main style={{maxWidth:620,margin:'40px auto'}}><form onSubmit={event=>{event.preventDefault();window.submitCount++}}><BetaAccess compact={mode==='compact'} existingCLI notify={notify}/></form></main>);
 `,
   },
 });
@@ -90,6 +92,9 @@ try {
   await page
     .getByRole("button", { name: "Connect Memtrace beta", exact: true })
     .click();
+  await page.evaluate(() => window.finishApproval());
+  await expect(page.getByText("Finishing sign-in…", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Cancel", exact: true })).toBeHidden();
   await page.evaluate(() => window.approve());
   await expect(page.getByText("Alex Example", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
@@ -146,6 +151,9 @@ try {
     fullPage: true,
   });
   await page.goto(url + "?mode=onboarding");
+  await expect(page.getByRole("button", { name: "Let’s get started" })).toBeVisible();
+  expect(await page.evaluate(() => window.calls)).toEqual([]);
+  await page.goto(url + "?mode=onboarding-beta");
   await expect(
     page.getByRole("button", { name: "Connect Memtrace beta", exact: true }),
   ).toBeVisible();

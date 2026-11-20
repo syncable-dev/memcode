@@ -10,7 +10,9 @@ import type { WorkerCheckResult } from "../src/measurements";
 
 export type CheckResult = WorkerCheckResult;
 const OUTPUT_LIMIT = 262144,
-  FILE_LIMIT = 2_000_000,
+  // This is a whole-project content fingerprint, not a source preview. Normal
+  // vendored archives and screenshots can exceed the 2 MB preview limit.
+  FILE_LIMIT = 8_000_000,
   SOURCE_LIMIT = 32_000_000;
 const count = (value: unknown): value is number =>
   typeof value === "number" &&
@@ -24,6 +26,13 @@ export function parseCheckCounts(
   format: "tap" | "memcode-json" | "exit-code",
 ): { passed: number | null; failed: number | null } {
   if (format === "exit-code") return unknownCounts();
+  // ConPTY sends an OSC window title immediately before the first output.
+  // Node's general VT stripper can stop at the drive-letter colon and leave
+  // the title glued to the TAP header. Remove complete OSC frames first, after
+  // assembling all raw chunks. Titles are not machine-report content.
+  text = text.replace(/(?:\x1b\]|\x9d)[\s\S]*?(?:\x07|\x1b\\|\x9c)/g, "");
+  if (/(?:\x1b\]|\x9d)/.test(text)) return unknownCounts();
+  text = stripVTControlCharacters(text);
   if (format === "memcode-json") {
     const lines = text
       .split(/\r?\n/)
@@ -264,10 +273,7 @@ export async function runTaskVerification(
   let counts =
     timedOut || truncated || exitCode === null
       ? unknownCounts()
-      : parseCheckCounts(
-          stripVTControlCharacters(Buffer.concat(chunks).toString("utf8")),
-          input.format,
-        );
+      : parseCheckCounts(Buffer.concat(chunks).toString("utf8"), input.format);
   if (counts.failed !== null && (exitCode === 0) !== (counts.failed === 0))
     counts = unknownCounts();
   const result: CheckResult = {

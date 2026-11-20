@@ -16,7 +16,7 @@ async function until(check: () => boolean | Promise<boolean>) {
     await new Promise((resolve) => setTimeout(resolve, 15));
   }
 }
-async function fixture(options: { delayedStatus?: boolean; failedLogout?: boolean; alreadySignedIn?: boolean } = {}) {
+async function fixture(options: { delayedStatus?: boolean; failedLogout?: boolean; alreadySignedIn?: boolean; unsigned?: boolean; noOwner?: boolean } = {}) {
   const root = await mkdtemp(join(tmpdir(), "memcode-account-session-"));
   const script = join(root, "memtrace.mjs"), audit = join(root, "calls.jsonl"), loginGate = join(root, "finish-login"), statusGate = join(root, "finish-status"), stateFile = join(root, "private", "account-session.json");
   await writeFile(script, `
@@ -26,7 +26,7 @@ await appendFile(${JSON.stringify(audit)},JSON.stringify(args)+'\\n');
 async function gate(path){for(let i=0;i<3000;i++){try{await access(path);return;}catch{}await new Promise(r=>setTimeout(r,20));}process.exit(9);}
 if(args.join(' ')==='status --json'){
  ${options.delayedStatus ? `await gate(${JSON.stringify(statusGate)});` : ""}
- console.log(JSON.stringify({auth_session:{state:'Valid',degraded:false},memdb:{owner_reachable:true,seat_principal:'old-cached-owner'},session_token:'DO-NOT-EXPOSE'}));
+ console.log(JSON.stringify({auth_session:{state:${JSON.stringify(options.unsigned ? "Missing" : "Valid")},degraded:${!!options.unsigned}},memdb:{owner_reachable:${!options.noOwner},seat_principal:'old-cached-owner'},session_token:'DO-NOT-EXPOSE'}));
 }else if(args.join(' ')==='auth logout'){
  ${options.failedLogout ? "process.exit(7);" : "console.error('Credentials removed. Run memtrace auth login to re-authenticate.');"}
 }else if(args.join(' ')==='auth login'){
@@ -47,6 +47,26 @@ if(args.join(' ')==='status --json'){
     close: async () => { await Promise.all(managers.map((value) => value.close())); assert.ok(within(tmpdir(), root) && basename(root).startsWith("memcode-account-session-")); await rm(root, { recursive: true, force: true }); },
   };
 }
+
+test("a fresh unsigned account stops before engine or epic preparation", async () => {
+  const f = await fixture({ unsigned: true });
+  try {
+    const manager = f.manager();
+    await manager.refresh();
+    assert.throws(() => manager.assertMayStart(), /Connect your Memtrace account in Settings/);
+    assert.equal((await f.calls()).some((args) => args[0] !== "status"), false);
+  } finally { await f.close(); }
+});
+
+test("a valid existing CLI session can start before its graph owner is opened", async () => {
+  const f = await fixture({ noOwner: true });
+  try {
+    const manager = f.manager();
+    await manager.refresh();
+    assert.equal(manager.current.status, "unknown");
+    assert.doesNotThrow(() => manager.assertMayStart());
+  } finally { await f.close(); }
+});
 
 test("explicit logout persists a non-secret signed-out policy and ignores a cached owner's Valid state after restart", async () => {
   const f = await fixture();

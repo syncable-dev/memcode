@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { workerTurnContext } from "../runtime/worker-turn";
+import { resolve, join } from "node:path";
+import { workerCheckoutBrief, workerContextForPrompt, workerTurnContext } from "../runtime/worker-turn";
 import { claimReviewContext } from "../runtime/review-context";
 import type { Message } from "../src/shared";
 
@@ -102,4 +103,43 @@ test("ordinary fresh input governs a pass and manual continuation uses the lates
   assert.match(resumed.intro, /CURRENT WORKER PASS: continuation/);
   assert.ok(resumed.current.endsWith(latest.text));
   assert.ok(workerTurnContext(task, []).current.endsWith(task.description));
+});
+
+test("the worker brief resolves declared edit targets inside the epic checkout", () => {
+  const base = resolve("example-project");
+  const checkout = resolve("owned-epics", "authentication");
+  const target = join(checkout, "src", "login.ts");
+  for (const declared of ["src/login.ts", join(base, "src", "login.ts"), target]) {
+    const brief = workerCheckoutBrief(checkout, base, [declared]);
+    assert.ok(brief.includes(`Source checkout: ${checkout}`));
+    assert.ok(brief.includes(`Declared source scope:\n${target}`));
+    assert.match(brief, /file::.*coordination identifiers/);
+    assert.ok(!brief.includes(join(base, "src", "login.ts")));
+  }
+  const outside = resolve("another-project", "other.ts");
+  assert.ok(!workerCheckoutBrief(checkout, base, [outside, "../other.ts"]).includes(outside));
+});
+
+test("host-owned evidence presents file keys and recalled paths in the editable epic checkout", () => {
+  const base = resolve("shared QA [base]");
+  const checkout = join(base, ".worktrees", "epic");
+  const target = join("src", "average.js");
+  const engineEvidence = {
+    scope: [`file::${join(base, target)}`, "opaque-symbol-id", `file::${join(checkout, target)}`],
+    recalled: JSON.stringify({ workspace_scope: base }),
+    sibling: `${base}-other`,
+  };
+  const canonical = structuredClone(engineEvidence);
+  const presented = JSON.parse(workerContextForPrompt(engineEvidence, checkout, base));
+  assert.deepEqual(presented.scope, [`file::${join(checkout, target)}`, "opaque-symbol-id", `file::${join(checkout, target)}`]);
+  assert.equal(JSON.parse(presented.recalled).workspace_scope, checkout);
+  assert.equal(presented.sibling, engineEvidence.sibling);
+  assert.deepEqual(engineEvidence, canonical);
+});
+
+test("escaped Windows paths in a recalled decision map to the worker checkout", () => {
+  const base = String.raw`C:\Users\QA Agent\project`, checkout = String.raw`D:\epics\story`;
+  const recalled = JSON.stringify({ workspace_scope: base, target: String.raw`c:\users\qa agent\project\src\work.ts` });
+  const presented = JSON.parse(workerContextForPrompt({ recalled }, checkout, base));
+  assert.deepEqual(JSON.parse(presented.recalled), { workspace_scope: checkout, target: checkout + String.raw`\src\work.ts` });
 });

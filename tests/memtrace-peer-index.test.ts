@@ -1,9 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  completedEpicIndex,
   verifiedIndexRevision,
   waitForIndexPublication,
   waitForPeerIndex,
+  verifyingSourceRevision,
 } from "../runtime/memtrace-peer-index";
 import { MemtraceEngine } from "../runtime/memtrace";
 import type { Project } from "../src/shared";
@@ -424,6 +426,36 @@ const job = (patch: Record<string, unknown> = {}) => ({
   runtime_context: { requested_path: project.path },
   ...patch,
 });
+test("a worker repair requires the previous exact job and an idle native store", () => {
+  const finished = job({ status: "completed", branch: project.branch });
+  const canRepair = (jobs: unknown) => completedEpicIndex({ jobs }, project, "fixture");
+  assert.equal(canRepair([finished]), true);
+  for (const other of ["running", "pending", "paused", "unknown"])
+    assert.equal(canRepair([finished, job({ status: other })]), false);
+  for (const mismatch of [{ branch: "other" }, { repo_id: "other" }, { runtime_context: { requested_path: "/other" } }])
+    assert.equal(canRepair([{ ...finished, ...mismatch }]), false);
+  assert.equal(canRepair([]), false);
+  assert.equal(canRepair(undefined), false);
+});
+
+test("a guarded worker refresh rechecks the matched repository before submitting any job", async () => {
+  const engine = new MemtraceEngine(() => "unused");
+  engine.connect = (async () => ({})) as unknown as MemtraceEngine["connect"];
+  const calls: string[] = [];
+  engine.call = async (_project, name) => {
+    calls.push(name);
+    if (name === "list_indexed_repositories")
+      return { repos: [{ repo_id: "fixture", repo_path: project.path }] };
+    throw Error("unexpected native request");
+  };
+  await assert.rejects(engine.analyze(project, () => {}, true, undefined, undefined, async (repoId) => {
+    assert.equal(repoId, "fixture");
+    throw Error("source changed");
+  }), /source changed/);
+  assert.deepEqual(calls, ["list_indexed_repositories"]);
+  await engine.close();
+});
+
 const clock = () => {
   let time = 100000;
   return {
@@ -437,6 +469,25 @@ const clock = () => {
     readTimeoutMs: 100,
   };
 };
+
+for (const reason of ["index_verification_running", "branch_publication_incomplete"])
+  test(`native ${reason} gets the bounded verification window and requires the same final certificate`, async () => {
+    let time = 0, reads = 0;
+    const pending = { ...nativeOwnedRevision, ready: false, status: "partial", reason,
+      token: null, indexing_revision: null, source_revision: "unchanged-source",
+      requested_source_matches: true, requested_revision_matches: true, retry_query_group: false };
+    assert.equal(verifyingSourceRevision(pending, nativeOwnedProject, "fixture"), "unchanged-source");
+    assert.equal(verifyingSourceRevision({ ...pending, graph_scope: "canonical_graph" }, nativeOwnedProject, "fixture"), undefined);
+    assert.equal(verifyingSourceRevision({ ...pending, error: "failure" }, nativeOwnedProject, "fixture"), undefined);
+    assert.equal(await waitForIndexPublication({ call: async (_p, name, args) => {
+      assert.equal(name, "get_query_revision"); reads++;
+      if (reads > 1) assert.equal(args.expected_source_revision, "unchanged-source");
+      return time < 60_000 ? pending : { ...nativeOwnedRevision, source_revision: "unchanged-source" };
+    } }, nativeOwnedProject, "fixture", () => {}, {
+      now: () => time, sleep: async ms => { time += ms; }, pollMs: 1000, timeoutMs: 100_000,
+    }), "fixture");
+    assert.ok(time >= 60_000 && time <= 100_000);
+  });
 
 test("a completed job waits beyond three seconds for independent publication without resubmitting or accepting partial results", async () => {
   let time = 0;
@@ -1047,4 +1098,163 @@ test("cancellation or checkout/branch changes stop background publication adopti
       /cancelled or its local checkout\/branch changed/,
     );
   }
+});
+
+const pendingOwnedPublication = {
+  ...nativeOwnedRevision,
+  ready: false,
+  status: "partial",
+  publication: { status: "partial", token: "pending" },
+  _meta: {
+    graph_revision: {
+      status: "partial",
+      token: "pending",
+      publication_unchanged_during_call: false,
+    },
+  },
+};
+
+test("a completed owned index with every source file matched waits for the same publication past 30 seconds", async () => {
+  let elapsed = 0;
+  const names = new Set<string>();
+  await waitForIndexPublication(
+    {
+      call: async (_project, name, args) => {
+        names.add(name);
+        if (elapsed > 0)
+          assert.equal(
+            args.expected_source_revision,
+            nativeOwnedRevision.source_revision,
+          );
+        return elapsed < 45_000 ? pendingOwnedPublication : nativeOwnedRevision;
+      },
+    },
+    nativeOwnedProject,
+    "fixture",
+    () => {},
+    {
+      completedJob: true,
+      now: () => elapsed,
+      sleep: async (ms) => {
+        elapsed += ms;
+      },
+    },
+  );
+  assert.deepEqual([...names], ["get_query_revision"]);
+  assert.ok(elapsed >= 45_000 && elapsed < 50_000);
+});
+
+test("only an exact current source and a recognized partial publication extend a completed job wait", async () => {
+  for (const [completedJob, change] of [
+    [false, {}],
+    [true, { reason: "unrecognized" }],
+    [true, { mismatched_paths: ["a.ts"] }],
+    [true, { mismatched_files: 1 }],
+    [true, { source_revision: null }],
+    [true, { error: "failed" }],
+    [true, { graph_scope: "canonical_graph" }],
+    [true, { _meta: { ...pendingOwnedPublication._meta, stale: true } }],
+    [true, { publication: { status: "partial", token: "different" } }],
+  ] as const) {
+    let elapsed = 0;
+    await assert.rejects(
+      waitForIndexPublication(
+        {
+          call: async () => ({ ...pendingOwnedPublication, ...change }),
+        },
+        nativeOwnedProject,
+        "fixture",
+        () => {},
+        {
+          completedJob,
+          now: () => elapsed,
+          sleep: async (ms) => {
+            elapsed += ms;
+          },
+        },
+      ),
+    );
+    assert.equal(elapsed, 30_000);
+  }
+});
+
+test("a source change while a completed owned index publishes interrupts the wait", async () => {
+  let elapsed = 0;
+  await assert.rejects(
+    waitForIndexPublication(
+      {
+        call: async () =>
+          elapsed === 0
+            ? pendingOwnedPublication
+            : { ...nativeOwnedRevision, source_revision: "other" },
+      },
+      nativeOwnedProject,
+      "fixture",
+      () => {},
+      {
+        completedJob: true,
+        now: () => elapsed,
+        sleep: async (ms) => {
+          elapsed += ms;
+        },
+      },
+    ),
+    /same source revision/,
+  );
+});
+
+test("a completed-job wait cannot adopt an older publication or wait through cancellation", async () => {
+  let elapsed = 0;
+  await assert.rejects(
+    waitForIndexPublication(
+      {
+        call: async () =>
+          elapsed === 0
+            ? pendingOwnedPublication
+            : {
+                ...nativeOwnedRevision,
+                _meta: {
+                  stale: true,
+                  graph_revision: nativeOwnedRevision._meta.graph_revision,
+                },
+              },
+      },
+      nativeOwnedProject,
+      "fixture",
+      () => {},
+      {
+        completedJob: true,
+        now: () => elapsed,
+        sleep: async (ms) => {
+          elapsed += ms;
+        },
+        isCancelled: () => elapsed >= 35_000,
+      },
+    ),
+    /cancelled/,
+  );
+  assert.ok(elapsed < 40_000);
+});
+
+test("matched files alone do not start a worker and cannot renew its publication budget", async () => {
+  let elapsed = 0;
+  await assert.rejects(
+    waitForIndexPublication(
+      {
+        call: async () => pendingOwnedPublication,
+      },
+      nativeOwnedProject,
+      "fixture",
+      () => {},
+      {
+        completedJob: true,
+        now: () => elapsed,
+        sleep: async (ms) => {
+          elapsed += ms;
+        },
+      },
+    ),
+    /still verifying/,
+  );
+  assert.equal(elapsed, 120_000);
 });

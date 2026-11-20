@@ -30,7 +30,7 @@ export function recordCodexModelFailure(catalog: CodexCatalog, model: string, er
   return true;
 }
 
-export async function readCodexCatalog(command: Command, env: NodeJS.ProcessEnv, request: Request): Promise<CodexCatalog> {
+export async function readCodexCatalog(command: Command, env: NodeJS.ProcessEnv, request: Request, refreshDenied = false): Promise<CodexCatalog> {
   try {
     const { account } = await request("account/read", { refreshToken: false });
     if (!account?.type) return { models: [] };
@@ -38,6 +38,9 @@ export async function readCodexCatalog(command: Command, env: NodeJS.ProcessEnv,
     const scope = identity ? createHash("sha256").update(JSON.stringify([
       commandIdentity(command), env.CODEX_HOME ?? "", account.type, identity, account.planType ?? "",
     ])).digest("hex") : undefined;
+    // An explicit refresh is also an explicit retry after an account/runtime
+    // update. Old provider denials must not hide newly available models for an hour.
+    if (refreshDenied && scope && denied.delete(scope)) codexCatalogGeneration++;
     const scoped = scope ? denied.get(scope) : undefined;
     let cursor: string | null = null;
     const seen = new Set<string>(), pages = new Set<string>(), models: ModelOption[] = [];

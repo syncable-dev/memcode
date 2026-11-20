@@ -210,6 +210,48 @@ test("a Class B source refresh reads the worker's execution checkout without cha
   }
 });
 
+test("owned epic Fleet uses its certified graph while primary history is unavailable", async () => {
+  const f = await sourceFixture();
+  const state = initialState();
+  f.project.analysis = "indexing";
+  f.project.repoId = undefined;
+  const task = story(f.project, "owned", "a", f.a);
+  task.run.analysisProjectId = "owned-epic-a";
+  task.run.analysisRepoId = "owned-repo-a";
+  state.projects = [f.project];
+  state.tasks = [task];
+  state.fleetConflicts = [];
+  const calls: string[] = [];
+  const fleet = new FleetCoordinator(() => state, {
+    call: async (analysis: Project, name: string, args: any) => {
+      assert.equal(analysis.id, "owned-epic-a");
+      assert.equal(analysis.path, f.a);
+      assert.equal(analysis.repoId, "owned-repo-a");
+      if (args.repo_id) assert.equal(args.repo_id, "owned-repo-a");
+      calls.push(name);
+      return name === "fleet_acquire_lease"
+        ? { state: "granted", lease_id: "owned-lease" }
+        : name === "fleet_record_episode" ? { conflict_class: "A" } : {};
+    },
+  } as unknown as MemtraceEngine, async () => {}, () => {});
+  try {
+    await git(f.a, ["init", "--initial-branch=epic/a"]);
+    await git(f.a, ["add", "shared.ts"]);
+    await git(f.a, ["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "initial"]);
+    await fleet.before(f.project, task);
+    await fleet.heartbeat(f.project, task);
+    await writeFile(join(f.a, "shared.ts"), "export const source = 'updated';\n");
+    await fleet.after(f.project, task);
+    await fleet.release(f.project, task);
+    for (const name of ["fleet_preflight", "fleet_acquire_lease", "fleet_renew_lease", "fleet_record_episode", "fleet_release_lease", "fleet_list_escalations"])
+      assert.ok(calls.includes(name), name);
+    assert.equal(f.project.analysis, "indexing");
+    assert.equal(task.projectId, f.project.id);
+  } finally {
+    await rm(f.root, { recursive: true, force: true });
+  }
+});
+
 test("WorkerManager qualifies the private epic graph while Fleet retains the canonical project", async () => {
   const f = await sourceFixture();
   await git(f.original, ["init", "--initial-branch=main"]);
@@ -465,6 +507,22 @@ test("idle graph retirement cannot run while an implementation or review in that
     await manager.releaseIdleAnalysis(task, f.project);
     assert.equal(retired, 0);
     peer.run.state = "finished";
+    peer.messages.push({
+      id: "pending-next-pass",
+      role: "user",
+      text: "Continue",
+      at: new Date().toISOString(),
+      followupState: "queued",
+      queuedAt: new Date().toISOString(),
+      queueOrder: 1,
+    });
+    await manager.releaseIdleAnalysis(task, f.project);
+    assert.equal(
+      retired,
+      0,
+      "A durable follow-up retains the live epic owner until its next pass",
+    );
+    peer.messages.at(-1)!.followupState = "cancelled";
     peer.codeReview = {
       runId: "review",
       state: "running",

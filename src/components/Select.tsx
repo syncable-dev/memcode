@@ -14,7 +14,7 @@ interface Props {
 }
 
 function OptionIcon({ value }: { value: string }) {
-  if (["codex", "claude", "cursor"].includes(value))
+  if (["codex", "claude", "cursor", "copilot", "dsh"].includes(value))
     return <HarnessMark id={value as Harness} small />;
   if (value === "auto")
     return (

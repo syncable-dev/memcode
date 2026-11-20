@@ -2,6 +2,7 @@ import type { AppState, WorkItem } from "../../src/shared";
 import type { TeamCommand, TeamComment, TeamCycle, TeamEpic, TeamSnapshot, TeamStory } from "../../src/team";
 import { relative, isAbsolute } from "node:path";
 import type { ReviewReference } from "../../src/review";
+import { portablePath } from "./protocol";
 
 /** The complete sharing whitelist. Never serialize a WorkItem or AppState here. */
 export interface SharedProjection {
@@ -10,9 +11,7 @@ export interface SharedProjection {
   cycles: TeamCycle[];
   comments: Array<Omit<TeamComment, "memberId" | "revision">>;
 }
-const relativeScope = (value: string) =>
-  value.length <= 1000 && !/^(?:[a-z]:|[/\\]|[a-z]+:\/\/)/i.test(value) &&
-  !value.split(/[/\\]/).includes("..");
+const relativeScope = (value: string) => portablePath.safeParse(value).success;
 const sorted = <T extends { id: string }>(items: T[]) => items.sort((a, b) => a.id.localeCompare(b.id));
 
 export function projectSharedState(state: AppState, projectId: string): SharedProjection {
@@ -44,7 +43,7 @@ export function projectSharedState(state: AppState, projectId: string): SharedPr
       cycleId: task.cycleId ?? null, parentId: task.parentId ?? null,
       estimate: task.estimate ?? null, startDate: task.startDate ?? null,
       dueDate: task.dueDate ?? null, labels: [...(task.labels ?? [])],
-      scope: (task.scope ?? []).map((value) => value.replaceAll("\\", "/")).filter(relativeScope), dependsOn: [...(task.dependsOn ?? [])],
+      scope: (task.scope ?? []).map((value) => value.replaceAll("\\", "/").replace(/\/+$/, "")).filter(relativeScope), dependsOn: [...(task.dependsOn ?? [])],
     }))),
     epics: sorted(state.epics.filter((epic) => epic.projectId === projectId).map((epic): TeamEpic => ({
       id: epic.id, identifier: epic.identifier, title: epic.title,

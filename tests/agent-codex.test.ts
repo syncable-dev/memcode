@@ -36,12 +36,14 @@ rl.on('line',line=>{const p=JSON.parse(line);
  }else if(p.method==='initialized')initialized=true;
  else if(p.method==='account/read')send({id:p.id,result:{account:{type:'chatgpt',id:'fixture'}}});
  else if(p.method==='model/list')send({id:p.id,result:{data:process.env.NO_CATALOG==='yes'?[]:[{model:'chosen-model',isDefault:true}]}});
- else if(p.method==='thread/start'){
+ else if(p.method==='thread/start'||p.method==='thread/resume'){
+  if(process.env.RESUME && (p.method!=='thread/resume'||p.params.threadId!==process.env.RESUME)){send({id:p.id,error:{message:'Expected the original thread to resume'}});return;}
+  if(process.env.RESUME_ERROR){send({id:p.id,error:{message:'Unknown thread '+p.params.threadId}});return;}
   threadSettings=p.params;
   if(process.env.MODEL_DENIED==='yes'){send({id:p.id,error:{code:-32603,message:'The requested model is not supported when using Codex with a ChatGPT account.',data:{code:'model_not_found'}}});return;}
   const full=process.env.MODE==='full-access';
-  if(!initialized||p.params.approvalPolicy!==(full?'never':'on-request')||p.params.sandbox!==(full?'danger-full-access':'workspace-write')||p.params.approvalsReviewer!==(process.env.MODE==='auto'?'auto_review':'user')||p.params.allowProviderModelFallback!==false||p.params.model!==(process.env.NO_CATALOG==='yes'?undefined:'chosen-model'))process.exit(12);
-  send({id:p.id,result:{thread:{id:'thread-native'},...(process.env.NO_MODEL_METADATA==='yes'?{}:{model:'resolved-model',reasoningEffort:'medium'}),approvalPolicy:p.params.approvalPolicy,approvalsReviewer:process.env.DOWNGRADE==='yes'?'user':p.params.approvalsReviewer,sandbox:{type:full?'dangerFullAccess':'workspaceWrite'}}});
+  if(!initialized||p.params.approvalPolicy!==(full?'never':'on-request')||p.params.sandbox!==(full?'danger-full-access':'workspace-write')||p.params.approvalsReviewer!==(process.env.MODE==='auto'?'auto_review':'user')||(p.method==='thread/start'&&p.params.allowProviderModelFallback!==false)||p.params.model!==(process.env.NO_CATALOG==='yes'?undefined:'chosen-model'))process.exit(12);
+  send({id:p.id,result:{thread:{id:process.env.WRONG_RESUME?'unrelated-thread':'thread-native'},...(process.env.NO_MODEL_METADATA==='yes'?{}:{model:'resolved-model',reasoningEffort:'medium'}),approvalPolicy:p.params.approvalPolicy,approvalsReviewer:process.env.DOWNGRADE==='yes'?'user':p.params.approvalsReviewer,sandbox:{type:full?'dangerFullAccess':'workspaceWrite'}}});
  }else if(p.method==='turn/start'){
   turnSettings=p.params;
   if(p.params.effort!==(process.env.NO_CATALOG==='yes'?undefined:'high')||p.params.input[0].text!=='The exact prompt')process.exit(13);
@@ -75,6 +77,7 @@ async function runFixture(
     model: env.REQUESTED ?? "chosen-model",
     automaticModelTier: env.AUTO_TIER === "yes" ? "balanced" : undefined,
     effort: "high",
+    resumeSessionId: env.RESUME,
     prompt: "The exact prompt",
     briefPath: "brief.md",
     toolArgs: [
@@ -113,6 +116,33 @@ const evidence = (events: AgentEvent[]) => {
   assert.ok(item?.type === "message");
   return JSON.parse(item.text);
 };
+
+test("Codex resumes the exact native thread for a follow-up", async () => {
+  const f = await runFixture({
+    RESUME: "thread-native",
+    NOTIFICATIONS: JSON.stringify([{method: "thread/tokenUsage/updated", params: {
+      threadId: "thread-native", turnId: "turn-native", tokenUsage: { total: { inputTokens: 8000, outputTokens: 4000 } },
+    }}]),
+  });
+  try {
+    assert.equal((await f.session.completion).exitCode, 0);
+    assert.equal(evidence(f.events).threadSettings.threadId, "thread-native");
+    assert.equal(evidence(f.events).turnSettings.threadId, "thread-native");
+    assert.equal(f.events.some(event => event.type === "measurement" && event.usage), false);
+  } finally { await f.cleanup(); }
+});
+
+test("a rejected or mismatched Codex resume never prompts a new thread or exposes its private ID", async () => {
+  for (const failure of [{ RESUME_ERROR: "yes" }, { WRONG_RESUME: "yes" }] as Record<string, string>[]) {
+    const f = await runFixture({ RESUME: "thread-native", ...failure });
+    try {
+      const result = await f.session.completion;
+      assert.equal(result.exitCode, 1);
+      assert.doesNotMatch(result.error || "", /thread-native/);
+      assert.equal(f.events.some(e => e.type === "prompted"), false);
+    } finally { await f.cleanup(); }
+  }
+});
 
 test("Codex refuses an unavailable pinned model before the brief is sent", async () => {
   const fixture = await runFixture({ REQUESTED:"old-model" });

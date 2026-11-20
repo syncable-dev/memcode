@@ -10,6 +10,7 @@ import { appendFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { coordinationSchema } from "./fleet-requests";
 import { WorkerChangeJournal } from "./changes";
+import { epicAnalysisProject } from "./epic-checkout";
 
 export class FleetBlocked extends Error {}
 type Json = Record<string, any>;
@@ -72,7 +73,8 @@ export class FleetCoordinator {
       );
   }
   async before(project: Project, task: WorkItem): Promise<void> {
-    if (!project.repoId || project.analysis !== "ready")
+    const analysis = epicAnalysisProject(project, task);
+    if (!analysis.repoId || analysis.analysis !== "ready")
       throw new Error(
         "Connect Memtrace before launching a shared-branch Fleet worker.",
       );
@@ -95,8 +97,7 @@ export class FleetCoordinator {
   }
   private async reserve(project: Project, task: WorkItem): Promise<boolean> {
     if (this.leases.has(task.id)) return true;
-    const lease = await this.engine.call(project, "fleet_acquire_lease", {
-      repo_id: project.repoId,
+    const lease = await this.call(project, task, "fleet_acquire_lease", {
       agent_id: "memcode:" + task.id,
       // Native leases identify string scopes, not branches. Namespace their
       // keys so independent epic checkouts do not block one another. Published
@@ -114,7 +115,7 @@ export class FleetCoordinator {
       return true;
     }
     if (lease.lease_id)
-      await this.engine.call(project, "fleet_release_lease", {
+      await this.call(project, task, "fleet_release_lease", {
         lease_id: lease.lease_id,
       });
     return false;
@@ -220,7 +221,7 @@ export class FleetCoordinator {
     this.assertClear(task, project);
     const lease = this.leases.get(task.id);
     if (lease)
-      await this.engine.call(project, "fleet_renew_lease", {
+      await this.call(project, task, "fleet_renew_lease", {
         lease_id: lease,
         ttl_seconds: 120,
       });
@@ -230,7 +231,7 @@ export class FleetCoordinator {
       await this.publish(project, task),
       "publish",
     );
-    await this.refresh(project);
+    await this.refresh(project, task);
     this.assertClear(task, project);
   }
   async after(project: Project, task: WorkItem): Promise<void> {
@@ -268,10 +269,10 @@ export class FleetCoordinator {
       const lease = this.leases.get(task.id);
       this.leases.delete(task.id);
       if (lease)
-        await this.engine.call(project, "fleet_release_lease", {
+        await this.call(project, task, "fleet_release_lease", {
           lease_id: lease,
         });
-      if (project.repoId && this.announced.delete(task.id))
+      if (epicAnalysisProject(project, task).repoId && this.announced.delete(task.id))
         await this.call(project, task, "fleet_publish_intent", {
           touched: [],
           intent: "exploratory",
@@ -279,13 +280,23 @@ export class FleetCoordinator {
         });
     }
   }
-  async refresh(project: Project): Promise<void> {
-    if (!project.repoId || project.analysis !== "ready") return;
+  async refresh(project: Project, task?: WorkItem): Promise<void> {
     await this.repairCoordinationRecords(project);
-    const result = await this.engine.call(project, "fleet_list_escalations", {
-      repo_id: project.repoId,
-    });
-    for (const entry of result.pending ?? []) await this.ingest(project, entry);
+    const scopes = new Map<string, Project>();
+    for (const analysis of task
+      ? [epicAnalysisProject(project, task)]
+      : [project, ...this.state().tasks
+          .filter((item) => item.projectId === project.id && isActive(item))
+          .map((item) => epicAnalysisProject(project, item))]) {
+      if (analysis.repoId && analysis.analysis === "ready")
+        scopes.set(analysis.id, analysis);
+    }
+    for (const analysis of scopes.values()) {
+      const result = await this.engine.call(analysis, "fleet_list_escalations", {
+        repo_id: analysis.repoId,
+      });
+      for (const entry of result.pending ?? []) await this.ingest(project, entry);
+    }
   }
   async failure(
     project: Project,
@@ -324,12 +335,17 @@ export class FleetCoordinator {
     const project = this.state().projects.find(
       (project) => project.id === item.projectId,
     )!;
-    if (item.escalationId)
-      await this.engine.call(project, "fleet_resolve_escalation", {
+    if (item.escalationId) {
+      const task = this.state().tasks.find((task) =>
+        item.taskIds.includes(task.id) && task.run.branch === item.branch);
+      const analysis = task ? epicAnalysisProject(project, task) : project;
+      if (analysis !== project) await this.engine.activateEpic(analysis);
+      await this.engine.call(analysis, "fleet_resolve_escalation", {
         escalation_id: item.escalationId,
         resolution,
         winner: winnerTaskId ? `memcode:${winnerTaskId}` : undefined,
       });
+    }
     Object.assign(item, {
       status: "resolved",
       resolution,
@@ -341,11 +357,15 @@ export class FleetCoordinator {
   }
   private scope(task: WorkItem, project: Project): string[] {
     const scope = touchedIdentities(task, project);
-    return scope.length ? scope : [`repo::${project.repoId}`];
+    return scope.length ? scope : [`repo::${epicAnalysisProject(project, task).repoId}`];
   }
   private call(project: Project, task: WorkItem, name: string, extra: Json) {
-    return this.engine.call(project, name, {
-      repo_id: project.repoId,
+    // Board identity and shared file keys stay canonical. Native coordination
+    // belongs beside the exact source graph used by this epic's workers, so
+    // primary-project history import cannot hold their admission or heartbeat.
+    const analysis = epicAnalysisProject(project, task);
+    return this.engine.call(analysis, name, {
+      repo_id: analysis.repoId,
       branch: task.run.branch ?? project.branch,
       agent_id: `memcode:${task.id}`,
       ...extra,

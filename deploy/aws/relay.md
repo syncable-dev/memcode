@@ -1,7 +1,7 @@
 # Dedicated MemCode beta Team service
 
-This stack runs only Team planning synchronization, comments, activity and
-explicitly published small results. Workers, provider accounts, Git checkouts,
+This stack runs Team planning synchronization, comments, activity, shared worker
+conversations and review reports, and explicitly published small results. Workers, provider accounts, Git checkouts,
 Memtrace analysis and local graphs remain on each developer's computer.
 It is a single-host early beta, not a highly available service.
 
@@ -63,10 +63,19 @@ host. Never feed credentials or user-supplied commands into this process.
 
 Before publishing discovery, check HTTPS `GET /v1/service`: it must report
 `version:1`, `selfServiceTeams:true`, `accountTeamLimit:3`, `workflowRoles:1`
-and `workerActivity:1`. Confirm a protected
+and `workerActivity:1` and `workerSessions:1`. Confirm a protected
 operation rejects missing/invalid identity, and run the authenticated desktop
 acceptance flow. The relay verifier uses the official Memtrace JWKS and
 requires the exact advertised HTTPS origin as the token audience.
+
+Shared sessions require this service update as well as an updated desktop app.
+Keep the retained journal and existing memberships intact when updating code.
+The session journal is separate from board history, so conversation updates do
+not rewrite stories or reset cycles. A session command is authenticated as its
+real author and routed only to its current owner device. Approvals and private
+harness resume credentials never pass through the relay. Test an older client
+against the new service before publication; unknown session journal records must
+not alter its planning state.
 
 Self-service is explicitly enabled by this service's reviewed launcher. It
 allows up to three created-or-owned Teams per verified account and at most

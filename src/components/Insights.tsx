@@ -468,7 +468,7 @@ function AssignmentBreakdown({ tasks }: { tasks: WorkItem[] }) {
       count: tasks.filter((task) => task.assignment === "auto" && !task.route)
         .length,
     },
-    ...(["codex", "claude", "cursor"] as const).map((id) => ({
+    ...(["codex", "claude", "cursor", "copilot", "dsh"] as const).map((id) => ({
       id,
       name: harnessNames[id],
       count: tasks.filter(
@@ -494,7 +494,7 @@ function AssignmentBreakdown({ tasks }: { tasks: WorkItem[] }) {
                 </span>
               ) : (
                 <HarnessMark
-                  id={row.id as "codex" | "claude" | "cursor"}
+                  id={row.id as "codex" | "claude" | "cursor" | "copilot" | "dsh"}
                   small
                 />
               )}

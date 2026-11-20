@@ -28,7 +28,7 @@ export function scopedQuery(
       checkAdmission(result);
       if (
         name === "get_query_revision" &&
-        binding.project.analysisCheckout === "owned-worktree-v1" &&
+        (binding.project.analysisCurrentSource || binding.project.analysisCheckout === "owned-worktree-v1") &&
         !verifiedIndexRevision(result, binding.project, binding.project.repoId!)
       )
         throw Error(

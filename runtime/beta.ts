@@ -95,6 +95,18 @@ export interface MemCodeBetaOptions {
   changed?(status: MemCodeBetaStatus): void;
 }
 
+function waitForBetaStep<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+  let stop!: () => void;
+  const stopped = new Promise<never>((_resolve, reject) => {
+    stop = () => reject(signal.reason);
+    if (signal.aborted) stop();
+    else signal.addEventListener("abort", stop, { once: true });
+  });
+  return Promise.race([work, stopped]).finally(() =>
+    signal.removeEventListener("abort", stop),
+  );
+}
+
 /** A separate browser grant; never imports, changes or forwards CLI/provider auth. */
 export class MemCodeBeta {
   private record?: BetaCredentials;
@@ -111,7 +123,8 @@ export class MemCodeBeta {
   private refreshing?: Promise<void>;
   private connecting?: Promise<MemCodeBetaStatus>;
   private revoking?: Promise<void>;
-  private connectCancelled = false;
+  private connectionAbort?: AbortController;
+  private connectionPhase?: MemCodeBetaStatus["connectionPhase"];
   private committing = false;
   private generation = 0;
   private closing = false;
@@ -240,15 +253,21 @@ export class MemCodeBeta {
           }
         : {}),
     };
-    if (this.changing)
+    if (this.changing) {
+      const connectionPhase = this.connectionPhase ?? "finishing";
       return {
         ...base,
         state: "connecting",
-        canCancel: !this.committing,
-        detail: this.committing
-          ? (this.note ?? "Saving your approved beta connection securely.")
-          : "Approve noncommercial beta access in your Memtrace browser session.",
+        connectionPhase,
+        canCancel: !!this.connectionAbort && !this.committing,
+        detail:
+          connectionPhase === "browser"
+            ? "Approve noncommercial beta access in your Memtrace browser session."
+            : connectionPhase === "starting"
+              ? "Getting your beta sign-in ready."
+              : (this.note ?? "Finishing your beta connection."),
       };
+    }
     if (this.signedOut || this.record?.signedOut)
       return {
         ...base,
@@ -296,12 +315,16 @@ export class MemCodeBeta {
     generation: number,
     identityChange: boolean,
   ) {
-    const verified = await verifyBetaAccess(tokens.access_token, binding, {
+    const signal = identityChange ? this.connectionAbort?.signal : undefined;
+    const verification = verifyBetaAccess(tokens.access_token, binding, {
       loadKeys: this.options.loadKeys,
       cachedKey: identityChange ? undefined : this.record?.publicKey,
       now: this.clock,
       accountId: tokens.account.id,
     });
+    const verified = signal
+      ? await waitForBetaStep(verification, signal)
+      : await verification;
     if (
       verified.account.name !== tokens.account.name ||
       verified.account.email !== tokens.account.email ||
@@ -315,7 +338,7 @@ export class MemCodeBeta {
     if (
       (this.closing && identityChange) ||
       generation !== this.generation ||
-      (identityChange && this.connectCancelled)
+      signal?.aborted
     )
       throw Error("This beta action was cancelled.");
     const record: BetaCredentials = {
@@ -329,17 +352,18 @@ export class MemCodeBeta {
       publicKey: verified.publicKey,
       accessExpiresAt: verified.expiresAt,
     };
-    if (identityChange) await this.options.beforeIdentityChange();
+    if (identityChange) {
+      this.committing = true;
+      this.note = "Saving your approved beta connection securely.";
+      this.emit();
+      await this.options.beforeIdentityChange();
+    }
     if (
       (this.closing && identityChange) ||
       generation !== this.generation ||
-      (identityChange && this.connectCancelled)
+      signal?.aborted
     )
       throw Error("This beta action was cancelled.");
-    if (identityChange) {
-      this.committing = true;
-      this.emit();
-    }
     // Persist the rotated refresh in the OS store before granting engine access.
     await this.options.storage.write(record);
     this.record = record;
@@ -383,35 +407,48 @@ export class MemCodeBeta {
       return Promise.reject(
         new Error("Finish or cancel the current beta sign-in first."),
       );
-    this.connectCancelled = false;
-    this.connecting = this.connectAction().finally(() => {
-      this.connecting = undefined;
-      this.committing = false;
-    });
+    this.connectionAbort = new AbortController();
+    this.connecting = this.connectAction(this.connectionAbort.signal).finally(
+      () => {
+        this.connecting = undefined;
+        this.connectionAbort = undefined;
+        this.connectionPhase = undefined;
+        this.committing = false;
+      },
+    );
     return this.connecting;
   }
-  private async connectAction() {
-    await this.initialize();
-    if (this.connectCancelled)
-      throw Error("MemCode beta sign-in was cancelled.");
+  private async connectAction(signal: AbortSignal) {
+    await waitForBetaStep(this.initialize(), signal);
+    signal.throwIfAborted();
     if (this.changing)
       throw Error("Finish or cancel the current beta action first.");
     this.options.assertMayChange();
     this.changing = true;
+    this.connectionPhase = "starting";
     this.note = undefined;
     this.emit();
     try {
       // An in-flight rotation must settle before a switch can replace/revoke it.
-      await this.refreshing?.catch(() => {});
-      await this.revoking?.catch(() => {});
-      if (this.connectCancelled)
-        throw Error("MemCode beta sign-in was cancelled.");
+      if (this.refreshing)
+        await waitForBetaStep(this.refreshing.catch(() => {}), signal);
+      if (this.revoking)
+        await waitForBetaStep(this.revoking.catch(() => {}), signal);
+      signal.throwIfAborted();
       const generation = ++this.generation;
       const binding = {
         deviceId: this.record?.deviceId ?? randomUUID(),
         sessionId: randomUUID(),
       };
-      const tokens = await this.options.authorization.authorize(binding);
+      this.connectionPhase = "browser";
+      this.emit();
+      const tokens = await waitForBetaStep(
+        this.options.authorization.authorize(binding),
+        signal,
+      );
+      signal.throwIfAborted();
+      this.connectionPhase = "finishing";
+      this.emit();
       const previous = this.record;
       await this.persist(tokens, binding, generation, true);
       if (previous && !previous.signedOut)
@@ -437,10 +474,15 @@ export class MemCodeBeta {
       throw Error(
         "Memtrace approval has completed. Wait for the connection to finish, then disconnect if needed.",
       );
-    this.connectCancelled = true;
-    this.options.authorization.cancel();
+    this.cancelConnection();
     await this.connecting.catch(() => {});
     return this.snapshot();
+  }
+  private cancelConnection() {
+    this.connectionAbort?.abort(
+      new Error("MemCode beta sign-in was cancelled."),
+    );
+    this.options.authorization.cancel();
   }
   private async refreshAccess(force: boolean) {
     await this.initialize();
@@ -688,9 +730,8 @@ export class MemCodeBeta {
   close() {
     if (this.closed) return this.closed;
     this.closing = true;
-    this.connectCancelled = true;
     clearInterval(this.timer);
-    this.options.authorization.cancel();
+    this.cancelConnection();
     this.closed = (async () => {
       let timeout: ReturnType<typeof setTimeout> | undefined;
       try {

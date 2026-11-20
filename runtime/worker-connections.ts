@@ -10,6 +10,7 @@ import {
   type Command,
 } from "./commands";
 import { MemtraceAccountManager, type MemtraceAccountOptions } from "./account";
+import { probeStandardCatalog } from "./agents/standard-acp";
 import type { NativeHost } from "./host";
 import {
   harnessNames,
@@ -28,11 +29,15 @@ const loginArguments = {
   codex: ["login"],
   claude: ["auth", "login"],
   cursor: ["login"],
+  copilot: ["login"],
+  dsh: ["web"],
 };
 export const loginCommands = {
   codex: "codex login",
   claude: "claude auth login",
   cursor: "agent login",
+  copilot: "copilot login",
+  dsh: "dsh web",
 };
 function workerLoginCommand(harness: Harness, command: Command) {
   if (process.platform !== "darwin") return loginCommands[harness];
@@ -147,7 +152,7 @@ export function registerConnections(
         return accountOptions.beforeChange?.();
       },
     }),
-    id = z.enum(["codex", "claude", "cursor"]);
+    id = z.enum(["codex", "claude", "cursor", "copilot", "dsh"]);
   // Reuse the existing Memtrace session for host-owned author attribution.
   // This is a read-only status check, not a worker connection or login action.
   void account.refresh().catch(() => {});
@@ -183,6 +188,14 @@ export function registerConnections(
     };
     if (harness === "codex" && state().settings.localModel)
       auth = { auth: "local", accountLabel: "Configured local model" };
+    else if (harness === "copilot" || harness === "dsh") {
+      // A catalog proves transport availability, not account access. These CLIs
+      // own provider authentication and confirm access at the first model call.
+      const models = await probeStandardCatalog(harness, command).catch(() => []);
+      auth = models.length
+        ? { auth: "provider-managed" }
+        : { auth: "unknown" };
+    }
     else {
       const args =
         harness === "codex"
@@ -220,7 +233,7 @@ export function registerConnections(
         runtimeIdentity: identity,
       }),
       connected =
-        approved && (auth.auth === "authenticated" || auth.auth === "local");
+        approved && ["authenticated", "local", "provider-managed"].includes(auth.auth);
     if (
       approved &&
       receipt &&
@@ -241,7 +254,9 @@ export function registerConnections(
       ...auth,
       approvedAt: approved ? receipt?.approvedAt : undefined,
       note: connected
-        ? "Approved for projects you select. No worker starts until you send work."
+        ? auth.auth === "provider-managed"
+          ? "Connected. This CLI manages its provider sign-in; model access is confirmed when work starts."
+          : "Approved for projects you select. No worker starts until you send work."
         : approved
           ? auth.auth === "unknown"
             ? "Your worker approval is saved. Sign-in status could not be checked; check again before starting work."
@@ -250,6 +265,8 @@ export function registerConnections(
             ? "The installed runtime changed. Review and approve its connection again."
             : auth.auth === "local"
               ? "A local model is configured. Review and approve the connection."
+              : auth.auth === "provider-managed"
+                ? "ACP is available. Connect this CLI using its existing provider setup. Model access has not yet been verified."
               : auth.auth === "authenticated"
                 ? "Installed and signed in. Review and approve the connection."
                 : auth.auth === "unknown"
@@ -259,7 +276,7 @@ export function registerConnections(
     };
   };
   register("connection:status", z.undefined(), () =>
-    Promise.all((["codex", "claude", "cursor"] as Harness[]).map(status)),
+    Promise.all((["codex", "claude", "cursor", "copilot", "dsh"] as Harness[]).map(status)),
   );
   register(
     "connection:approve",
@@ -268,7 +285,7 @@ export function registerConnections(
       const result = await status(input.harness);
       if (!result.installed || !result.runtimePath)
         throw Error("Install the worker CLI before connecting it.");
-      if (result.auth !== "authenticated" && result.auth !== "local")
+      if (!["authenticated", "local", "provider-managed"].includes(result.auth))
         throw Error(
           result.auth === "not-authenticated"
             ? `Sign in to ${harnessNames[result.harness]} before approving the connection.`
@@ -279,7 +296,7 @@ export function registerConnections(
         approvedAt: new Date().toISOString(),
         runtimePath: result.runtimePath,
         runtimeIdentity: result.runtimeIdentity ?? result.runtimePath,
-        auth: result.auth,
+        auth: result.auth as "authenticated" | "local" | "provider-managed",
         accountLabel: result.accountLabel,
         scopeVersion: 1,
       };

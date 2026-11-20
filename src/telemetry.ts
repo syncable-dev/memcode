@@ -22,7 +22,7 @@ export const telemetryModels = [
 ] as const;
 const count = z.number().int().min(0).max(10_000_000);
 const nullableCount = count.nullable();
-const harness = z.enum(["codex", "claude", "cursor"]);
+const harness = z.enum(["codex", "claude", "cursor", "copilot", "dsh"]);
 const model = z.enum(telemetryModels);
 const effort = z.enum(["low", "medium", "high", "xhigh"]);
 const ref = z.string().uuid();
@@ -99,6 +99,8 @@ export const telemetryEventSchema = z.discriminatedUnion("type", [
           "claude-assistant",
           "cursor-stop-hook",
           "cursor-session",
+          "copilot-session",
+          "dsh-session",
         ])
         .nullable()
         .optional(),

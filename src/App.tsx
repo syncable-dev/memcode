@@ -50,6 +50,9 @@ import { Cycles } from "./components/Cycles";
 import { InsightsPage } from "./components/InsightsPage";
 import { Improve } from "./components/Improve";
 import { Onboarding } from "./components/Onboarding";
+import type { SettingsSection } from "./components/Dialogs";
+import { SignInWelcome } from "./components/SignInWelcome";
+import { needsAccountSetup } from "./onboarding";
 import { InstallWelcome } from "./components/InstallWelcome";
 import { Docs } from "./components/Docs";
 import {
@@ -178,9 +181,13 @@ export function App() {
   const [joinTeamRequest, setJoinTeamRequest] = useState(0);
   const [localSetupProjectId, setLocalSetupProjectId] = useState("");
   const [docsArticle, setDocsArticle] = useState("start");
+  const [settingsSection, setSettingsSection] =
+    useState<SettingsSection>("account");
   const [createEpicRequest, setCreateEpicRequest] = useState(0);
   const [account, setAccount] = useState<MemtraceAccount>();
   const [betaStatus, setBetaStatus] = useState<MemCodeBetaStatus>();
+  const [accountPromptOpen, setAccountPromptOpen] = useState(false);
+  const [accountPromptSkipped, setAccountPromptSkipped] = useState(false);
   const [toast, setToast] = useState("");
   const [fatal, setFatal] = useState("");
   const [collapsed, setCollapsed] = useState(false);
@@ -197,6 +204,34 @@ export function App() {
     },
     [notify],
   );
+  useEffect(() => {
+    if (betaStatus?.accessMode !== "installed-cli") return;
+    let live = true;
+    void window.memcode
+      .accountStatus()
+      .then((value) => {
+        if (live) setAccount(value);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [betaStatus?.accessMode]);
+  useEffect(() => {
+    if (
+      betaStatus?.state === "connected" ||
+      (betaStatus?.accessMode === "installed-cli" &&
+        (account?.status === "connected" || account?.sessionVerified))
+    ) {
+      setAccountPromptOpen(false);
+      setAccountPromptSkipped(false);
+    } else if (
+      !accountPromptSkipped &&
+      needsAccountSetup(betaStatus, account)
+    ) {
+      setAccountPromptOpen(true);
+    }
+  }, [betaStatus, account, accountPromptSkipped]);
   useEffect(() => {
     let live = true;
     const update = (value: MemCodeBetaStatus) => {
@@ -363,7 +398,11 @@ export function App() {
       } else setDialog("project");
       return;
     }
-    if (!runtime.memtraceAvailable && betaStatus && betaStatus.state !== "connected") {
+    if (
+      !runtime.memtraceAvailable &&
+      betaStatus &&
+      betaStatus.state !== "connected"
+    ) {
       setDialog("settings");
       return;
     }
@@ -419,7 +458,12 @@ export function App() {
       setView("workers");
       return;
     }
-    if (action === "account") {
+    if (
+      action === "account" ||
+      action === "dictation" ||
+      action === "retrieval"
+    ) {
+      setSettingsSection(action);
       setDialog("settings");
       return;
     }
@@ -462,12 +506,15 @@ export function App() {
       setDialog("project");
       return;
     }
-    if (destination === "settings") {
-      setDocsArticle("dictation");
+    if (destination === "settings" || destination === "retrieval") {
+      setSettingsSection(
+        destination === "retrieval" ? "retrieval" : "dictation",
+      );
       setDialog("settings");
       return;
     }
     if (destination === "account") {
+      setSettingsSection("account");
       setDialog("settings");
       return;
     }
@@ -957,17 +1004,6 @@ export function App() {
                 state={state}
                 notify={notify}
                 onCreateWork={() => create()}
-                onConnected={() => {
-                  if (
-                    guideProgress?.step === "worker" &&
-                    !guideProgress.dismissed &&
-                    (account?.status === "connected" ||
-                      guideProject.analysis === "ready")
-                  ) {
-                    updateGuide({ step: "epic" });
-                    setView("roadmap");
-                  }
-                }}
               />
               <div className="section-heading">
                 <h2>Work in progress</h2>
@@ -1202,6 +1238,9 @@ export function App() {
       {dialog === "settings" && (
         <SettingsDialog
           settings={state.settings}
+          state={state}
+          initialSection={settingsSection}
+          onSetupGuide={() => startGuide("resume")}
           runtime={runtime}
           onClose={() => setDialog(null)}
           onSaved={setRuntime}
@@ -1250,9 +1289,13 @@ export function App() {
               betaStatus?.accessMode === "beta"
                 ? betaStatus.state === "connected"
                 : account?.status === "connected" ||
-                  guideProject.analysis === "ready"
+                  account?.sessionVerified === true
             }
-            hidden={!!dialog || !!selected}
+            hidden={
+              !!dialog ||
+              !!selected ||
+              (accountPromptOpen && !accountPromptSkipped)
+            }
             onUpdate={updateGuide}
             onAction={guideAction}
             onDocs={() => {
@@ -1263,6 +1306,17 @@ export function App() {
             }}
           />
         )}
+      {accountPromptOpen && !accountPromptSkipped && !dialog && (
+        <SignInWelcome
+          notify={notify}
+          onStatus={setBetaStatus}
+          onAccountStatus={setAccount}
+          onSkip={() => {
+            setAccountPromptSkipped(true);
+            setAccountPromptOpen(false);
+          }}
+        />
+      )}
       {toast && (
         <div className="toast" role="status">
           <span className="toast-dot" />

@@ -72,13 +72,14 @@ const ConversationMessage = memo(
       <article className={"message-block " + message.role}>
         <header>
           {message.role === "user" ? (
-            <span className="message-avatar">A</span>
+            <span className="message-avatar">{message.actor?.name.slice(0, 1) ?? "A"}</span>
           ) : (
             <HarnessMark id={harness} small />
           )}
           <strong>
-            {message.role === "user" ? "You" : harnessNames[harness]}
+            {message.role === "user" ? message.actor?.name ?? "You" : harnessNames[harness]}
           </strong>
+          {message.actor && <span className="message-origin" title={message.actor.name + " · " + message.actor.device}>{message.actor.device}</span>}
           <Time at={message.at} />
           {message.followupState && message.followupState !== "included" && (
             <span className="message-queue-state" role="status">

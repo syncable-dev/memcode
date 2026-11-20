@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import type { WorkItem } from "../shared";
 import { harnessNames } from "../shared";
+import { presentedTask } from "../team-presentation";
 import { stageLabel } from "../domain";
 import { Empty, HarnessMark, StageIcon } from "./UI";
 
@@ -38,7 +39,7 @@ export function Conversations({
     [query, setQuery] = useState("");
   const conversations = useMemo(
     () =>
-      tasks
+      tasks.map(presentedTask)
         .filter(
           (task) =>
             !task.archivedAt &&

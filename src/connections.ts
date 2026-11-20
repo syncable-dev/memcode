@@ -6,7 +6,7 @@ export interface WorkerConnection {
   runtimePath: string;
   /** Provider entry/installation identity; never the desktop's Node launcher. */
   runtimeIdentity?: string;
-  auth: "authenticated" | "local";
+  auth: "authenticated" | "local" | "provider-managed";
   accountLabel?: string;
   scopeVersion: 1;
 }
@@ -19,7 +19,7 @@ export interface WorkerConnectionStatus {
   /** The explicit local permission remains saved even if discovery/auth is unavailable. */
   approvalSaved?: boolean;
   desktopAppPath?: string;
-  auth: "authenticated" | "not-authenticated" | "unknown" | "local";
+  auth: "authenticated" | "not-authenticated" | "unknown" | "local" | "provider-managed";
   accountLabel?: string;
   approvedAt?: string;
   note: string;
@@ -44,7 +44,7 @@ export function hasWorkerApproval(
     !!receipt.runtimePath &&
     typeof receipt.approvedAt === "string" &&
     !!receipt.approvedAt &&
-    ["authenticated", "local"].includes(receipt.auth)
+    ["authenticated", "local", "provider-managed"].includes(receipt.auth)
   );
 }
 
@@ -113,6 +113,8 @@ export interface MemtracePrincipal {
 }
 export interface MemtraceAccount {
   status: "connected" | "needs-sign-in" | "unavailable" | "unknown";
+  /** A valid existing CLI session, even before a project owner is running. */
+  sessionVerified?: boolean;
   label: string;
   detail: string;
   checkedAt?: string;

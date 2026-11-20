@@ -28,11 +28,14 @@ export type {
 } from "./planning/types";
 export const stages = ["planned", "working", "review", "done"] as const;
 export type Stage = (typeof stages)[number];
-export type Harness = "codex" | "claude" | "cursor";
+export const harnessIds = ["codex", "claude", "cursor", "copilot", "dsh"] as const;
+export type Harness = (typeof harnessIds)[number];
 export const harnessNames: Record<Harness, string> = {
   codex: "Codex",
   claude: "Claude Code",
   cursor: "Cursor",
+  copilot: "GitHub Copilot",
+  dsh: "DeepSeek Harness",
 };
 export type ModelTier = "fast" | "balanced" | "frontier" | "extreme";
 export type ReasoningEffort = "low" | "medium" | "high" | "xhigh";
@@ -67,6 +70,8 @@ export interface RouteDecision {
   tier: ModelTier;
   harness: Harness;
   model: string;
+  /** Account-discovered presentation label; the opaque ID remains the request. */
+  modelLabel?: string;
   effort: ReasoningEffort;
   mode: "automatic" | "manual";
   status: "measured" | "provisional";
@@ -96,6 +101,10 @@ export type RunState =
   | "finished";
 
 export interface Message {
+  actor?: import("./team-session").SessionActor;
+  sourceCommandId?: string;
+  deliveryState?: import("./team-session").SessionCommand["state"];
+  deliveryError?: string;
   streamId?: string;
   pickedUpAt?: string;
   id: string;
@@ -152,6 +161,8 @@ export interface Evidence {
   measuredAt: string;
 }
 export interface WorkItem extends TaskPlanningFields {
+  /** Read-only projection; never grants this device execution authority. */
+  sharedSession?: import("./team-session").TeamSession;
   id: string;
   identifier: string;
   projectId: string;
@@ -190,6 +201,8 @@ export interface WorkItem extends TaskPlanningFields {
     exitCode?: number;
     error?: string;
     sessionId?: string;
+    /** Device-local provenance for sessionId, including across failed preparations. */
+    sessionBinding?: { harness: Harness; workspace: string; branch?: string; epicId?: string | null };
     changeRunId?: string;
     nativeEditCapture?: boolean;
     measurements?: import("./measurements").WorkerMeasurements;
@@ -205,6 +218,8 @@ export interface WorkItem extends TaskPlanningFields {
 export interface Project {
   /** Ephemeral local query scope, not a shared project identity. */
   analysisCheckout?: "owned-worktree-v1";
+  /** Ephemeral epic source view; Git history stays in the primary project graph. */
+  analysisCurrentSource?: boolean;
   id: string;
   name: string;
   description: string;
@@ -251,6 +266,9 @@ export interface CreateEpic {
 }
 /** Public collaboration state. Invitation and member credentials never enter renderer state. */
 export interface TeamWorkspaceState {
+  sessions?: import("./team-session").TeamSession[];
+  sessionCommands?: import("./team-session").SessionCommand[];
+  sessionsError?: string;
   projectId: string;
   teamId?: string;
   teamName?: string;
