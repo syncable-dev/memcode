@@ -15,4 +15,10 @@ export interface RoutingRequestSignals {
   fileScopeOnly: boolean;
   preserveBehavior: boolean;
   publicContract: "change" | "preserve" | "unspecified";
+  /** Local classification evidence. Prompt text and feature values stay out of the route. */
+  language?: {
+    digest: string;
+    outcome: "classified" | "abstained";
+    scores: { kind: Exclude<RoutingRequestKind, "unknown">; score: number }[];
+  };
 }

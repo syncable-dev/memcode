@@ -18,6 +18,11 @@ const cohortSchema = z.strictObject({
   kind: z.string().regex(/^[a-z][a-z0-9_-]{0,39}$/),
   tier: z.enum(["fast", "balanced", "frontier", "extreme"]),
   coverage: z.enum(["measured", "partial"]),
+  languageModelDigest: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/)
+    .optional(),
+  lowMaintainability: z.literal(true).optional(),
 });
 const nonnegative = z.int().nonnegative();
 const estimateSchema = z.strictObject({
@@ -93,8 +98,20 @@ export const routingEvaluationSchema = z.strictObject({
 });
 export type RoutingEvaluation = z.infer<typeof routingEvaluationSchema>;
 
-const cohortKey = ({ kind, tier, coverage }: RoutingCohort) =>
-  JSON.stringify([kind, tier, coverage]);
+const cohortKey = ({
+  kind,
+  tier,
+  coverage,
+  languageModelDigest,
+  lowMaintainability,
+}: RoutingCohort) =>
+  JSON.stringify([
+    kind,
+    tier,
+    coverage,
+    languageModelDigest ?? null,
+    lowMaintainability ?? false,
+  ]);
 const candidateKey = ({
   harness,
   model,

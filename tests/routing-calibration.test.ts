@@ -105,6 +105,14 @@ test("calibration is input-order stable, excludes held-out repositories, and cho
     ]),
     [],
   );
+  assert.deepEqual(
+    estimateRoutingCandidates(calibration, { ...cohort, languageModelDigest: "a".repeat(64) }, [cheap]),
+    [],
+  );
+  assert.deepEqual(
+    estimateRoutingCandidates(calibration, { ...cohort, lowMaintainability: true }, [cheap]),
+    [],
+  );
 });
 
 test("missing proof and pending reviews remain unresolved, while failures and observed fallbacks count against first-pass acceptance", () => {
