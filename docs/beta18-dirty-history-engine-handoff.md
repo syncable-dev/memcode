@@ -73,8 +73,9 @@ The detailed Windows receipt is the commit-specific
 This is native functional validation with a rebuilt runtime override, not the
 final signed-installer acceptance. The CLI-mode test's external owner had to be
 restarted after the cold backup; it is not evidence of app-managed ownership of
-an external manifest. Mac must still validate its bundled managed-engine flow.
-No matching Mac result/archive or final two-device receipt has arrived.
+an external manifest. Mac built both exact commits and opened the Windows review
+on the physical QA app. The [Mac acceptance report](beta18-mac-acceptance-ef14119.md)
+records the package digests and remaining native, paired and signing checks.
 
 Do not package rejected engine `cee3849`: its payload-equality guard rejected
 parser annotation versions. Candidate `69e7a3c0b` reconciles redundant closed
