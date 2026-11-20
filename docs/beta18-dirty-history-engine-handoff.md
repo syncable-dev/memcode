@@ -67,7 +67,9 @@ cutoff also has 25,421 unique nodes and 127,225 unique edges, no duplicates and
 `needs_replay: false`. The recovered store still preserves all 400 sampled
 records and nine full payloads; 315 redundant intervals alone were closed.
 
-See [sanitized Windows receipt](beta18-windows-ef14119-native-acceptance.json).
+The detailed Windows receipt is the commit-specific
+`windows-ef14119-69e7a3c-native-acceptance.json` asset in the
+[private release draft](https://github.com/syncable-dev/memcode/releases/tag/beta18-staged-54eef4f).
 This is native functional validation with a rebuilt runtime override, not the
 final signed-installer acceptance. The CLI-mode test's external owner had to be
 restarted after the cold backup; it is not evidence of app-managed ownership of
