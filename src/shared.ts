@@ -238,6 +238,7 @@ export interface Settings {
   >;
   speech?: import("./speech").SpeechSettings;
   contextAssistant?: ContextAssistantSettings;
+  handoffAttribution?: import("./handoff").HandoffAttribution;
   memtracePath: string;
   speechEndpoint: string;
   defaultHarness: Harness;
@@ -248,6 +249,12 @@ export interface Settings {
 export interface Epic {
   branch?: string;
   baseRevision?: string;
+  /** The integration branch this work started from and will open its PR into. */
+  baseBranch?: string;
+  /** Set when the goal's pull request merged; a closed goal takes no new tasks. */
+  closedAt?: string;
+  /** Another goal merged code this goal uses, or dev moved under a Quick changes batch. */
+  updateNeeded?: { reason: string; files: string[]; since: string };
   id: string;
   projectId: string;
   identifier: string;
@@ -313,6 +320,7 @@ export interface AppState {
     Record<Harness, import("./connections").WorkerConnection>
   >;
   fleetPlans?: FleetPlan[];
+  pullRequests?: import("./pull-request").EpicPullRequest[];
   fleetProposals?: FleetProposal[];
   qualitySnapshots: QualitySnapshot[];
   cycles: Cycle[];
@@ -643,6 +651,33 @@ export interface MemCodeAPI extends CodeReviewAPI {
   startWorker(id: string): Promise<void>;
   stopWorker(id: string): Promise<void>;
   saveSettings(settings: Settings): Promise<RuntimeInfo>;
+  pullRequestPlan(
+    epicId: string,
+  ): Promise<import("./pull-request").PullRequestPlan>;
+  createPullRequest(
+    input: import("./pull-request").CreatePullRequest,
+  ): Promise<import("./pull-request").PullRequestResult>;
+  openPullRequest(epicId: string): Promise<void>;
+  mergePullRequest(
+    epicId: string,
+  ): Promise<import("./pull-request").MergeResult>;
+  placeWork(
+    projectId: string,
+    request: string,
+  ): Promise<import("./goal-plan").Placement>;
+  planGoal(input: {
+    projectId: string;
+    request: string;
+    harness: Harness;
+  }): Promise<import("./goal-plan").GoalPlan>;
+  updateGoalFromBase(epicId: string): Promise<{
+    merged: boolean;
+    savedWork: boolean;
+    conflicts?: string[];
+  }>;
+  setHandoffAttribution(
+    attribution: import("./handoff").HandoffAttribution,
+  ): Promise<void>;
   setWorkerPermissionDefault(
     harness: Harness,
     mode: import("./permissions").PermissionMode,

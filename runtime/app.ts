@@ -1,5 +1,12 @@
 import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
-import { basename, join, resolve, isAbsolute, extname } from "node:path";
+import {
+  basename,
+  join,
+  resolve,
+  isAbsolute,
+  extname,
+  relative as relativePath,
+} from "node:path";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { AppState, Project, WorkItem } from "../src/shared";
@@ -36,6 +43,15 @@ import { registerReview } from "./review";
 import { registerOnboarding } from "./onboarding";
 import { activateProjectGuide, beginProjectGuide } from "../src/onboarding";
 import { registerCardComments } from "./card-comments";
+import { handoffAttributionSchema, registerHandoff } from "./handoff";
+import {
+  createPullRequestService,
+  registerPullRequests,
+} from "./pull-request";
+import { GoalUpdates, registerGoalUpdates } from "./goal-updates";
+import { GoalPlacement, registerGoalPlacement } from "./goal-placement";
+import { GoalPlanner, registerGoalPlanner } from "./goal-planner";
+import { readWorkerChanges as readGoalChanges } from "./changes";
 import { registerConnections } from "./worker-connections";
 import { TeamSyncClient } from "./team/client";
 import { registerRepositoryRoutes } from "./repository-routes";
@@ -999,6 +1015,7 @@ export async function createRuntime(
     z
       .object({
         workerPermissionDefaults: workerPermissionDefaults.optional(),
+        handoffAttribution: handoffAttributionSchema.optional(),
         automaticUpdateDownloads: z.boolean().optional(),
         memtracePath: z.string().max(1000),
         speechEndpoint: z.string().max(1000),
@@ -1074,7 +1091,7 @@ export async function createRuntime(
       // reconnect resets the owner lifecycle so the next project can open it.
       if (settings.memtracePath !== store.state.settings.memtracePath)
         await engine.reconnect();
-      // A Settings dialog opened before a worker-default change must not erase it.
+      // A Settings dialog opened before a worker-default or handoff choice must not erase it.
       store.state.settings = {
         ...store.state.settings,
         ...settings,
@@ -1082,6 +1099,7 @@ export async function createRuntime(
         contextAssistant:
           settings.contextAssistant ?? store.state.settings.contextAssistant,
         workerPermissionDefaults: state().settings.workerPermissionDefaults,
+        handoffAttribution: state().settings.handoffAttribution,
       };
       await changed();
       return store.runtime();
@@ -1153,6 +1171,62 @@ export async function createRuntime(
     );
   });
   registerSpeech(register, speech);
+  registerHandoff(register, state, changed);
+  registerPullRequests(
+    register,
+    createPullRequestService({
+      state,
+      changed,
+      openUrl: (url) => host.call<void>("open_github_pull_request", { url }),
+    }),
+  );
+  /** Repo-relative files Memtrace associates with a request, for placement and planning. */
+  const relatedFiles = async (projectId: string, request: string) => {
+    const target = project(projectId);
+    if (target.analysis !== "ready" || !target.path) return [];
+    const root = target.path;
+    const result = await engine.call(target, "find_code", {
+      repo_id: target.repoId,
+      branch: target.branch,
+      query: request.slice(0, 1000),
+      limit: 12,
+    });
+    return [
+      ...new Set(
+        ((result?.results ?? []) as Array<{ file_path?: string }>)
+          .map((row) => String(row.file_path ?? ""))
+          .filter(Boolean)
+          .map((file) =>
+            (isAbsolute(file) ? relativePath(root, file) : file).replaceAll("\\", "/"),
+          )
+          .filter((file) => !file.startsWith("..")),
+      ),
+    ];
+  };
+  registerGoalPlacement(
+    register,
+    new GoalPlacement({ state, readChanges: readGoalChanges, relatedFiles }),
+  );
+  registerGoalPlanner(
+    register,
+    new GoalPlanner({ dataDir: store.dir, state, relatedFiles }),
+  );
+  registerGoalUpdates(
+    register,
+    new GoalUpdates({
+      state,
+      changed,
+      refreshGraph: async (epicId) => {
+        const task = state().tasks.find(
+          (item) => item.epicId === epicId && item.run.analysisProjectId,
+        );
+        if (!task) return;
+        const analysis = epicAnalysisProject(project(task.projectId), task);
+        await engine.activateEpic(analysis);
+        await engine.analyze(analysis, () => {});
+      },
+    }),
+  );
   register("retrieval:status", z.undefined(), () => retrieval.status());
   register("retrieval:setup", z.undefined(), () => retrieval.install());
   register(

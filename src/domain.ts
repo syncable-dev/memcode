@@ -23,6 +23,25 @@ export function progress(task: WorkItem): number {
   );
 }
 
+export const quickChangesSource = "quick-changes";
+const legacyDefaultSource = "project-work";
+
+/** Small tasks without a goal share one short-lived batch that ships as one PR. */
+export function isQuickChanges(epic: { sourceKey?: string }): boolean {
+  return (
+    epic.sourceKey === quickChangesSource ||
+    epic.sourceKey === legacyDefaultSource
+  );
+}
+
+/** A closed goal shipped; a goal needing an update takes no new small tasks. */
+export function acceptsQuickChanges(epic: {
+  closedAt?: string;
+  updateNeeded?: unknown;
+}): boolean {
+  return !epic.closedAt && !epic.updateNeeded;
+}
+
 export function isActive(task: WorkItem): boolean {
   return (
     task.run.state === "running" ||

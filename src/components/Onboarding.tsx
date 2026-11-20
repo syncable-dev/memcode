@@ -56,7 +56,7 @@ const copy = {
   epic: {
     number: 5,
     title: "What would you like to build?",
-    body: "An epic holds a larger goal. Stories are the smaller changes that get you there. Start with either.",
+    body: "Describe what you want in a sentence. MemCode puts it in a goal: related work joins the goal already changing that code, small fixes ship together as quick changes, and bigger work gets a plan of tasks.",
     button: "Write an epic",
     target: "[data-guide=new-epic]",
   },

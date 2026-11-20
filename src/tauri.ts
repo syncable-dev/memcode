@@ -369,6 +369,16 @@ export async function installNativeBridge(): Promise<void> {
     saveCustomFields: (projectId, fields) =>
       call("fields:save", { projectId, fields }),
     saveSettings: (settings) => call("settings:save", settings),
+    pullRequestPlan: (epicId) => call("epic:pull-request-plan", { epicId }),
+    createPullRequest: (input) => call("epic:create-pull-request", input),
+    openPullRequest: (epicId) => call("epic:open-pull-request", { epicId }),
+    mergePullRequest: (epicId) => call("epic:merge-pull-request", { epicId }),
+    updateGoalFromBase: (epicId) => call("epic:update-from-base", { epicId }),
+    placeWork: (projectId, request) =>
+      call("goal:place", { projectId, request }),
+    planGoal: (input) => call("goal:plan", input),
+    setHandoffAttribution: (attribution) =>
+      call("settings:handoff-attribution", { attribution }),
     setWorkerPermissionDefault: (harness, mode) =>
       call("worker:permission-default", { harness, mode }),
     showPreview: (input) => call("preview:show", input),

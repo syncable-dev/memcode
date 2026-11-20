@@ -85,6 +85,7 @@ import type {
 } from "../shared";
 import { isActive, pendingPrerequisites, progress } from "../domain";
 import { useDictation } from "../useDictation";
+import { StoryPullRequestBanner } from "./PullRequest";
 import {
   Empty,
   HarnessMark,
@@ -115,6 +116,7 @@ interface Props {
   epics: Epic[];
   conflicts: FleetConflict[];
   onDecisions: () => void;
+  onPullRequest: (epicId: string) => void;
   onConnections: () => void;
   tasks: WorkItem[];
   onClose: () => void;
@@ -138,6 +140,7 @@ export function WorkDetail({
   epics,
   conflicts,
   onDecisions,
+  onPullRequest,
   onConnections,
   tasks,
   onClose,
@@ -644,6 +647,11 @@ export function WorkDetail({
             </span>
           </div>
         </div>
+        <StoryPullRequestBanner
+          task={task}
+          state={state}
+          onOpen={onPullRequest}
+        />
         <StoryTabBar
           key={task.id}
           tab={tab}

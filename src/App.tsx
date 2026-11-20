@@ -29,7 +29,7 @@ import {
   Users,
   X,
 } from "lucide-react";
-import type { AppState, RuntimeInfo, WorkItem, Artifact } from "./shared";
+import { harnessIds, type AppState, type RuntimeInfo, type WorkItem, type Artifact } from "./shared";
 import { isActive, tasksForProject } from "./domain";
 import {
   Empty,
@@ -45,6 +45,8 @@ import { ArtifactCollection } from "./components/ArtifactCollection";
 import { groupedArtifacts } from "./artifact-purpose";
 import { WorkDetail } from "./components/WorkDetail";
 import { Roadmap } from "./components/Roadmap";
+import { PullRequestSheet } from "./components/PullRequest";
+import { NewWork } from "./components/NewWork";
 import { FleetDecisions } from "./components/FleetDecisions";
 import { Cycles } from "./components/Cycles";
 import { InsightsPage } from "./components/InsightsPage";
@@ -172,6 +174,8 @@ export function App() {
     null,
   );
   const [storyEpic, setStoryEpic] = useState<string | undefined>();
+  const [pullRequestEpic, setPullRequestEpic] = useState<string>();
+  const [detailedTask, setDetailedTask] = useState(false);
   const [storyStatus, setStoryStatus] = useState<string | undefined>();
   const [storyParent, setStoryParent] = useState<string | undefined>();
   const [dialog, setDialog] = useState<
@@ -385,6 +389,7 @@ export function App() {
     setDialog(null);
   };
   const create = (epicId?: string, parentId?: string, statusId?: string) => {
+    setDetailedTask(false);
     setStoryStatus(statusId);
     setStoryEpic(epicId);
     setStoryParent(parentId);
@@ -938,6 +943,8 @@ export function App() {
               notify={notify}
               createRequest={createEpicRequest}
               onCreateRequestConsumed={() => setCreateEpicRequest(0)}
+              pullRequests={state.pullRequests}
+              openPullRequest={setPullRequestEpic}
               onEpicCreated={(epic) => {
                 if (guideProgress?.step === "epic" && !guideProgress.dismissed)
                   updateGuide({ epicId: epic.id, step: "story" });
@@ -1171,6 +1178,7 @@ export function App() {
             setSelectedId(null);
             setView("fleet");
           }}
+          onPullRequest={setPullRequestEpic}
           onConnections={() => {
             setSelectedId(null);
             setView("workers");
@@ -1194,7 +1202,32 @@ export function App() {
           obscured={!!dialog}
         />
       )}
-      {dialog === "task" && (
+      {dialog === "task" && !storyParent && !detailedTask && (
+        <NewWork
+          project={project}
+          goals={epics.filter((epic) => !epic.closedAt)}
+          defaultHarness={state.settings.defaultHarness}
+          connected={harnessIds.filter(
+            (harness) => !!state.workerConnections?.[harness],
+          )}
+          fixedEpicId={storyEpic}
+          statusId={storyStatus}
+          onClose={() => setDialog(null)}
+          onAdvanced={() => setDetailedTask(true)}
+          onCreated={(task) => {
+            setDialog(null);
+            setSelectedId(task.id);
+            if (guideProgress?.step === "story" && !guideProgress.dismissed)
+              updateGuide({
+                storyId: task.id,
+                epicId: task.epicId ?? undefined,
+                step: "ready",
+              });
+          }}
+          notify={notify}
+        />
+      )}
+      {dialog === "task" && (storyParent || detailedTask) && (
         <NewTaskDialog
           project={project}
           defaultHarness={state.settings.defaultHarness}
@@ -1235,6 +1268,14 @@ export function App() {
           notify={notify}
         />
       )}
+      {pullRequestEpic &&
+        state.epics.some((epic) => epic.id === pullRequestEpic) && (
+          <PullRequestSheet
+            epic={state.epics.find((epic) => epic.id === pullRequestEpic)!}
+            close={() => setPullRequestEpic(undefined)}
+            notify={notify}
+          />
+        )}
       {dialog === "settings" && (
         <SettingsDialog
           settings={state.settings}

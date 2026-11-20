@@ -7,11 +7,14 @@ import {
   ChevronRight,
   Flag,
   GitBranch,
+  GitPullRequest,
   Plus,
+  RefreshCw,
   Route,
 } from "lucide-react";
 import type { Epic, Project, WorkItem } from "../shared";
-import { isActive } from "../domain";
+import { epicReadiness, type EpicPullRequest } from "../pull-request";
+import { isActive, isQuickChanges } from "../domain";
 import { Empty, PriorityMark, Spinner, StageIcon } from "./UI";
 import { Select } from "./Select";
 import { Modal } from "./Dialogs";
@@ -27,6 +30,8 @@ interface Props {
   createRequest?: number;
   onCreateRequestConsumed?: () => void;
   onEpicCreated?: (epic: Epic) => void;
+  pullRequests?: EpicPullRequest[];
+  openPullRequest: (epicId: string) => void;
 }
 const phases = [
   { id: "now", name: "Now", detail: "Build the useful core", number: "01" },
@@ -41,7 +46,7 @@ const phases = [
 
 export function Roadmap({
   project,
-  epics,
+  epics: allEpics,
   tasks,
   open,
   addStory,
@@ -49,9 +54,33 @@ export function Roadmap({
   createRequest,
   onCreateRequestConsumed,
   onEpicCreated,
+  pullRequests = [],
+  openPullRequest,
 }: Props) {
   const [phase, setPhase] = useState("all");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [updating, setUpdating] = useState<string>();
+  // A goal whose pull request merged has shipped; it leaves the active plan.
+  const epics = allEpics.filter((epic) => !epic.closedAt);
+  const shipped = allEpics.length - epics.length;
+  const updateFromBase = async (epic: Epic) => {
+    setUpdating(epic.id);
+    try {
+      const result = await window.memcode.updateGoalFromBase(epic.id);
+      const base = epic.baseBranch ?? "dev";
+      notify(
+        result.conflicts?.length
+          ? `Updating “${epic.title}” would conflict in ${result.conflicts.join(", ")}. Its work is saved on its branch; resolve it there or ask an agent.`
+          : result.merged
+            ? `Updated “${epic.title}” from ${base}. Its code context refreshes in about a minute.`
+            : `“${epic.title}” already has the latest ${base}.`,
+      );
+    } catch (error) {
+      notify((error as Error).message);
+    } finally {
+      setUpdating(undefined);
+    }
+  };
   const [newEpic, setNewEpic] = useState(false);
   useEffect(() => {
     if (createRequest) {
@@ -189,6 +218,10 @@ export function Roadmap({
                     ).length;
                     const allDone =
                       stories.length > 0 && completed === stories.length;
+                    const readiness = epicReadiness(stories, epic.id);
+                    const pullRequest = pullRequests.find(
+                      (item) => item.epicId === epic.id,
+                    );
                     const unfolded = expanded.has(epic.id);
                     return (
                       <article
@@ -222,23 +255,13 @@ export function Roadmap({
                             <option value="next">Next</option>
                             <option value="later">Later</option>
                           </Select>
-                          <span
-                            className={
-                              "epic-state " +
-                              (allDone ? "complete" : working ? "working" : "")
-                            }
-                          >
-                            {allDone ? (
-                              <>
-                                <Check size={11} />
-                                Complete
-                              </>
-                            ) : working ? (
-                              "In progress"
-                            ) : (
-                              "Planned"
-                            )}
-                          </span>
+                          <EpicState
+                            allDone={allDone}
+                            updateNeeded={epic.updateNeeded?.reason}
+                            pullRequest={!!pullRequest}
+                            ready={readiness.isReady}
+                            working={working > 0}
+                          />
                         </div>
                         <button
                           className="epic-title"
@@ -273,6 +296,42 @@ export function Roadmap({
                             <Plus size={12} />
                             Add story
                           </button>
+                          {epic.updateNeeded && (
+                            <button
+                              className="epic-update"
+                              disabled={updating === epic.id || readiness.active > 0}
+                              title={
+                                readiness.active > 0
+                                  ? "Wait for running tasks to finish first."
+                                  : epic.updateNeeded.reason
+                              }
+                              onClick={() => void updateFromBase(epic)}
+                            >
+                              {updating === epic.id ? (
+                                <Spinner size={11} />
+                              ) : (
+                                <RefreshCw size={12} />
+                              )}
+                              Update from {epic.baseBranch ?? "dev"}
+                            </button>
+                          )}
+                          {(pullRequest || readiness.ready > 0) && (
+                            <button
+                              className={
+                                readiness.isReady && !pullRequest
+                                  ? "epic-pr-ready"
+                                  : ""
+                              }
+                              onClick={() => openPullRequest(epic.id)}
+                            >
+                              <GitPullRequest size={12} />
+                              {pullRequest
+                                ? "View pull request"
+                                : isQuickChanges(epic)
+                                  ? `Ship ${readiness.ready} quick ${readiness.ready === 1 ? "change" : "changes"}`
+                                  : "Create pull request"}
+                            </button>
+                          )}
                           <DeleteAction
                             kind="epic"
                             id={epic.id}
@@ -337,6 +396,8 @@ export function Roadmap({
           <span>
             Stories carry the brief, runbook, model route and worker result.
             Prerequisites keep the order explicit.
+            {shipped > 0 &&
+              ` ${shipped} ${shipped === 1 ? "goal has" : "goals have"} shipped.`}
           </span>
         </div>
       )}
@@ -444,4 +505,42 @@ function NewEpic({
       </form>
     </Modal>
   );
+}
+
+function EpicState({
+  allDone,
+  updateNeeded,
+  pullRequest,
+  ready,
+  working,
+}: {
+  allDone: boolean;
+  updateNeeded?: string;
+  pullRequest: boolean;
+  ready: boolean;
+  working: boolean;
+}) {
+  if (allDone)
+    return (
+      <span className="epic-state complete">
+        <Check size={11} />
+        Complete
+      </span>
+    );
+  if (updateNeeded)
+    return (
+      <span className="epic-state needs-update" title={updateNeeded}>
+        Needs update
+      </span>
+    );
+  if (pullRequest)
+    return (
+      <span className="epic-state ready">
+        <GitPullRequest size={10} />
+        PR open
+      </span>
+    );
+  if (ready) return <span className="epic-state ready">Ready for PR</span>;
+  if (working) return <span className="epic-state working">In progress</span>;
+  return <span className="epic-state">Planned</span>;
 }
