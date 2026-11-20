@@ -494,15 +494,17 @@ export async function createRuntime(
     },
   );
   const analyses = new Map<string, Promise<void>>();
-  const runAnalysis = async (id: string) => {
+  let analysisAccount = new AbortController();
+  const runAnalysis = async (id: string, signal: AbortSignal) => {
     const item = project(id);
     if (item.example || !item.path)
       throw new Error("Choose a local project folder first.");
     await beta?.initialize();
-    if (
+    const missingEngine =
       !beta?.usesBeta() &&
-      !(await findCommand("memtrace", store.state.settings.memtracePath))
-    ) {
+      !(await findCommand("memtrace", store.state.settings.memtracePath));
+    signal.throwIfAborted();
+    if (missingEngine) {
       item.analysis = "idle";
       item.analysisNote =
         "Connect Memtrace beta from your account or project setup to prepare the local engine. You can keep planning while it connects.";
@@ -515,21 +517,28 @@ export async function createRuntime(
     item.analysisNote = "Connecting to local Memtrace…";
     await changed();
     try {
-      await ensureProjectRepository(item);
-      item.repoId = await engine.analyze(
+      signal.throwIfAborted();
+      await ensureProjectRepository(item, signal);
+      signal.throwIfAborted();
+      const repoId = await engine.analyze(
         item,
         (note) => {
+          if (signal.aborted) return;
           item.analysis = "indexing";
           item.analysisNote = note;
           void changed();
         },
         false,
         previousFailure,
+        signal,
       );
+      signal.throwIfAborted();
+      item.repoId = repoId;
       item.analysis = "ready";
       item.analysisNote = "Project code context is connected.";
       await changed();
     } catch (error) {
+      signal.throwIfAborted();
       item.analysis = "error";
       item.analysisNote = (error as Error).message;
       await changed();
@@ -537,9 +546,15 @@ export async function createRuntime(
     }
   };
   const analyze = (id: string): Promise<void> => {
+    if (beta?.isChanging())
+      return Promise.reject(
+        new Error("Finish or cancel beta sign-in before refreshing code analysis."),
+      );
     const existing = analyses.get(id);
     if (existing) return existing;
-    const pending = runAnalysis(id).finally(() => analyses.delete(id));
+    const pending = runAnalysis(id, analysisAccount.signal).finally(() => {
+      if (analyses.get(id) === pending) analyses.delete(id);
+    });
     analyses.set(id, pending);
     return pending;
   };
@@ -557,6 +572,7 @@ export async function createRuntime(
       return Promise.resolve();
     const pending = resumedWatches.get(id);
     if (pending) return pending;
+    const signal = analysisAccount.signal;
     const path = item.path,
       repoId = item.repoId;
     const reconnect = (async () => {
@@ -566,6 +582,7 @@ export async function createRuntime(
       await beta?.initialize();
       const stillCurrent = () =>
         !closed &&
+        !signal.aborted &&
         item.path === path &&
         item.repoId === repoId &&
         item.analysis === "ready";
@@ -623,12 +640,18 @@ export async function createRuntime(
         );
     },
     beforeIdentityChange: async () => {
+      analysisAccount.abort(
+        new Error("Memtrace access changed during code analysis."),
+      );
+      analysisAccount = new AbortController();
+      analyses.clear();
       await telemetry.accountChanged();
       requireFreshWorkerContext = true;
       teamIdentity.cancel();
       await team?.suspendAccount();
+      // Drain owned engine clients before binding the new account. Retired
+      // requests cannot publish even if an external analysis outlives its client.
       await engine.reconnect();
-      await Promise.allSettled([...analyses.values()]);
       for (const item of store.state.projects)
         if (!item.example && item.path) {
           item.analysis = "idle";

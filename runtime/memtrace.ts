@@ -941,7 +941,12 @@ export class MemtraceEngine {
     update("Connecting to the local Memtrace engine…");
     await this.connect(project, update);
     signal?.throwIfAborted();
-    const result = await this.call(project, "list_indexed_repositories", {});
+    const result = await this.call(
+      project,
+      "list_indexed_repositories",
+      {},
+      signal,
+    );
     const repos: Json[] = Array.isArray(result)
       ? result
       : (result.repos ?? result.repositories ?? []);
@@ -973,10 +978,12 @@ export class MemtraceEngine {
         match.index_state === "catching_up" ||
         retryPublication)
     ) {
-      const revision = await this.call(project, "get_query_revision", {
-        repo_id: match.repo_id,
-        branch: project.branch,
-      });
+      const revision = await this.call(
+        project,
+        "get_query_revision",
+        { repo_id: match.repo_id, branch: project.branch },
+        signal,
+      );
       assertActive();
       if (retryPublication) {
         if (
@@ -1024,15 +1031,20 @@ export class MemtraceEngine {
     }
     update("Reading the project structure and building its code graph…");
     const queueIndex = () =>
-      this.call(project, "index_directory", {
-        path: project.path,
-        repo_id: match?.repo_id ?? project.repoId,
-        incremental: !!match,
-        skip_embed:
-          project.analysisCurrentSource === true ||
-          project.analysisCheckout === "owned-worktree-v1",
-        branch: project.branch,
-      });
+      this.call(
+        project,
+        "index_directory",
+        {
+          path: project.path,
+          repo_id: match?.repo_id ?? project.repoId,
+          incremental: !!match,
+          skip_embed:
+            project.analysisCurrentSource === true ||
+            project.analysisCheckout === "owned-worktree-v1",
+          branch: project.branch,
+        },
+        signal,
+      );
     if (beforeIndex) {
       await beforeIndex(match?.repo_id);
       assertActive();
@@ -1063,9 +1075,9 @@ export class MemtraceEngine {
     for (let i = 0; i < 600; i++) {
       await new Promise((resolve) => setTimeout(resolve, 1500));
       assertActive();
-      const status = await this.call(project, "check_job_status", {
-        job_id: job.job_id,
-      });
+      const status = await this.call(
+        project, "check_job_status", { job_id: job.job_id }, signal,
+      );
       assertActive();
       update(`Analyzing code · ${status.stage ?? status.status ?? "working"}`);
       if (status.status === "failed") {
@@ -1077,10 +1089,12 @@ export class MemtraceEngine {
           typeof repoId === "string" &&
           (!project.repoId || project.repoId === repoId)
         ) {
-          const revision = await this.call(project, "get_query_revision", {
-            repo_id: repoId,
-            branch: project.branch,
-          }).catch(() => null);
+          const revision = await this.call(
+            project,
+            "get_query_revision",
+            { repo_id: repoId, branch: project.branch },
+            signal,
+          ).catch(() => null);
           assertActive();
           if (certifiedPublication(revision, project, repoId)) return repoId;
           if (writingSourceRevision(revision, project, repoId))
@@ -1100,6 +1114,7 @@ export class MemtraceEngine {
           project,
           "list_indexed_repositories",
           {},
+          signal,
         );
         const current: Json[] = Array.isArray(indexed)
           ? indexed

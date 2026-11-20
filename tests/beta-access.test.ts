@@ -26,6 +26,12 @@ import {
 import { childEnv } from "../runtime/commands";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
+import { execFileSync } from "node:child_process";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { setTimeout as wait } from "node:timers/promises";
+import { createRuntime } from "../runtime/app";
+import { ManagedMemcodeEngine } from "../runtime/managed-engine";
+import { MemtraceEngine } from "../runtime/memtrace";
 
 const pair = generateKeyPairSync("ed25519");
 const publicKey = {
@@ -226,6 +232,46 @@ test("cancel before readiness cannot open a browser or leave a callback listener
   assert.equal(opened, 0);
 });
 
+test("browser approval finishes even if the native browser opener has not replied", async () => {
+  let finishOpening!: () => void;
+  let received!: () => void;
+  const callbackReceived = new Promise<void>((resolve) => (received = resolve));
+  const auth = createBetaAuthorization({
+    openExternal: async (value) => {
+      const authorization = new URL(value);
+      const callback = new URL(authorization.searchParams.get("redirect_uri")!);
+      callback.searchParams.set(
+        "state",
+        authorization.searchParams.get("state")!,
+      );
+      callback.searchParams.set("code", "c".repeat(43));
+      const response = await fetch(callback);
+      assert.match(await response.text(), /Approval received/);
+      received();
+      return new Promise<void>((resolve) => (finishOpening = resolve));
+    },
+    fetcher: (async (url) =>
+      String(url).endsWith("/status")
+        ? Response.json({
+            available: true,
+            program: BETA_PROGRAM,
+            terms_version: BETA_TERMS,
+          })
+        : Response.json(tokens(binding, Date.now()))) as typeof fetch,
+  });
+  const connecting = auth.authorize(binding);
+  try {
+    await callbackReceived;
+    assert.equal(
+      await Promise.race([connecting.then(() => true), wait(150, false)]),
+      true,
+    );
+  } finally {
+    finishOpening?.();
+    await connecting;
+  }
+});
+
 function storageFixture(initial?: {
   credentials?: BetaCredentials;
   accessToken?: string;
@@ -347,6 +393,123 @@ function managerFixture() {
     },
   };
 }
+
+test("cancelling a beta reconnect stops waiting for the previous session rotation", async () => {
+  const fixture = managerFixture();
+  let releaseRefresh!: (value: BetaTokens) => void;
+  try {
+    await fixture.manager.connect();
+    fixture.advance(14 * 60000);
+    const previousBinding = fixture.lastBinding!;
+    fixture.authorization.refresh = async () =>
+      new Promise((resolve) => (releaseRefresh = resolve));
+    const refreshing = fixture.manager.refresh();
+    await delay();
+    const connecting = fixture.manager.connect();
+    const cancelled = assert.rejects(connecting, /cancelled/);
+    await delay();
+    const cancel = fixture.manager.cancel();
+    const rotated = tokens(previousBinding, fixture.now);
+    try {
+      assert.equal(
+        await Promise.race([cancel.then(() => true), wait(150, false)]),
+        true,
+      );
+    } finally {
+      releaseRefresh(rotated);
+      await Promise.all([refreshing, cancelled, cancel]);
+    }
+    assert.equal(
+      (fixture.disk.state.credentials as BetaCredentials).refreshToken,
+      rotated.refresh_token,
+    );
+  } finally {
+    await fixture.manager.close();
+  }
+});
+
+test("approved sign-in reconnects code context without waiting for a stale analysis request", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "memcode-beta-analysis-race-"));
+  const folder = join(root, "source");
+  await mkdir(folder);
+  execFileSync("git", ["init", "--initial-branch=main", folder], { stdio: "ignore" });
+  const command = join(root, "fixture-engine.mjs");
+  await writeFile(command, "");
+  let releaseAnalysis!: (id: string) => void;
+  let analysisStarted!: () => void;
+  const started = new Promise<void>((resolve) => (analysisStarted = resolve));
+  const oldAnalysis = new Promise<string>((resolve) => (releaseAnalysis = resolve));
+  let analyzeCalls = 0;
+  t.mock.method(MemtraceEngine.prototype, "analyze", async () => {
+    if (++analyzeCalls > 1) return "connected-graph";
+    analysisStarted();
+    return oldAnalysis;
+  });
+  t.mock.method(ManagedMemcodeEngine.prototype, "prepare", async () => command);
+  const realFetch = globalThis.fetch;
+  let approvedBinding!: BetaBinding;
+  t.mock.method(globalThis, "fetch", async (input: string | URL | Request, init?: RequestInit) => {
+    const url = new URL(input instanceof Request ? input.url : input);
+    if (url.origin !== BETA_ORIGIN) return realFetch(input, init);
+    if (url.pathname.endsWith("/status"))
+      return Response.json({ available: true, program: BETA_PROGRAM, terms_version: BETA_TERMS });
+    if (url.pathname.endsWith("/token")) return Response.json(tokens(approvedBinding, Date.now()));
+    if (url.pathname.endsWith("/jwks")) return Response.json({ keys: [publicKey] });
+    throw Error("Unexpected beta endpoint");
+  });
+  const runtime = await createRuntime(join(root, "profile"), root, {
+    async call<T>(method: string, input?: unknown): Promise<T> {
+      if (method === "beta_store_read") return { configured: false, credentials: null } as T;
+      if (method === "beta_store_write") return null as T;
+      if (method === "beta_access_write") return { accessFile: join(root, "access.jwt") } as T;
+      if (method === "select_folder") return folder as T;
+      if (method === "preview_hide") return null as T;
+      if (method === "open_memcode_beta") {
+        const request = new URL((input as { url: string }).url);
+        approvedBinding = {
+          deviceId: request.searchParams.get("device_id")!,
+          sessionId: request.searchParams.get("session_id")!,
+        };
+        const callback = new URL(request.searchParams.get("redirect_uri")!);
+        callback.searchParams.set("code", "c".repeat(43));
+        callback.searchParams.set("state", request.searchParams.get("state")!);
+        assert.match(await (await realFetch(callback)).text(), /Approval received/);
+        return null as T;
+      }
+      throw Error("Unexpected native operation " + method);
+    },
+  }, () => {});
+  let analyzing: Promise<unknown> | undefined;
+  let connecting: Promise<unknown> | undefined;
+  try {
+    runtime.store.state.settings.memtracePath = command;
+    await runtime.request("project:select-folder");
+    const item = (await runtime.request("project:create", {
+      mode: "existing",
+      parent: folder,
+      name: "Local project",
+      description: "Keep its saved checkout",
+    })) as { id: string };
+    analyzing = runtime.request("project:analyze", item.id).catch(() => {});
+    await started;
+    connecting = runtime.request("beta:connect");
+    assert.equal(
+      await Promise.race([connecting.then(() => true), wait(1200, false)]),
+      true,
+    );
+    await runtime.request("project:analyze", item.id);
+    releaseAnalysis("stale-graph");
+    await analyzing;
+    const project = runtime.store.state.projects.find((entry) => entry.id === item.id);
+    assert.equal(project?.path, await realpath(folder));
+    assert.equal(project?.repoId, "connected-graph");
+  } finally {
+    releaseAnalysis("stale-graph");
+    await Promise.allSettled([analyzing, connecting]);
+    await runtime.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test("browser approval stores refresh before publishing proof and exposes only safe status/engine hints", async () => {
   const fixture = managerFixture();

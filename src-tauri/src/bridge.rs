@@ -350,7 +350,7 @@ impl RuntimeBridge {
                     });
                     return;
                 }
-                if let Some(event @ ("preview:event" | "workspace:save-status")) =
+                if let Some(event @ ("beta:status" | "preview:event" | "workspace:save-status")) =
                     message["event"].as_str()
                 {
                     self.queue_event(app, event.to_owned(), message["payload"].clone())

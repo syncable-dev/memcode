@@ -9,6 +9,7 @@ export interface MemCodeBetaStatus {
   refreshExpiresAt?: string;
   termsVersion?: string;
   loginPending: boolean;
+  connectionPhase?: "starting" | "browser" | "finishing";
   canCancel?: boolean;
   revocationPending?: boolean;
 }

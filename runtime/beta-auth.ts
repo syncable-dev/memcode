@@ -302,11 +302,14 @@ export function createBetaAuthorization(options: BetaAuthorizationOptions) {
       ? null
       : boundedBetaJSON(response);
   };
-  const available = async () => {
+  const available = async (signal?: AbortSignal) => {
     const data = await boundedBetaJSON(
       await fetcher(`${BETA_ORIGIN}/api/memcode/beta/status`, {
         redirect: "error",
-        signal: AbortSignal.timeout(8000),
+        signal: AbortSignal.any([
+          AbortSignal.timeout(8000),
+          ...(signal ? [signal] : []),
+        ]),
         headers: { accept: "application/json" },
       }),
     );
@@ -356,8 +359,9 @@ export function createBetaAuthorization(options: BetaAuthorizationOptions) {
       void result.catch(() => {});
       cancel = () => {
         cancelled = true;
-        abort.abort();
-        rejectCode(new Error("MemCode beta sign-in was cancelled."));
+        const error = new Error("MemCode beta sign-in was cancelled.");
+        abort.abort(error);
+        rejectCode(error);
       };
       const server = createServer((request, response) => {
         const url = new URL(request.url ?? "/", "http://127.0.0.1");
@@ -399,7 +403,7 @@ export function createBetaAuthorization(options: BetaAuthorizationOptions) {
         resolveCode(code);
       });
       try {
-        if (!(await available()))
+        if (!(await available(abort.signal)))
           throw new Error(
             "MemCode noncommercial beta access is not enabled on the service yet.",
           );
@@ -408,6 +412,7 @@ export function createBetaAuthorization(options: BetaAuthorizationOptions) {
           server.once("error", reject);
           server.listen(0, "127.0.0.1", resolve);
         });
+        abort.signal.throwIfAborted();
         const address = server.address();
         if (!address || typeof address === "string")
           throw new Error("The local sign-in callback could not start.");
@@ -436,7 +441,7 @@ export function createBetaAuthorization(options: BetaAuthorizationOptions) {
             ),
           300000,
         );
-        const opened = options
+        void options
           .openExternal(authorize.href)
           .catch(() =>
             rejectCode(
@@ -446,7 +451,6 @@ export function createBetaAuthorization(options: BetaAuthorizationOptions) {
             ),
           );
         const code = await result;
-        await opened;
         if (cancelled) throw new Error("MemCode beta sign-in was cancelled.");
         const tokens = betaTokens(
           await request(

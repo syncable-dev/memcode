@@ -53,7 +53,10 @@ export async function ensureLocalRuntimeIgnored(root: string): Promise<void> {
 }
 
 /** Empty folders opened as projects need the same foundation as a new project. */
-export async function ensureProjectRepository(project: Project): Promise<void> {
+export async function ensureProjectRepository(
+  project: Project,
+  signal?: AbortSignal,
+): Promise<void> {
   if (!project.path) throw Error("Choose a local project folder first.");
   const path = project.path;
   let root: string | undefined;
@@ -75,6 +78,7 @@ export async function ensureProjectRepository(project: Project): Promise<void> {
       );
     await ensureLocalRuntimeIgnored(path);
     const branch = await git(path, ["branch", "--show-current"]);
+    signal?.throwIfAborted();
     if (!branch) throw Error("Choose a named local Git branch before analyzing this project.");
     if (branch !== project.branch) {
       if (project.analysisCheckout || project.analysisCurrentSource)
@@ -89,6 +93,7 @@ export async function ensureProjectRepository(project: Project): Promise<void> {
     throw Error(
       "This folder is not a Git repository. Initialize Git in it, then refresh code context, or select an existing repository.",
     );
+  signal?.throwIfAborted();
   await git(path, ["init", "--initial-branch=main"]);
   await writeFile(
     join(path, "README.md"),
@@ -110,5 +115,6 @@ export async function ensureProjectRepository(project: Project): Promise<void> {
     "-m",
     "Start project from MemCode brief",
   ]);
+  signal?.throwIfAborted();
   project.branch = "main";
 }

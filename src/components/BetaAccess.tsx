@@ -203,9 +203,11 @@ export function BetaAccess({
             <>
               <span className="beta-access-pending">
                 <Spinner />{" "}
-                {status?.canCancel === false
-                  ? "Preparing local engine…"
-                  : "Waiting for browser approval…"}
+                {status?.connectionPhase === "finishing" || status?.canCancel === false
+                  ? "Finishing sign-in…"
+                  : status?.connectionPhase === "starting"
+                    ? "Getting sign-in ready…"
+                    : "Waiting for browser approval…"}
               </span>
               {status?.canCancel !== false && (
                 <button
