@@ -27,7 +27,7 @@ import { WorkerManager } from "./workers";
 import { PreviewManager } from "./preview";
 import { localURL } from "./urls";
 import { discoverHarnesses } from "./catalog";
-import { planDefinedStory, readRoutingCalibration } from "./story-route";
+import { planDefinedStory, readRoutingCalibration, readRoutingLanguage } from "./story-route";
 import { qualificationRequestFingerprint } from "./qualification";
 import { registerPlanning } from "./planning";
 import { registerPlanningControls } from "./planning-controls";
@@ -772,13 +772,14 @@ export async function createRuntime(
     if (isActive(current)) throw new Error(activeRouteError);
     const measurement = { ...current, scope: current.scope?.slice() };
     const measuredRequest = qualificationRequestFingerprint(measurement);
-    const [installed, evidence, calibration] = await Promise.all([
+    const [installed, evidence, calibration, languageModel] = await Promise.all([
       discover(),
       engine.qualify(
         epicAnalysisProject(project(measurement.projectId), measurement),
         measurement,
       ),
       readRoutingCalibration(store.dir),
+      readRoutingLanguage(store.dir),
     ]);
     const latest = task(id);
     if (isActive(latest)) throw new Error(activeRouteError);
@@ -791,6 +792,7 @@ export async function createRuntime(
       installed,
       store.state,
       calibration,
+      languageModel,
     );
     latest.evidence = evidence;
     latest.route = route;

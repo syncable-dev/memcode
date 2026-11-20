@@ -7,6 +7,11 @@ import {
   routingInputs,
 } from "../runtime/router.ts";
 import { compileRoutingCalibration } from "../runtime/routing-calibration.ts";
+import {
+  createRoutingLanguageSnapshot,
+  extractRoutingLanguageFeatures,
+  loadRoutingLanguageModel,
+} from "../runtime/routing-language-model.ts";
 import { cursorCatalog } from "../src/cursor-models.ts";
 import { initialState } from "../src/seed.ts";
 import type { Evidence, HarnessRuntime } from "../src/shared.ts";
@@ -41,6 +46,118 @@ export const catalog: HarnessRuntime[] = ["codex", "claude", "cursor"].map(
     ),
   }),
 );
+
+test("a native low maintainability score sets a one-time edit floor and zero remains visible", () => {
+  const {
+    tasks: [story],
+    settings,
+  } = initialState();
+  const evidence = {
+    ...measured,
+    symbols: [{ ...measured.symbols[0], maintainabilityIndex: 0 }],
+  };
+  const task = {
+    ...story,
+    assignment: "auto" as const,
+    title: "Fix rendering",
+    description: "Fix the card.",
+  };
+  const route = planRoute(task, evidence, catalog, settings);
+  assert.equal(route.selection?.workTier, "balanced");
+  assert.equal(route.selection?.impactTier, "fast");
+  assert.deepEqual(route.inputs.maintainability, {
+    lowest: 0,
+    measuredSymbols: 1,
+  });
+  const readOnly = planRoute(
+    { ...task, title: "Explain rendering", description: "" },
+    evidence,
+    catalog,
+    settings,
+  );
+  assert.equal(readOnly.selection?.workTier, "fast");
+  assert.equal(readOnly.inputs.maintainability?.lowest, 0);
+  const alreadyComplex = {
+    ...evidence,
+    symbols: [{ ...evidence.symbols[0], cognitive: 120 }],
+  };
+  assert.equal(
+    planRoute(task, alreadyComplex, catalog, settings).selection?.workTier,
+    "frontier",
+  );
+  const invalid = {
+    ...evidence,
+    symbols: [{ ...evidence.symbols[0], maintainabilityIndex: -1 }],
+  };
+  assert.equal(
+    planRoute(task, invalid, catalog, settings).inputs.maintainability,
+    undefined,
+  );
+});
+
+test("local wording classifies ambiguous requests while explicit rules and impact remain authoritative", () => {
+  const {
+    tasks: [story],
+    settings,
+  } = initialState();
+  const title = "Coverage for desktop cards";
+  const description =
+    "Regression cases around the planner. Keep behavior unchanged.";
+  const weights: [number, number][] = extractRoutingLanguageFeatures(
+    title,
+    description,
+  )
+    .slice(0, 4)
+    .map((index) => [index, 3]);
+  const snapshot = createRoutingLanguageSnapshot([
+    { kind: "test", bias: -1, minFeatures: 2, threshold: 0.9, weights },
+  ]);
+  const model = loadRoutingLanguageModel(snapshot);
+  assert.ok(model);
+  const task = {
+    ...story,
+    assignment: "auto" as const,
+    title,
+    description,
+    kind: "feature" as const,
+  };
+  const baseline = planRoute(task, measured, catalog, settings);
+  const route = planRoute(task, measured, catalog, settings, undefined, model);
+  assert.equal(baseline.harness, "cursor");
+  assert.equal(route.harness, "codex");
+  assert.deepEqual(route.inputs.request?.kinds, ["test"]);
+  assert.equal(route.inputs.request?.preserveBehavior, true);
+  assert.equal(route.inputs.request?.language?.outcome, "classified");
+  assert.equal(route.inputs.request?.language?.digest, snapshot.digest);
+  const explicit = planRoute(
+    { ...task, title: "Explain the cards" },
+    measured,
+    catalog,
+    settings,
+    undefined,
+    model,
+  );
+  assert.deepEqual(explicit.inputs.request?.kinds, ["explain"]);
+  assert.equal(explicit.inputs.request?.readOnly, true);
+  assert.equal(explicit.inputs.request?.language, undefined);
+  const readOnlyGuess = loadRoutingLanguageModel(
+    createRoutingLanguageSnapshot([
+      { kind: "explain", bias: -1, minFeatures: 2, threshold: 0.9, weights },
+    ]),
+  );
+  assert.ok(readOnlyGuess);
+  const risky = planRoute(
+    task,
+    { ...measured, affected: 70 },
+    catalog,
+    settings,
+    undefined,
+    readOnlyGuess,
+  );
+  assert.deepEqual(risky.inputs.request?.kinds, ["explain"]);
+  assert.equal(risky.inputs.request?.readOnly, false);
+  assert.equal(risky.selection?.impactTier, "frontier");
+});
 
 test("story assignment and story model supersede the default harness's global pin", () => {
   const {
@@ -163,14 +280,12 @@ test("catalog fingerprint and effort remain stable across discovery ordering", (
       efforts: ["high", "low"],
     })),
   }));
-  const reversed = [...withEfforts]
-    .reverse()
-    .map((runtime) => ({
-      ...runtime,
-      models: [...runtime.models]
-        .reverse()
-        .map((model) => ({ ...model, efforts: [...model.efforts].reverse() })),
-    }));
+  const reversed = [...withEfforts].reverse().map((runtime) => ({
+    ...runtime,
+    models: [...runtime.models]
+      .reverse()
+      .map((model) => ({ ...model, efforts: [...model.efforts].reverse() })),
+  }));
   const first = planRoute(task, measured, withEfforts, settings);
   const second = planRoute(task, measured, reversed, settings);
   assert.equal(

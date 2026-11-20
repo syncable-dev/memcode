@@ -140,6 +140,9 @@ async function fixture(t: TestContext, changePublication = false) {
             cognitive_complexity: 4,
             complexity: 2,
             max_nesting: 1,
+            quality_metrics_v: 1,
+            maintainability_index:
+              args.function_name === "loadBoard" ? 0 : 72.4,
           },
         };
       if (tool === "get_impact") {
@@ -172,6 +175,16 @@ test("exact line and symbol qualification deduplicates callers, files and flows"
   assert.deepEqual(
     evidence.symbols.map((symbol) => symbol.name),
     ["loadBoard", "saveBoard"],
+  );
+  assert.deepEqual(
+    evidence.symbols.map((symbol) => symbol.maintainabilityIndex),
+    [0, 72.4],
+  );
+  assert.equal(
+    requests.filter(
+      (request) => request.name === "get_function_quality_metrics",
+    ).length,
+    2,
   );
   assert.deepEqual(evidence.impact, {
     targetCount: 2,
@@ -216,6 +229,65 @@ test("a mixed publication discards grouped impact and AST metrics", async (t) =>
   assert.equal(evidence.affected, undefined);
   assert.equal(evidence.impact?.observedTargets, 0);
   assert.deepEqual(evidence.symbols, []);
+});
+
+test("invalid, estimated, or versionless maintainability stays unknown", async (t) => {
+  const { project, task, client } = await fixture(t);
+  for (const overrides of [
+    { maintainability_index: 101 },
+    { maintainability_index: undefined },
+    { complexity_source: "estimated" },
+    { quality_metrics_v: undefined },
+    { node_id: "different-symbol" },
+  ]) {
+    const evidence = await collectEvidence(
+      {
+        async call(checkout, name, args) {
+          const response = await client.call(checkout, name, args);
+          if (name !== "get_function_quality_metrics") return response;
+          return {
+            ...response,
+            function: { ...response.function, ...overrides },
+          };
+        },
+      },
+      project,
+      task,
+    );
+    assert.equal(evidence.symbols.length, 2);
+    assert.ok(
+      evidence.symbols.every(
+        (symbol) => symbol.maintainabilityIndex === undefined,
+      ),
+    );
+  }
+});
+
+test("a stale index excludes maintainability from both fresh reads and cached story evidence", async (t) => {
+  const { project, task, client } = await fixture(t);
+  const evidence = await collectEvidence(client, project, task);
+  const staleClient = {
+    async call(checkout: Project, name: string, args: Record<string, unknown>) {
+      const response = await client.call(checkout, name, args);
+      return name === "get_query_revision"
+        ? {
+            ...response,
+            ready: false,
+            mismatched_files: 1,
+            mismatched_paths: ["src/board.ts"],
+          }
+        : response;
+    },
+  };
+  const reevaluated = await collectEvidence(staleClient, project, task);
+  assert.equal(reevaluated.state, "partial");
+  assert.equal(reevaluated.symbols[0].cognitive, 4);
+  assert.equal(reevaluated.symbols[0].maintainabilityIndex, undefined);
+  const [refreshed] = await refreshEvidence(staleClient, project, [
+    { ...task, evidence },
+  ]);
+  assert.equal(refreshed.action, "stale");
+  assert.equal(refreshed.evidence?.symbols[0].maintainabilityIndex, undefined);
 });
 
 test("a changed work request refreshes evidence on the same checkout", async (t) => {

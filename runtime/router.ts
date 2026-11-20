@@ -23,6 +23,7 @@ import type {
   WorkItem,
 } from "../src/shared";
 import { analyzeRoutingIntent } from "./routing-intent";
+import type { RoutingLanguageModel } from "./routing-language-model";
 import type { RoutingRequestSignals } from "../src/routing-signals";
 import {
   estimateRoutingCandidates,
@@ -108,10 +109,27 @@ export function routingInputs(
 ): RouteDecision["inputs"] {
   const symbols = evidence?.symbols ?? [];
   const ast = symbols.filter((symbol) => symbol.metricSource === "ast");
+  const maintainability = ast
+    .map((symbol) => symbol.maintainabilityIndex)
+    .filter(
+      (value): value is number =>
+        typeof value === "number" &&
+        Number.isFinite(value) &&
+        value >= 0 &&
+        value <= 100,
+    );
   return {
     cognitive: maximum(ast.map((s) => s.cognitive)),
     cyclomatic: maximum(ast.map((s) => s.cyclomatic)),
     nesting: maximum(ast.map((s) => s.nesting)),
+    ...(maintainability.length
+      ? {
+          maintainability: {
+            lowest: Math.min(...maintainability),
+            measuredSymbols: maintainability.length,
+          },
+        }
+      : {}),
     affected: evidence?.affected ?? null,
     processes: evidence?.affectedProcesses ?? null,
     moduleRoots: new Set(symbols.map((s) => moduleRoot(s.file))).size,
@@ -132,8 +150,15 @@ export function routingInputs(
 const within = (observed: number | null | undefined, limit: number) =>
   observed == null || observed <= limit;
 
+// The normalized 0–9 band is a conservative signal for edits. Raising the
+// minimum once avoids adding cyclomatic complexity again through its MI weight.
+const lowMaintainability = (input: RouteDecision["inputs"]) =>
+  !input.request?.readOnly &&
+  input.maintainability !== undefined &&
+  input.maintainability.lowest < 10;
+
 function taskTiers(input: RouteDecision["inputs"]) {
-  const workTier: ModelTier =
+  const measuredWorkTier: ModelTier =
     envelopes.find(
       (envelope) =>
         within(input.cognitive, envelope.cognitive) &&
@@ -142,6 +167,10 @@ function taskTiers(input: RouteDecision["inputs"]) {
         within(input.scope?.confirmedTargets, envelope.targets) &&
         input.moduleRoots <= envelope.roots,
     )?.tier ?? "extreme";
+  const workTier =
+    lowMaintainability(input) && measuredWorkTier === "fast"
+      ? "balanced"
+      : measuredWorkTier;
 
   const impactTier: ModelTier | null = input.request?.readOnly
     ? null
@@ -326,6 +355,12 @@ function describeInputs(inputs: RouteDecision["inputs"]): string[] {
   if (request) {
     const kinds = request.kinds.filter((kind) => kind !== "unknown");
     if (kinds.length) reasons.push(`Request intent · ${kinds.join(", ")}.`);
+    if (request.language)
+      reasons.push(
+        request.language.outcome === "classified"
+          ? "The local wording model classified this brief."
+          : "The local wording model abstained. Routing uses the available story and source evidence.",
+      );
     if (request.fileScopeOnly)
       reasons.push("The brief limits edits to its named scope.");
     if (request.preserveBehavior)
@@ -348,6 +383,17 @@ function describeInputs(inputs: RouteDecision["inputs"]): string[] {
     reasons.push(
       `AST maxima · cognitive ${inputs.cognitive}, cyclomatic ${inputs.cyclomatic ?? "unknown"}, nesting ${inputs.nesting ?? "unknown"}.`,
     );
+  if (inputs.maintainability) {
+    const { lowest, measuredSymbols } = inputs.maintainability;
+    const symbols = measuredSymbols === 1 ? "function" : "functions";
+    reasons.push(
+      `Lowest native maintainability index · ${Number(lowest.toFixed(1))}/100 across ${measuredSymbols} measured ${symbols}.`,
+    );
+    if (lowMaintainability(inputs))
+      reasons.push(
+        "Low maintainability sets a balanced minimum for this edit.",
+      );
+  }
   if (request?.readOnly)
     reasons.push(
       "This request is read-only. Source complexity informs the route.",
@@ -381,8 +427,9 @@ export function planRoute(
   runtimes: HarnessRuntime[],
   settings: Settings,
   calibration?: RoutingCalibration,
+  languageModel?: RoutingLanguageModel,
 ): RouteDecision {
-  const request = analyzeRoutingIntent(task).signals;
+  const request = analyzeRoutingIntent(task, languageModel).signals;
   const inputs = routingInputs(evidence, request);
   const { tier, workTier, impactTier, complete } = taskTiers(inputs);
   const reasons = describeInputs(inputs);
@@ -497,6 +544,12 @@ export function planRoute(
     kind: kinds.length > 1 ? "mixed" : (kinds[0] ?? "unknown"),
     tier,
     coverage: complete ? ("measured" as const) : ("partial" as const),
+    ...(request.language?.outcome === "classified"
+      ? { languageModelDigest: request.language.digest }
+      : {}),
+    ...(lowMaintainability(inputs)
+      ? { lowMaintainability: true as const }
+      : {}),
   };
   const target = reliabilityTarget[tier];
   const estimate =
@@ -560,7 +613,7 @@ export function planRoute(
     `${runtime.name} / ${model.label}${effortBound ? ` at ${level} effort` : " with provider-configured effort"}.`,
   );
   return {
-    policyVersion: "memcode-evidence-v3",
+    policyVersion: "memcode-evidence-v4",
     tier,
     harness: runtime.id,
     model: model.id,

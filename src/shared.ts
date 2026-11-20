@@ -68,7 +68,7 @@ export interface HarnessRuntime {
   note?: string;
 }
 export interface RouteDecision {
-  policyVersion: "memcode-envelope-v2" | "memcode-evidence-v3";
+  policyVersion: "memcode-envelope-v2" | "memcode-evidence-v3" | "memcode-evidence-v4";
   tier: ModelTier;
   harness: Harness;
   model: string;
@@ -96,6 +96,7 @@ export interface RouteDecision {
     cognitive: number | null;
     cyclomatic: number | null;
     nesting: number | null;
+    maintainability?: { lowest: number; measuredSymbols: number };
     affected: number | null;
     processes: number | null;
     moduleRoots: number;
@@ -167,6 +168,8 @@ export interface Evidence {
     cognitive?: number;
     cyclomatic?: number;
     nesting?: number;
+    /** Native AST index for this function, on a verified graph publication. */
+    maintainabilityIndex?: number;
     metricSource?: "ast" | "estimated";
   }>;
   affected?: number;

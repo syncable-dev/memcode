@@ -27,7 +27,7 @@ import { commandIdentity } from "./commands";
 import type { MemtraceEngine } from "./memtrace";
 import { discoverHarnesses } from "./catalog";
 import { assignedHarness, planRoute } from "./router";
-import { readRoutingCalibration } from "./story-route";
+import { readRoutingCalibration, readRoutingLanguage } from "./story-route";
 import { assertWorkerConnected, connectedRuntimes } from "./worker-connections";
 import { EpicWorkspace } from "./epic-workspace";
 import { epicAnalysisProject } from "./epic-checkout";
@@ -826,10 +826,11 @@ export class WorkerManager {
       await progress("Measuring task scope and checking available workers");
       const workspace = task.run.workspace!;
       const preferred = assignedHarness(task, permissionSettings);
-      const [evidence, catalog, calibration, previousSessionId] = await Promise.all([
+      const [evidence, catalog, calibration, languageModel, previousSessionId] = await Promise.all([
         this.engine.qualify(analysisProject, task),
         this.catalog(preferred),
         readRoutingCalibration(this.dataDir),
+        readRoutingLanguage(this.dataDir),
         previousProvider && (!preferred || preferred === previousProvider.harness)
           ? resumableProviderSession(previousProvider, { ...task, harness: previousProvider.harness }, workspace)
           : undefined,
@@ -863,6 +864,7 @@ export class WorkerManager {
         pool,
         permissionSettings,
         calibration,
+        languageModel,
       );
       if (canContinue && !preferred)
         task.route.reasons.push("Continuing this story’s verified local provider conversation.");

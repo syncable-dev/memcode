@@ -3,6 +3,10 @@ import type {
   RoutingRequestKind,
   RoutingRequestSignals,
 } from "../src/routing-signals";
+import {
+  predictRoutingLanguage,
+  type RoutingLanguageModel,
+} from "./routing-language-model";
 
 interface PathReference {
   file: string;
@@ -208,6 +212,7 @@ function parseReferences(text: string) {
 
 export function analyzeRoutingIntent(
   task: Pick<WorkItem, "title" | "description" | "kind">,
+  model?: RoutingLanguageModel,
 ): RoutingIntentAnalysis {
   const text = `${task.title.slice(0, 500)}\n${task.description.slice(0, 6000)}`
     .replace(/```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)/g, " ")
@@ -233,6 +238,12 @@ export function analyzeRoutingIntent(
     return request ? [request] : [];
   });
   const kinds = unique(requests, (request) => request, requestPatterns.length);
+  const prediction =
+    model && !kinds.length
+      ? predictRoutingLanguage(model, task.title, task.description)
+      : undefined;
+  const learned = !!prediction?.accepted.length;
+  if (prediction) kinds.push(...prediction.accepted);
   if (!kinds.length)
     kinds.push(task.kind ? fallbackKind[task.kind] : "unknown");
 
@@ -250,9 +261,9 @@ export function analyzeRoutingIntent(
   return {
     signals: {
       kinds,
-      readOnly: kinds.every(
-        (kind) => kind === "explain" || kind === "research",
-      ),
+      readOnly:
+        !learned &&
+        kinds.every((kind) => kind === "explain" || kind === "research"),
       fileScopeOnly: fileConstraint.test(affirmative),
       preserveBehavior: behaviorConstraint.test(prose),
       publicContract: changesPublicContract
@@ -260,6 +271,18 @@ export function analyzeRoutingIntent(
         : preserveContract.test(prose)
           ? "preserve"
           : "unspecified",
+      ...(prediction && model
+        ? {
+            language: {
+              digest: model.digest,
+              outcome: learned ? "classified" : "abstained",
+              scores: prediction.scores.map(({ kind, probability }) => ({
+                kind,
+                score: Math.round(probability * 1_000) / 1_000,
+              })),
+            },
+          }
+        : {}),
     },
     references,
     searchQuery,

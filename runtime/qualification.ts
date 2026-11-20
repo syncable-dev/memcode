@@ -370,6 +370,14 @@ const measureNumber = (value: unknown): number | undefined =>
     ? value
     : undefined;
 
+function withoutMaintainability(symbols: Evidence["symbols"]) {
+  return symbols.map((symbol) => {
+    if (symbol.maintainabilityIndex === undefined) return symbol;
+    const { maintainabilityIndex: _, ...measurements } = symbol;
+    return measurements;
+  });
+}
+
 function qualityMatches(
   row: QualityRow,
   target: { name: string; file: string; line: number; scopePath?: string },
@@ -485,12 +493,25 @@ export async function collectEvidence(
             );
             if (matching.length !== 1) return;
             const row = matching[0];
+            const ast = row.complexity_source === "ast";
+            const maintainability = measureNumber(row.maintainability_index);
             measuredMetrics.set(target, {
               cognitive: measureNumber(row.cognitive_complexity),
               cyclomatic: measureNumber(row.complexity),
               nesting: measureNumber(row.max_nesting),
-              metricSource:
-                row.complexity_source === "ast" ? "ast" : "estimated",
+              metricSource: ast ? "ast" : "estimated",
+              ...(ast &&
+              row.quality_metrics_v === 1 &&
+              row.name === target.name &&
+              row.file_path &&
+              row.kind === target.kind &&
+              (!target.nodeId ||
+                !row.node_id ||
+                row.node_id === target.nodeId) &&
+              maintainability !== undefined &&
+              maintainability <= 100
+                ? { maintainabilityIndex: maintainability }
+                : {}),
             });
           }),
         );
@@ -592,9 +613,21 @@ export async function collectEvidence(
         incomplete = true;
       }
     }
+    const maintainabilityCurrent =
+      firstIndex.ready &&
+      !!firstIndex.revision &&
+      index.ready &&
+      !!index.revision &&
+      binding?.index === "current" &&
+      !missingPublication &&
+      !deadline.signal.aborted;
     return {
       state: incomplete ? "partial" : "measured",
-      symbols: changedPublication ? [] : symbols,
+      symbols: changedPublication
+        ? []
+        : maintainabilityCurrent
+          ? symbols
+          : withoutMaintainability(symbols),
       // A union containing rows from two publications is not an observation.
       impact: changedPublication
         ? {
@@ -808,6 +841,7 @@ export async function refreshEvidence(
               ...evidence,
               state: "partial",
               incomplete: true,
+              symbols: withoutMaintainability(evidence.symbols),
               note: freshness.reason,
               binding: {
                 ...current,
