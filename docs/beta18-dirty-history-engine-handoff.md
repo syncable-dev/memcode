@@ -1,7 +1,7 @@
 # Beta.18: retained dirty-checkout history gate
 
 Application candidate: `18eae76` on `fix/history-independent-workers`.
-Engine candidate: `cee3849677464863c3c2b13b331f368dac43f060` on
+Engine candidate: `69e7a3c0b85b9a66ef0400b1ac77c30eadac7891` on
 `fix/memcode-dirty-replay-intervals` in the private Memtrace repository.
 The engine builds on `5d0f0a54` / optimized `1ebcfda21`; no MemDB submodule
 revision or production engine pin has changed.
@@ -17,18 +17,33 @@ certificate, so this dirty checkout did not reach it.
 
 The candidate reconciles these redundant closed intervals during the structural
 write, independently of that certificate. It requires matching repository,
-branch, identity, event time, relationship payload hash and logical endpoints.
-It retains every payload and appends temporal closures. It does not filter
+branch, logical identity, Git event time and logical endpoints. It uses replay's
+existing highest-RID canonical event rule. Parser annotation enrichment can
+change the payload without changing this identity. Both payloads remain stored
+on their original records; only the redundant validity interval is shortened.
+It does not filter
 duplicates out of read results, reset the graph, rewrite episodes or certify a
-partial graph as ready. Conflicting payloads are refused.
+partial graph as ready. Conflicting identities or endpoints are refused.
 
 Windows checks so far: 233 graph tests and 84 replay tests passed, including a
 real MemDB regression with a dirty working-tree save, historical reads, retained
 payloads and an idempotent second save. An initial directly invoked parallel
 replay test process lost Git from its environment; the full replay group passed
 with an explicit Git PATH and serial execution. The optimized production engine
-build and retained-store native verification are in progress. These are not
-native acceptance results yet.
+build passed, but that first `cee3849` engine failed the retained native test:
+its payload-equality guard incorrectly rejected annotation versions such as a
+type-only import. The failed attempt retained the store ID and exact old journal
+prefix, with the same 315 duplicate historical rows. Do not package that engine.
+`69e7a3c0b` corrects that guard and adds a real MemDB fixture retaining two
+different annotation payloads. Its new tests/build/native checks are in progress.
+
+The c3644b9 Windows native desktop smoke passed, including planning, isolated
+artifact rendering and graceful shutdown. The saved MC-007 review displayed all
+51 metric rows with no empty cells; its 30-test report remained linked. Those
+are saved-review UI checks, not a successful new review on the candidate engine.
+The hosted Team service was updated from c3644b9 and its six public/negative-auth
+checks passed. Its deployed relay SHA-256 is
+`b38c674523a8bd35c24c83a2faf9de836319c6fdd7b5cbc51ab4b1f9839c10dc`.
 
 ## Mac agent: build and validate the same candidate
 
