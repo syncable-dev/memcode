@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { MemtraceEngine } from "../runtime/memtrace.ts";
 import { currentSourceNeedsIndex } from "../runtime/memtrace-peer-index.ts";
 import type { Project } from "../src/shared.ts";
+import { prepareWorkerAnalysis } from "../runtime/worker-analysis";
 
 const project = {
   id: "selected-project",
@@ -62,6 +63,31 @@ const savedPeerRevision = {
   mismatched_files: 2,
   mismatched_paths: ["one.ts", "two.ts"],
 };
+
+test("a source verification walk followed by a completed peer save re-enters incremental analysis, never the history queue", async () => {
+  const current = { ...project, analysisCurrentSource: true };
+  const f = fixture([repository], verified);
+  const original = f.engine.call;
+  let reads = 0;
+  f.engine.call = async (p, name, args) => {
+    if (name === "get_query_revision") {
+      if (++reads === 1) return {
+        ...verified, ready: false, status: "partial", reason: "index_verification_running",
+        token: null, indexing_revision: null, retry_query_group: false,
+        source_revision: "after-peer-save",
+      };
+      if (!f.calls.some(call => call.name === "index_directory")) return savedPeerRevision;
+    }
+    return original(p, name, args);
+  };
+  const result = await prepareWorkerAnalysis(f.engine, current, {} as any, {
+    changedBranch: false, update: () => {}, signal: new AbortController().signal,
+  });
+  assert.equal(result, project.repoId);
+  assert.equal(f.calls.filter(call => call.name === "index_directory").length, 1);
+  assert.equal(f.calls.some(call => call.name === "list_jobs"), false);
+  assert.equal(reads, 4);
+});
 
 test("a published epic graph behind peer saves gets one incremental catch-up and still needs certification", async () => {
   const current = { ...project, analysisCurrentSource: true };

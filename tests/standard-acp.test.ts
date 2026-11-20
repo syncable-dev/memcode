@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 import { standardACPCatalog, selectStandardACPModel, standardModelMeasurement } from "../runtime/agents/acp-models";
 import { startStandardSession, readonlyACPTransport } from "../runtime/agents/standard-acp";
 import type { AgentEvent } from "../runtime/agents/types";
+import { workerToolProfile } from "../runtime/worker-profile";
 
 test("ACP preserves exact provider IDs, requires selection acknowledgment, and never measures Auto as a model", async () => {
   const tuple = '["deepseek-official","deepseek-v4-flash"]';
@@ -49,8 +50,12 @@ for (const id of ["copilot", "dsh"] as const) test(`${id}: actual bidirectional 
   try {
     const script = join(cwd, "fixture.mjs"), trace = join(cwd, "trace.jsonl");
     await writeFile(script, fixture);
+    const contextConfig = join(cwd, "context-mcp.json");
+    const mcpServers = { "memcode-context": { type: "stdio", command: process.execPath, args: ["scoped-gateway.mjs", "private-session.json"] } };
+    await writeFile(contextConfig, JSON.stringify({ mcpServers }));
+    const profile = await workerToolProfile(id, contextConfig, cwd, "review");
     const events: AgentEvent[] = [];
-    const session = startStandardSession(id, { command: { command: process.execPath, prefix: [script] }, cwd, env: { ...process.env, TRACE: trace, DSH_PERMISSION_MODE: "danger-full-access" }, model: "tested-model", effort: "high", permissionMode: "review", resumeSessionId: "persisted", briefPath: "", toolArgs: [], prompt: "Continue", onEvent: event => events.push(event), requestInput: async prompt => { assert.equal(prompt.kind, "approval"); return { optionId: "allow" }; } });
+    const session = startStandardSession(id, { command: { command: process.execPath, prefix: [script] }, cwd, env: { ...process.env, TRACE: trace, DSH_PERMISSION_MODE: "danger-full-access" }, model: "tested-model", effort: "high", permissionMode: "review", resumeSessionId: "persisted", briefPath: "", toolArgs: profile.args, contextConfig, prompt: "Continue", onEvent: event => events.push(event), requestInput: async prompt => { assert.equal(prompt.kind, "approval"); return { optionId: "allow" }; } });
     assert.equal((await session.completion).exitCode, 0);
     const log = (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line));
     assert.ok(log.some(row => row.method === "session/resume" && row.params.sessionId === "persisted"));
@@ -62,6 +67,21 @@ for (const id of ["copilot", "dsh"] as const) test(`${id}: actual bidirectional 
       assert.ok(log.some(row => row.method === "session/close"));
     }
     assert.ok(log[0].argv.includes(id === "copilot" ? "--acp" : "--profile"));
+    const resumed = log.find(row => row.method === "session/resume");
+    if (id === "copilot") {
+      const flag = log[0].argv.indexOf("--additional-mcp-config");
+      assert.ok(flag >= 0);
+      const path = log[0].argv[flag + 1];
+      assert.ok(path.startsWith("@"));
+      assert.deepEqual(JSON.parse(await readFile(path.slice(1), "utf8")), {
+        mcpServers: { "memcode-context": { ...mcpServers["memcode-context"], tools: ["*"] } },
+      });
+      assert.deepEqual(resumed.params.mcpServers, []);
+      assert.deepEqual(JSON.parse(await readFile(contextConfig, "utf8")), { mcpServers });
+    } else {
+      assert.equal(resumed.params.mcpServers[0].name, "memcode-context");
+      assert.equal(resumed.params.mcpServers[0].command, process.execPath);
+    }
   } finally { await rm(cwd, { recursive: true, force: true }); }
 });
 

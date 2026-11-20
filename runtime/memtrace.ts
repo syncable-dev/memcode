@@ -34,6 +34,7 @@ import {
   waitForIndexPublication,
   waitForPeerIndex,
   writingSourceRevision,
+  verifyingSourceRevision,
 } from "./memtrace-peer-index";
 import {
   recoverablePublicationFailure,
@@ -989,7 +990,11 @@ export class MemtraceEngine {
           return match.repo_id;
       } else if (verifiedIndexRevision(revision, project, match.repo_id))
         return match.repo_id;
-      if (writingSourceRevision(revision, project, match.repo_id))
+      if (
+        writingSourceRevision(revision, project, match.repo_id) ||
+        (project.analysisCurrentSource &&
+          verifyingSourceRevision(revision, project, match.repo_id))
+      )
         return waitForIndexPublication(
           this,
           project,

@@ -243,7 +243,7 @@ function runCursorSession(options: AgentSessionOptions, inspect?: (session: Json
   }
   const child = spawn(
     options.command.command,
-    transport ? [...options.command.prefix, ...transport.args] : [
+    transport ? [...options.command.prefix, ...transport.args, ...toolArgs] : [
       ...options.command.prefix,
       ...toolArgs,
       ...(options.permissionMode === "full-access"
@@ -698,7 +698,12 @@ function runCursorSession(options: AgentSessionOptions, inspect?: (session: Json
         )
       )
         await request("authenticate", { methodId: "cursor_login" });
-      const context = { cwd: options.cwd, mcpServers: await sessionServers(options.contextConfig) };
+      const context = {
+        cwd: options.cwd,
+        // Copilot receives scoped stdio tools through --additional-mcp-config.
+        // Sending them again over ACP causes the provider to reject them.
+        mcpServers: transport?.id === "copilot" ? [] : await sessionServers(options.contextConfig),
+      };
       let session: Json;
       if (options.resumeSessionId !== undefined) {
         const resume = initialized.agentCapabilities?.sessionCapabilities?.resume != null;

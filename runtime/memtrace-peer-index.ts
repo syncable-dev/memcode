@@ -432,6 +432,15 @@ export async function waitForIndexPublication(
         throw new SourcePublicationChanged(message);
       throw Error(message);
     }
+    // A native verification walk can finish after a peer's save. Its stable
+    // result then proves that the source view needs incremental catch-up,
+    // rather than indicating an unreported startup job to wait for forever.
+    // Re-enter normal analysis; its writer arbitration and fresh certificate
+    // remain mandatory. This never applies to the primary history graph.
+    if (currentSourceNeedsIndex(revision, project, repoId))
+      throw new SourcePublicationChanged(
+        "The current-source graph is behind a completed Fleet save. Following the saved files before starting…",
+      );
     if (writerSource && !expectedSource) {
       expectedSource = writerSource;
       deadline = hardDeadline;

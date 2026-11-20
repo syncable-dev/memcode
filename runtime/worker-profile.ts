@@ -42,8 +42,19 @@ export async function workerToolProfile(
       "This installed Cursor ACP transport does not support Smart auto. Choose Review or Full access.",
     );
   const { mcpServers } = JSON.parse(await readFile(configPath, "utf8"));
-  // These ACP providers receive the same scoped MCP entries in session/new.
-  if (harness === "copilot" || harness === "dsh") return { args: [] };
+  // Copilot ACP rejects client-supplied stdio servers. Its launcher accepts
+  // these same scoped servers as a per-process config, without changing the
+  // user's global MCP settings or relying on workspace trust.
+  if (harness === "copilot") {
+    const path = join(dirname(configPath), "copilot-mcp.json");
+    await writeFile(path, JSON.stringify({
+      mcpServers: Object.fromEntries(Object.entries(mcpServers).map(([name, server]) => [
+        name, { ...(server as Record<string, unknown>), tools: ["*"] },
+      ])),
+    }), { mode: 0o600 });
+    return { args: ["--additional-mcp-config", "@" + path] };
+  }
+  if (harness === "dsh") return { args: [] };
   if (harness === "claude") return { args: [] };
   if (harness === "codex") {
     const args = [

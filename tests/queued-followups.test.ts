@@ -260,7 +260,11 @@ test("a follow-up can reuse a verified older save, but never an unverified provi
         task.run.measurements = {modelIds: [], modelSource: source === "changed provider" ? "claude-assistant" : "codex-thread"};
       if (source === "different checkout") task.run.workspace = join(f.root, "previous-repo");
       f.enqueue(task, "Run the follow-up on the correct workspace.");
-      await until(async () => (await f.runs(task)).length === 2, "queued pass started");
+      try {
+        await until(async () => (await f.runs(task)).length === 2, "queued pass started");
+      } catch (cause) {
+        throw new Error(`Queued legacy follow-up (${source}) failed: ${JSON.stringify({ state: task.run.state, error: task.run.error, activity: task.run.activity })}`, { cause });
+      }
       assert.deepEqual(f.resumedSessions, [undefined, source === "matching legacy" ? "original-local-session" : undefined]);
       await f.release(task, 2);
       await until(() => task.run.state === "finished", "queued pass finished");
