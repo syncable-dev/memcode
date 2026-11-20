@@ -149,7 +149,7 @@ export function WorkerConnections({
     setApproved(false);
     setDialogError("");
   };
-  const checkSignIn = async () => {
+  const checkConnection = async () => {
     setDialogError("");
     const current = (await refresh(true))?.find(
       (status) => status.harness === selectedHarness,
@@ -158,7 +158,7 @@ export function WorkerConnections({
       setSelected(undefined);
       notify(harnessNames[current.harness] + " connected.");
     } else if (!current) {
-      setDialogError("MemCode couldn’t check sign-in. Try again.");
+      setDialogError("MemCode couldn’t check this connection. Try again.");
     } else if (current.installed && current.auth === "not-authenticated") {
       setDialogError(
         "You’re still signed out. Finish sign-in in Terminal, then check again.",
@@ -181,10 +181,16 @@ export function WorkerConnections({
     setDialogError("");
     setBusy(true);
     try {
-      await window.memcode.connectWorker(selected.harness, true);
+      const connection = await window.memcode.connectWorker(
+        selected.harness,
+        true,
+      );
+      setStatuses((items) => [
+        ...items.filter((item) => item.harness !== connection.harness),
+        connection,
+      ]);
       setSelected(undefined);
       setApproved(false);
-      await refresh();
       notify(
         harnessNames[selected.harness] +
           " connected. Choose a story when you’re ready.",
@@ -435,7 +441,11 @@ export function WorkerConnections({
                             .catch((error) => notify((error as Error).message));
                       }}
                     >
-                      {available ? "Sign-in help" : "Set up agent"}
+                      {status?.connectionIssue
+                        ? "Connection help"
+                        : available
+                          ? "Sign-in help"
+                          : "Set up agent"}
                       <ArrowUpRight size={12} />
                     </button>
                     <button
@@ -533,7 +543,9 @@ export function WorkerConnections({
             )}
             {!readyToApprove ? (
               <div className="connection-sign-in">
-                {selected.installed ? (
+                {selected.connectionIssue ? (
+                  <p>{selected.note}</p>
+                ) : selected.installed ? (
                   <>
                     <p>
                       {selected.auth === "not-authenticated"
@@ -580,13 +592,29 @@ export function WorkerConnections({
                     type="button"
                     className="button primary"
                     disabled={loading}
-                    onClick={() => void checkSignIn()}
+                    onClick={() => void checkConnection()}
                   >
                     {loading ? <Spinner /> : <RefreshCw size={12} />}
-                    {selected.installed
-                      ? "Check sign-in"
-                      : "Check installation"}
+                    {selected.connectionIssue
+                      ? "Check again"
+                      : selected.installed
+                        ? "Check sign-in"
+                        : "Check installation"}
                   </button>
+                  {selected.connectionIssue && (
+                    <button
+                      type="button"
+                      className="button secondary"
+                      onClick={() =>
+                        void window.memcode
+                          .openWorkerSetup(selected.harness)
+                          .catch(() => setDialogError("Couldn’t open the CLI setup guide in your browser."))
+                      }
+                    >
+                      <ArrowUpRight size={12} />
+                      CLI setup guide
+                    </button>
+                  )}
                 </div>
               </div>
             ) : (

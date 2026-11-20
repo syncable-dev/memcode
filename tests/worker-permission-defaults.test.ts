@@ -157,9 +157,25 @@ test("worker defaults persist through native runtime routes without changing ove
       harness: "cursor",
       mode: "full-access",
     });
-    assert.deepEqual(state.settings.workerPermissionDefaults, {
+    await runtime.request("worker:permission-default", {
+      harness: "copilot",
+      mode: "full-access",
+    });
+    await runtime.request("worker:permission-default", {
+      harness: "dsh",
+      mode: "review",
+    });
+    const expectedDefaults = {
       codex: "auto",
       cursor: "full-access",
+      copilot: "full-access",
+      dsh: "review",
+    };
+    assert.deepEqual(state.settings.workerPermissionDefaults, expectedDefaults);
+    await runtime.request("settings:save", {
+      ...staleSettingsDraft,
+      workerPermissionDefaults: expectedDefaults,
+      model: "explicit-test-model",
     });
     await runtime.request("settings:save", {
       ...staleSettingsDraft,
@@ -167,7 +183,7 @@ test("worker defaults persist through native runtime routes without changing ove
     });
     assert.deepEqual(
       state.settings.workerPermissionDefaults,
-      { codex: "auto", cursor: "full-access" },
+      expectedDefaults,
       "A settings dialog opened before the defaults changed must not erase them",
     );
     assert.equal(state.settings.model, "explicit-test-model");
@@ -177,29 +193,25 @@ test("worker defaults persist through native runtime routes without changing ove
     assert.equal(JSON.stringify(state.workerConnections), connections);
     for (const input of [
       { harness: "cursor", mode: "auto" },
+      { harness: "copilot", mode: "auto" },
+      { harness: "dsh", mode: "auto" },
       { harness: "codex", mode: "yolo" },
       { harness: "unknown", mode: "review" },
       { harness: "codex", mode: "full-access", grantPending: true },
     ])
       await assert.rejects(runtime.request("worker:permission-default", input));
-    assert.deepEqual(state.settings.workerPermissionDefaults, {
-      codex: "auto",
-      cursor: "full-access",
-    });
+    assert.deepEqual(state.settings.workerPermissionDefaults, expectedDefaults);
     await runtime.close();
     runtime = undefined;
     const saved = JSON.parse(
       await readFile(join(root, "workspace.json"), "utf8"),
     );
-    assert.deepEqual(saved.settings.workerPermissionDefaults, {
-      codex: "auto",
-      cursor: "full-access",
-    });
+    assert.deepEqual(saved.settings.workerPermissionDefaults, expectedDefaults);
     runtime = await createRuntime(root, root, host, () => {});
-    assert.deepEqual(runtime.store.state.settings.workerPermissionDefaults, {
-      codex: "auto",
-      cursor: "full-access",
-    });
+    assert.deepEqual(
+      runtime.store.state.settings.workerPermissionDefaults,
+      expectedDefaults,
+    );
     assert.equal(runtime.store.state.tasks[0].permissionMode, "review");
   } finally {
     await runtime?.close();

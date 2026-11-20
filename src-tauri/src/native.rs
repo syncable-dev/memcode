@@ -151,6 +151,8 @@ pub async fn host_call(app: AppHandle, method: &str, input: Value) -> Result<Val
                 Some("codex") => "https://developers.openai.com/codex/cli/",
                 Some("claude") => "https://code.claude.com/docs/en/setup",
                 Some("cursor") => "https://cursor.com/docs/cli/installation",
+                Some("copilot") => "https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/install-copilot-cli",
+                Some("dsh") => "https://github.com/deepseek-ai/deepseek-harness/blob/master/apps/cli/README.md",
                 _ => return Err("Unknown worker provider".into()),
             };
             tauri::async_runtime::spawn_blocking(move || open_claim(url))

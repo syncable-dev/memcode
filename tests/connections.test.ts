@@ -17,7 +17,10 @@ import {
 } from "../runtime/account";
 import type { AppState, HarnessRuntime } from "../src/shared";
 import type { Command } from "../runtime/commands";
-import { workerApprovalMatches } from "../src/connections";
+import {
+  workerApprovalMatches,
+  type WorkerConnectionStatus,
+} from "../src/connections";
 
 test("Memtrace status never invents a person or returns credential fields", () => {
   const account = parseMemtraceStatus({
@@ -438,6 +441,7 @@ test("connection consent uses only read-only auth probes and persists no credent
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line));
+    assert.equal(audit.filter((row) => row.name === "claude").length, 2);
     assert.ok(
       audit.every(({ name, args }) =>
         name === "codex"
@@ -463,6 +467,59 @@ test("connection consent uses only read-only auth probes and persists no credent
     await f.cleanup();
   }
 });
+
+for (const sample of [
+  {
+    harness: "dsh",
+    output: `process.stderr.write('dsh: profile "acp" does not exist. PRIVATE-FIXTURE');`,
+    issue: "unsupported-cli",
+    guidance: /Update the DeepSeek Harness CLI/,
+  },
+  {
+    harness: "copilot",
+    output: `process.stdout.write('Not JSON. PRIVATE-FIXTURE\\n');`,
+    issue: "unavailable",
+    guidance: /couldn’t read.*GitHub Copilot/i,
+  },
+] as const) {
+  test(`${sample.harness} reports a worker connection failure without exposing CLI output`, async () => {
+    const f = await fixture();
+    const state = initialState();
+    const routes = new Map<string, (input: unknown) => unknown>();
+    await writeFile(f.script, `${sample.output}\nprocess.exit(1);\n`);
+    const registry = registerConnections(
+      (name, schema, handler) =>
+        routes.set(name, (input) => handler(schema.parse(input))),
+      () => state,
+      async () => assert.fail("No approval should be saved"),
+      () => join(f.directory, "no-memtrace"),
+      { call: async () => undefined as never },
+      async (id) =>
+        id === sample.harness
+          ? { command: process.execPath, prefix: [f.script] }
+          : null,
+    );
+    try {
+      const statuses = (await routes.get("connection:status")!(undefined)) as
+        WorkerConnectionStatus[];
+      const status = statuses.find(({ harness }) => harness === sample.harness)!;
+      assert.equal(status.connected, false);
+      assert.equal(status.connectionIssue, sample.issue);
+      assert.match(status.note, sample.guidance);
+      assert.doesNotMatch(JSON.stringify(status), /PRIVATE-FIXTURE/);
+      await assert.rejects(async () => {
+        await routes.get("connection:approve")!({
+          harness: sample.harness,
+          approved: true,
+        });
+      }, { message: status.note });
+      assert.equal(state.workerConnections, undefined);
+    } finally {
+      await registry.close();
+      await f.cleanup();
+    }
+  });
+}
 
 test("explicit Memtrace sign-in delegates the official claim to the system-browser host only", async () => {
   const f = await fixture(),

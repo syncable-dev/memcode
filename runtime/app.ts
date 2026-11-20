@@ -16,7 +16,7 @@ import { observePersistence } from "./persistence";
 import { MemtraceEngine } from "./memtrace";
 import { ensureProjectRepository } from "./project-repository";
 import { workerResponseSchema } from "./worker-input";
-import { permissionModes } from "../src/permissions";
+import { permissionModes, supportsPermissionMode } from "../src/permissions";
 import { registerDeletion } from "./deletion";
 import { readArtifactThumbnail } from "./artifact-thumbnail";
 import { reconcileArtifacts } from "./artifact-catalog";
@@ -119,11 +119,14 @@ const taskPatch = z
   })
   .strict();
 type Handler = { schema: z.ZodType; handle: (input: any) => unknown };
+const acpPermissionMode = z.enum(["review", "full-access"]).optional();
 const workerPermissionDefaults = z
   .object({
     codex: z.enum(permissionModes).optional(),
     claude: z.enum(permissionModes).optional(),
-    cursor: z.enum(["review", "full-access"]).optional(),
+    cursor: acpPermissionMode,
+    copilot: acpPermissionMode,
+    dsh: acpPermissionMode,
   })
   .strict();
 
@@ -1002,6 +1005,8 @@ export async function createRuntime(
     "worker:permission-default",
     z.object({ harness, mode: z.enum(permissionModes) }).strict(),
     async ({ harness: id, mode }) => {
+      if (!supportsPermissionMode(id, mode))
+        throw Error("This worker supports Review and Full access.");
       const defaults = workerPermissionDefaults.parse({
         ...state().settings.workerPermissionDefaults,
         [id]: mode,

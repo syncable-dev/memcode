@@ -20,6 +20,7 @@ export interface WorkerConnectionStatus {
   approvalSaved?: boolean;
   desktopAppPath?: string;
   auth: "authenticated" | "not-authenticated" | "unknown" | "local" | "provider-managed";
+  connectionIssue?: "unsupported-cli" | "unavailable";
   accountLabel?: string;
   approvedAt?: string;
   note: string;
