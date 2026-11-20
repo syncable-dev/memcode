@@ -32,6 +32,8 @@ export interface AgentSessionOptions {
   env: NodeJS.ProcessEnv;
   model: string;
   effort: ReasoningEffort;
+  /** A calibrated route must confirm this model and effort before prompting. */
+  calibratedModel?: string;
   automaticModelTier?: import("../../src/shared").ModelTier;
   /** Device-local provider session to continue for this story and checkout. */
   resumeSessionId?: string;

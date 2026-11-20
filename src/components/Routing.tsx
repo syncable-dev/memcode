@@ -45,7 +45,10 @@ export function RoutingCard({
       <div className="routing-model">
         <strong>{route.modelLabel || route.model}</strong>
         <span>
-          {harnessNames[route.harness]} · {route.effort} effort
+          {harnessNames[route.harness]} ·{" "}
+          {route.selection?.effortBound === false
+            ? "Provider effort"
+            : `${route.effort} effort`}
         </span>
       </div>
       {route.inputs.cognitive === null && route.inputs.cyclomatic === null && (
@@ -65,9 +68,9 @@ export function RoutingCard({
         </div>
         <div>
           <strong>
-            {route.inputs.affected === null
+            {route.inputs.affected === null || route.inputs.request?.readOnly
               ? "—"
-              : `${route.inputs.affected}${route.inputs.incomplete ? "+" : ""}`}
+              : `${route.inputs.affected}${(route.inputs.impact?.incomplete ?? route.inputs.incomplete) ? "+" : ""}`}
           </strong>
           <span>Impact</span>
         </div>
@@ -76,7 +79,13 @@ export function RoutingCard({
         <summary>
           Why this model?
           <span>
-            {route.status === "provisional" ? "Partial scope" : "Measured"}
+            {route.selection?.method === "explicit"
+              ? "Override"
+              : route.selection?.method === "fallback"
+                ? "Fallback"
+                : route.status === "provisional"
+                  ? "Partial scope"
+                  : "Measured"}
           </span>
         </summary>
         <ul>
@@ -84,10 +93,18 @@ export function RoutingCard({
             <li key={reason}>{reason}</li>
           ))}
         </ul>
+        {route.selection && (
+          <p>
+            Work {route.selection.workTier} · Impact{" "}
+            {route.selection.impactTier ?? "read-only"} ·{" "}
+            {route.selection.eligibleConfigurations} eligible configurations
+          </p>
+        )}
         <p>
-          Prototype envelope policy · {route.policyVersion}. Structural
-          measurements are deterministic; suitability thresholds are not
-          calibrated.
+          {route.selection?.method === "calibration"
+            ? "Controlled trial calibration"
+            : "Routing policy"}{" "}
+          · {route.policyVersion}
         </p>
         {route.inputs.sourceRevision && (
           <code>Source {route.inputs.sourceRevision.slice(0, 10)}</code>

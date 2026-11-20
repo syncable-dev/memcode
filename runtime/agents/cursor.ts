@@ -12,6 +12,7 @@ import { join } from "node:path";
 import type { AgentSession, AgentSessionOptions } from "./types";
 import { standardACPCatalog, selectStandardACPModel, standardModelMeasurement } from "./acp-models";
 import { withoutPermissionArgs } from "./permissions";
+import { assertCalibratedConfiguration } from "./calibrated-config";
 import type { AgentMeasurement } from "../../src/measurements";
 import type {
   WorkerInputOption,
@@ -761,6 +762,11 @@ function runCursorSession(options: AgentSessionOptions, inspect?: (session: Json
       const modelMeasurement = transport
         ? standardModelMeasurement(transport.id, config, legacyModel)
         : cursorSessionModel(config, legacyModel);
+      if (options.calibratedModel) {
+        const confirmed = config.find(option => option.category === "model" || option.id === "model")?.currentValue ?? legacyModel;
+        assertCalibratedConfiguration(options, confirmed === options.model ? modelMeasurement?.model?.id : undefined,
+          modelMeasurement?.model?.effort);
+      }
       if (modelMeasurement) emit(modelMeasurement);
       if (
         session.modes?.currentModeId !== "agent" &&

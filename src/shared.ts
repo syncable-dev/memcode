@@ -11,6 +11,8 @@ import type { QualitySnapshot } from "./intelligence";
 import type { ContextAssistantSettings } from "./context-settings";
 import type { CodeReviewAPI } from "./code-review";
 import type { BrowserRequest, BrowserReply } from "./browser";
+import type { RoutingRequestSignals } from "./routing-signals";
+import type { RoutingImpactEvidence, RoutingScopeCoverage } from "./routing-evidence";
 export type { ContextAssistantSettings } from "./context-settings";
 export type { QualitySnapshot, IntelligenceDetail } from "./intelligence";
 export type {
@@ -66,17 +68,30 @@ export interface HarnessRuntime {
   note?: string;
 }
 export interface RouteDecision {
-  policyVersion: "memcode-envelope-v2";
+  policyVersion: "memcode-envelope-v2" | "memcode-evidence-v3";
   tier: ModelTier;
   harness: Harness;
   model: string;
   /** Account-discovered presentation label; the opaque ID remains the request. */
   modelLabel?: string;
   effort: ReasoningEffort;
+  localModel?: true;
   mode: "automatic" | "manual";
   status: "measured" | "provisional";
   reasons: string[];
   plannedAt: string;
+  /** Decision evidence stays on the device that planned the route. */
+  selection?: {
+    method: "explicit" | "envelope" | "fallback" | "calibration";
+    catalogFingerprint: string;
+    eligibleConfigurations: number;
+    effortBound: boolean;
+    workTier: ModelTier;
+    impactTier: ModelTier | null;
+    calibrationDigest?: string;
+    /** Concrete provider model to verify before sending a calibrated turn. */
+    calibratedModel?: string;
+  };
   inputs: {
     cognitive: number | null;
     cyclomatic: number | null;
@@ -87,6 +102,9 @@ export interface RouteDecision {
     incomplete: boolean;
     sourceRevision?: string;
     graphRevision?: string;
+    request?: RoutingRequestSignals;
+    scope?: RoutingScopeCoverage;
+    impact?: RoutingImpactEvidence;
   };
 }
 export type Priority = "high" | "medium" | "low";
@@ -154,6 +172,8 @@ export interface Evidence {
   affected?: number;
   affectedProcesses?: number;
   affectedFiles?: number;
+  impact?: RoutingImpactEvidence;
+  scopeCoverage?: RoutingScopeCoverage;
   sourceRevision?: string;
   graphRevision?: string;
   incomplete: boolean;

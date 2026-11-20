@@ -8,6 +8,7 @@ import type { AgentSession, AgentSessionOptions } from "./types";
 import type { ReasoningEffort } from "../../src/shared";
 import type { ReportedTokenUsage } from "../../src/measurements";
 import { withoutPermissionArgs } from "./permissions";
+import { assertCalibratedConfiguration } from "./calibrated-config";
 import type {
   WorkerInputOption,
   WorkerInputPrompt,
@@ -679,7 +680,10 @@ function runCodexSession(options: AgentSessionOptions, inspect?: (result: CodexC
         catalog = await readCodexCatalog(options.command, { ...options.env, ...options.command.env }, (method, params) => request(method, params, 4500), refreshCatalog);
         if (inspect) { inspect(catalog); finish({ exitCode: 0 }); return; }
         selected = selectCodexModel(catalog, options.model, !!options.automaticModelTier, options.automaticModelTier);
-        const efforts = catalog.models.find(m => m.id === selected)?.efforts;
+        const offered = catalog.models.find(model => model.id === selected);
+        const efforts = offered?.efforts;
+        assertCalibratedConfiguration(options, offered?.resolvedId ?? offered?.id,
+          efforts?.includes(options.effort) ? options.effort : undefined);
         if (!selected || (efforts?.length && !efforts.includes(options.effort))) selectedEffort = undefined;
         if (selected !== options.model && options.automaticModelTier)
           emit({ type: "message", role: "system", text: selected ? `Codex selected ${selected} from this account’s available models.` : "Codex will use this account’s default model." });
@@ -719,6 +723,7 @@ function runCodexSession(options: AgentSessionOptions, inspect?: (result: CodexC
       threadId = thread.thread?.id;
       attemptedModel = selected || thread.model;
       if (!threadId) throw new Error("Codex did not return a thread ID.");
+      assertCalibratedConfiguration(options, thread.model, thread.reasoningEffort);
       if (["low", "medium", "high", "xhigh"].includes(thread.reasoningEffort))
         reportedEffort = thread.reasoningEffort;
       modelMeasurement(thread.model, "codex-thread");

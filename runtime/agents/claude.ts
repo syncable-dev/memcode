@@ -15,6 +15,7 @@ import type {
 import type { AgentSession, AgentSessionOptions } from "./types";
 import { withoutPermissionArgs } from "./permissions";
 import { ClaudeMeasurements } from "./claude-measurements";
+import { assertCalibratedConfiguration } from "./calibrated-config";
 
 type Frame = Record<string, any>;
 const bounded = (value: unknown, limit = 16000): string =>
@@ -89,7 +90,7 @@ function runClaudeSession(options: AgentSessionOptions, inspect?: (models: Model
       "stdio",
       "--permission-mode",
       nativeMode,
-      ...(options.model && options.model !== "default" ? ["--effort", options.effort, "--model", options.model] : []),
+      ...(options.model && options.model !== "default" ? ["--effort", options.effort, "--model", options.calibratedModel ?? options.model] : []),
       ...profile,
       ...withoutPermissionArgs("claude", options.toolArgs),
     ],
@@ -399,8 +400,12 @@ function runClaudeSession(options: AgentSessionOptions, inspect?: (models: Model
         return;
       }
       if (options.model && options.model !== "default") {
-        try { selectClaudeModel(offered, options.model, true); }
-        catch (error) { fail(error instanceof Error ? error.message : String(error)); return; }
+        try {
+          const selected = selectClaudeModel(offered, options.model, true);
+          const model = offered.find((entry) => entry.id === selected || entry.resolvedId === selected);
+          assertCalibratedConfiguration(options, model?.resolvedId ?? model?.id,
+            model?.efforts?.includes(options.effort) ? options.effort : undefined);
+        } catch (error) { fail(error instanceof Error ? error.message : String(error)); return; }
       }
       emit({ type: "prompted" });
       write({
