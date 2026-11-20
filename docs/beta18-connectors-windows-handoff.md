@@ -1,52 +1,68 @@
-# Beta.18 adapter and routing candidate
+# Beta.18 adapters and routing
 
-Windows added GitHub Copilot CLI and DeepSeek Harness through their native ACP
-connections. Both use the existing conversation, approvals, follow-up queue,
-MemCode MCP gateway and shared-session protocol. Detection does not grant consent.
-Connect each provider explicitly in Workers. Smart auto is unavailable through
-these two ACP transports; Review and Full access are supported.
+App candidate: `ef141194efbfa84ff4fe8d1ec0433195f6e9dffd` on
+`fix/history-independent-workers`. Subsequent documentation is not a new app-code
+candidate. See `beta18-dirty-history-engine-handoff.md` for engine/native gates.
 
-DSH keeps its own provider configuration. A returned model catalog does not prove
-that a provider key is configured. The UI labels that connection provider-managed,
-and a real turn must validate the provider. Do not copy keys into Git or receipts.
+GitHub Copilot CLI and DeepSeek Harness use the existing conversation, approvals,
+follow-up queue and shared-session protocol. Detection does not grant consent.
+Connect each in Workers. Review and Full access are supported; these ACP
+transports do not expose Smart auto.
 
-Automatic route previews now use only connected runtimes, matching worker launch.
-Equivalent catalogs have a stable ordering. Unknown model capabilities remain
-provisional and use the provider's advertised default. We do not invent capacity
-calibration for a newly supported adapter. Claude model labels include the version
-reported by the signed-in account, including resolved aliases.
+Routing considers only explicitly connected, available runtimes and authenticated
+catalogs, with stable ordering. Unknown capabilities stay provisional and use an
+advertised default. Claude labels include reported model versions and resolved
+aliases. Do not infer availability from this host agent's own model list.
 
-Windows checks on this candidate:
+## Copilot transport correction
 
-- All 980 application tests passed. Typecheck and frontend/runtime builds passed.
-- The native desktop showed all five adapters and retained the three previously
-  approved connections. The two new adapters remained unapproved.
-- Copilot 1.0.114 completed a real clamp implementation, passed six assertions,
-  resumed the same provider session, and completed a separate read-only review.
-  Confirmed model: `claude-haiku-5.5`. Latest turn timings: 7.567 s and 8.309 s;
-  review: 4.882 s. The review explicitly retained its missing graph coverage.
-- That real review exposed missing JSON-RPC version markers in the new review
-  transport. Fixed, rerun successfully, and covered by strict protocol fixtures.
-- DSH 0.2.2-rc.5 started ordinary and read-only sessions and advertised its model.
-  Its real Windows turn was rejected because this isolated setup has no provider
-  API key. Real DSH coding and continuation remain unverified.
-- The local Copilot CLI inherited a Memtrace hook command that PowerShell could
-  not invoke. Its PowerShell invocation was corrected; the same hook stayed active.
+Copilot 1.0.114 rejects client-supplied stdio MCP servers in ACP `session/new`.
+The first native coding turn completed but lacked MemCode tools: a real failure,
+not tool coverage. The fix supplies private per-worker `copilot-mcp.json` through
+its documented `--additional-mcp-config @<path>` launch argument. Global provider
+configuration and project rules are preserved. ACP creation does not resend the
+rejected stdio entries. DSH still receives scoped servers through ACP. Read-only
+review remains restricted.
 
-## Mac agent
+Official references:
+- https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference
+- https://docs.github.com/en/copilot/reference/copilot-cli-reference/acp-server
 
-Fetch `fix/history-independent-workers` and preserve your existing fixes. Use the
-commit introducing this handoff as the application candidate; do not package the
-older 13cc source. Run the full tests, typecheck and native build locally. In an
-approved QA profile, verify worker consent, retained settings and actual version
-labels after two relaunches. Check that automatic routing never selects an
-unapproved adapter. With each installed/signed-in provider, run a short real coding
-story, resume it, and review its captured patch. Record confirmed model and test
-results separately from transport-only checks. DSH requires its configured provider;
-a catalog alone is not acceptance. Verify both new providers' Team sessions against
-a service exposing `workerSessions:1` and accepting all five harness IDs.
+Strict ACP fixtures verify the launch file, allowlist and unchanged original
+config. A real Copilot `claude-haiku-5.5` turn called a private test MCP tool and
+returned its unpredictable response in 6,559 ms. Full native MemCode gateway
+continuation is being recorded separately; the small probe does not replace it.
 
-Do not publish or change production engine pins. The retained Windows graph still
-fails historical uniqueness on the 1eb engine. An engine follow-up is in progress;
-the final app+engine package needs both platforms' installed-app checks and the
-real two-device test before signatures and publication.
+## Windows evidence and limits
+
+- 981 app tests, typecheck and frontend/runtime build pass.
+- Native detection exposes five adapters and retains existing approvals. New
+  providers begin unapproved. Copilot was approved only in the isolated QA app.
+- Real Copilot coding, same-session continuation and a separate read-only review
+  passed with confirmed `claude-haiku-5.5` before the gateway correction. These
+  prove provider execution, not the originally missing MemCode tool connection.
+- DSH 0.2.2-rc.5 starts ordinary/read-only sessions and advertises a model. This
+  isolated Windows setup lacks a `deepseek-official` provider API key, so real
+  generation was rejected. DSH coding and continuation remain unverified. Use
+  the Mac's already configured provider if available; never paste keys into Git.
+- Missing provider token counters remain unavailable, not zero or estimated.
+- Hosted Team accepts Copilot/DSH and advertises `workerSessions:1`. Matching web
+  collector/admin fixes are at private Memtrace branch
+  `fix/memcode-beta18-connectors-telemetry`, commit `2b13c82d9`. Its 36 targeted
+  tests, typecheck and production build pass. That web change is not yet deployed.
+
+## Mac validation
+
+Preserve existing fixes and approved QA sign-in. Run local full tests, typecheck,
+build and native checks on the exact agreed app source. Verify retained consent,
+local model settings and version labels after two normal relaunches. Automatic
+routing must not choose unapproved adapters.
+
+For each new installed/configured connector, run a real narrow coding story;
+verify relevant MemCode context and Fleet tools, resume the provider conversation,
+and run a separate read-only review of captured changes. Record requested versus
+confirmed model, real tests, tool use and unavailable measurements. Complete the
+paired-user session/follow-up test. A picker entry is not provider acceptance.
+
+Do not publish, alter production pins or transfer keys. Both platforms must clear
+native and paired gates before production updater signatures/publication.

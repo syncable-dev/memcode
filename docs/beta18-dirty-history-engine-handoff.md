@@ -1,100 +1,93 @@
-# Beta.18: retained dirty-checkout history gate
+# Beta.18 native acceptance handoff
 
-Application candidate: `18eae76` on `fix/history-independent-workers`.
+Application candidate: `ef141194efbfa84ff4fe8d1ec0433195f6e9dffd` on
+`fix/history-independent-workers`. Later documentation-only commits do not change
+its application code. Preserve the Mac agent's existing fixes.
+
 Engine candidate: `69e7a3c0b85b9a66ef0400b1ac77c30eadac7891` on
-`fix/memcode-dirty-replay-intervals` in the private Memtrace repository.
-The engine builds on `5d0f0a54` / optimized `1ebcfda21`; no MemDB submodule
-revision or production engine pin has changed.
+`fix/memcode-dirty-replay-intervals` in private Memtrace. It builds on
+`5d0f0a54` / `1ebcfda21`; the MemDB submodule and production pins are unchanged.
+Optimized Windows `memtrace.exe`: 191,878,144 bytes, SHA-256
+`7f39c302c84528df563d666b842846ad1b988be79b2c79e566ce9439031bc3b7`.
 
-## What Windows found
+## Verified on physical Windows
 
-The retained QA store finished a 155-commit replay, retained its store identity
-and exact journal prefix, and reported `needs_replay: false`. However, a read at
-its saved Git commit returned 315 extra relationship rows across 85 identities.
-The redundant rows came from the same immutable Git event. The earlier
-reconciliation ran only when the current checkout could produce a clean Git
-certificate, so this dirty checkout did not reach it.
+- All 981 app tests pass. Typecheck, frontend/runtime build and the native desktop
+  smoke pass. Earlier full-suite attempts hit a legacy queue fixture timeout
+  under concurrent import load; the isolated fixture and bounded full rerun pass.
+- The engine passes 235 graph and 84 replay tests. Its optimized retained
+  155-commit replay completed in 590,803 ms. `needs_replay` is false. A read at
+  the saved Git cutoff contains 25,421 unique nodes and 127,225 unique edges,
+  with zero duplicate identities.
+- Retained store ID: `v1:01M7TJG7B4BZ8PHYKR0S0N2MCV`. Its journal grew from
+  48,663 to 70,839 bytes during replay; the original bytes remain an exact prefix.
+  The original 23,472-byte failed-store journal also remains a prefix. The normal
+  graph and account were not replaced.
+- Codex `gpt-6.2-sol` and Cursor `composer-2.5` completed real scoped coding turns
+  while primary history replay ran. Each two-file TAP run passed 11 tests. Their
+  turn durations were about 105 and 143 seconds respectively.
+- The substantial saved MC-007 refactor received a new completed native review
+  on the optimized engine: 51 function measurements, four changed files, all five
+  phases complete, and 30 passing linked checks. A separate Codex GPT-6.2 Sol
+  reviewer requested changes. Bounded impact limitations remain explicit.
+- The hosted Team service accepts all five harness IDs and `workerSessions:1`.
+  Six public/negative-auth checks pass. Deployed relay SHA-256:
+  `b38c674523a8bd35c24c83a2faf9de836319c6fdd7b5cbc51ab4b1f9839c10dc`.
 
-The candidate reconciles these redundant closed intervals during the structural
-write, independently of that certificate. It requires matching repository,
-branch, logical identity, Git event time and logical endpoints. It uses replay's
-existing highest-RID canonical event rule. Parser annotation enrichment can
-change the payload without changing this identity. Both payloads remain stored
-on their original records; only the redundant validity interval is shortened.
-It does not filter
-duplicates out of read results, reset the graph, rewrite episodes or certify a
-partial graph as ready. Conflicting identities or endpoints are refused.
+Private receipts are under Windows `tmp/memcode-beta18-final-verification`:
+`optimized-primary-replay.json`, `enriched-retained-branch-historical.json`,
+`optimized-big-review.private.json` and `beta18-final-app-tests.log`.
+Do not publish source text, credentials or private account details.
 
-Windows checks so far: 233 graph tests and 84 replay tests passed, including a
-real MemDB regression with a dirty working-tree save, historical reads, retained
-payloads and an idempotent second save. An initial directly invoked parallel
-replay test process lost Git from its environment; the full replay group passed
-with an explicit Git PATH and serial execution. The optimized production engine
-build passed, but that first `cee3849` engine failed the retained native test:
-its payload-equality guard incorrectly rejected annotation versions such as a
-type-only import. The failed attempt retained the store ID and exact old journal
-prefix, with the same 315 duplicate historical rows. Do not package that engine.
-`69e7a3c0b` corrects that guard and adds a real MemDB fixture retaining two
-different annotation payloads. All 235 graph and 84 replay tests now pass on
-Windows. A dev-engine native run recovered the retained store: its saved Git
-cutoff contains 25,421 unique nodes and 127,225 unique edges, with zero duplicate
-identities. The original journal prefix and store ID survive. All 400 sampled
-prior relationship records and nine full payload samples remain unchanged;
-315 redundant intervals were shortened. Two subsequent native Improve refreshes
-finished in 4,056 and 4,055 ms, created current checkpoints, and Insights showed
-the real measurements and aligned source. This is functional proof with an
-unoptimized dev engine, not acceptance of the optimized release binary.
+## Latest fix requiring native repetition
 
-The first cold dev-engine refresh exceeded the UI probe's four-minute window
-and produced a partial checkpoint while source verification settled. A new
-Copilot native story also reached a graph-navigation preparation timeout before
-provider execution. Both observations are recorded failures, not waived gates.
-The optimized build and retained replay/worker/review checks are still running;
-repeat the cold native paths with the optimized build before accepting them.
+Claude's preparation timed out when a native source-verification walk was treated
+as an unreported startup job. The source-only view now follows verification
+directly. A stable completed peer save can request ordinary incremental catch-up;
+writer arbitration and a fresh certificate remain mandatory. Partial revisions
+are not accepted and primary history validation is unchanged. The 61 targeted
+publication checks and full suite pass. The new native Claude retry, Copilot
+full-gateway continuation, repeated refresh and reopen checks are recorded
+separately. A separate fresh optimized import is also running.
 
-The c3644b9 Windows native desktop smoke passed, including planning, isolated
-artifact rendering and graceful shutdown. The saved MC-007 review displayed all
-51 metric rows with no empty cells; its 30-test report remained linked. Those
-are saved-review UI checks, not a successful new review on the candidate engine.
-The hosted Team service was updated from c3644b9 and its six public/negative-auth
-checks passed. Its deployed relay SHA-256 is
-`b38c674523a8bd35c24c83a2faf9de836319c6fdd7b5cbc51ab4b1f9839c10dc`.
+Do not package rejected engine `cee3849`: its payload-equality guard rejected
+parser annotation versions. Candidate `69e7a3c0b` reconciles redundant closed
+intervals only for the same repository, branch, logical identity, Git event and
+endpoints, using replay's existing canonical-event rule. Original payloads and
+episodes remain stored. No graph reset or read-time duplicate filter is used.
 
-## Mac agent: build and validate the same candidate
+## Mac agent: use these exact candidates
 
-Preserve your existing fixes, profiles, account, graph and uncommitted work. Fetch
-both branches. Use isolated worktrees and the existing approved QA installation.
-Do not replace the user's normal app or borrow its credential files.
+Use the existing approved QA installation/profile. Preserve the normal app,
+source changes, graphs and account. No fresh login approval loop, Actions,
+hosted runners, signing-key transfer or publication.
 
-1. Build the engine from the exact commit above with its recorded submodules.
-   Run `cargo test --locked -p code-intelligence --lib graph::` and the replay
-   group. Record the binary hash and toolchain. Keep the production pins at
-   `1d0e8cb4a`.
-2. With the QA app and its verified store owner stopped, take a cold backup of
-   the existing failed QA store. Record its store ID, old episode IDs, journal
-   size/hash and historical duplicate counts at the saved Git commit. Leave the
-   original graph intact. Keep the copied store at its registered checkout path.
-3. Launch only that QA app with the candidate. In the actual native app, run
-   Improve → Refresh analysis twice and open Insights. Retry history, follow the
-   existing job to completion, and require `needs_replay: false`. Confirm zero
-   duplicate node and edge identities at the saved Git commit. Confirm the store
-   ID and old episode IDs are unchanged, and the old journal bytes are an exact
-   prefix of the recovered journal. Quit normally and reopen twice; verify the
-   same store and ready source binding on both reopens.
-4. Open the saved MC-007 code-review tab and expand measured functions and
-   recorded checks. Verify its actual per-function numbers and that its checks
-   still link to this story's captured worker/source. Run the paired worker and
-   separate reviewer flow while history imports, against Team `workerSessions:1`.
-   Use real turns, not prefilled answers. Record native counts/timings and any
-   partial coverage explicitly. Complete the real two-device follow-up test with
-   the Windows peer; an existing older-source test does not satisfy this gate.
-5. Follow `beta18-connectors-windows-handoff.md` for the new adapters and consent
-   restrictions. DSH Windows currently lacks a configured provider key; transport
-   startup is proven, successful DSH generation is not. Use the Mac's existing
-   configured provider if available. Do not invent a pass from a model catalog.
+1. Fetch both branches and build the exact optimized engine with recorded
+   submodules. Record toolchain, binary hash and actual launched path. Run graph
+   and replay tests. Keep production pins at `1d0e8cb4a`.
+2. Stop QA and its verified owner normally; take a cold copy of the failed QA
+   store at its registered checkout path. Record store ID, sampled episode IDs,
+   journal size/hash and duplicate counts at a saved Git commit. Preserve the
+   original. Retry history to completion; require `needs_replay: false`, zero
+   duplicate identities, unchanged store/episodes and exact journal prefix.
+3. In the actual app run Improve -> Refresh analysis twice, then Insights. Require
+   current certificates and real metrics. Quit/reopen twice; prove the same store,
+   worker consent and settings. Test verification progress after a peer save.
+4. Open saved MC-007 Code review; expand measured functions and linked checks.
+   Inspect every numeric cell. Real MI zero remains zero; unavailable is not zero.
+   Run paired coding and separate reviewer checks while history imports, recording
+   native timings/counts and coverage limits.
+5. Follow `beta18-connectors-windows-handoff.md`. Validate configured DSH with a
+   real coding turn, continuation, captured diff and separate read-only review.
+   A catalog/initialized ACP session is not a generation pass.
+6. Complete the real two-device Team `workerSessions:1` test: owner and observer
+   see the same confirmed model, progress and review; follow-ups from either user
+   reach the claimed worker once, including reconnect and queue behavior. An
+   older-source paired receipt does not clear the final gate.
 
-Push sanitized receipts and the exact final package-source proposal to the
-handoff branch. Do not publish or change the feeds. Windows will sign only the
-new, exact Mac archive and verify its actual bytes with the production updater
-key after both platforms' native gates pass. No Actions, hosted runners or key
-transfer.
+Push sanitized receipts and propose the same final app commit for both packages.
+Upload the exact new Mac archive and SHA-256 to private draft
+`beta18-staged-54eef4f` with commit-specific filenames. Windows signs only the new
+bytes with the existing production updater key and verifies the actual payload.
+Production pins, downloads and feed remain unchanged until both native installer
+checks, archive verification and the real paired test pass.
