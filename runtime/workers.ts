@@ -27,6 +27,7 @@ import { commandIdentity } from "./commands";
 import type { MemtraceEngine } from "./memtrace";
 import { discoverHarnesses } from "./catalog";
 import { assignedHarness, planRoute } from "./router";
+import { readRoutingCalibration } from "./story-route";
 import { assertWorkerConnected, connectedRuntimes } from "./worker-connections";
 import { EpicWorkspace } from "./epic-workspace";
 import { epicAnalysisProject } from "./epic-checkout";
@@ -47,7 +48,7 @@ import { prepareWorkerAnalysis } from "./worker-analysis";
 import { WorkerStartupQueue } from "./worker-startup";
 import { workerCheckoutBrief, workerContextForPrompt, workerTurnContext } from "./worker-turn";
 import { previousProviderSession, resumableProviderSession } from "./provider-session";
-import { effectivePermissionMode } from "../src/permissions";
+import { effectivePermissionMode, supportsPermissionMode } from "../src/permissions";
 import type { AgentEvent } from "./agents/types";
 import { trackTurnActivity } from "./agents/activity";
 import { applyAgentMeasurement } from "./agents/measurements";
@@ -823,12 +824,15 @@ export class WorkerManager {
         }
       }
       await progress("Measuring task scope and checking available workers");
-      const routingTask = previousProvider && previousProvider.epicId === task.epicId && task.assignment === "auto"
-        ? { ...task, assignment: "manual" as const, harness: previousProvider.harness }
-        : task;
-      const [evidence, catalog] = await Promise.all([
+      const workspace = task.run.workspace!;
+      const preferred = assignedHarness(task, permissionSettings);
+      const [evidence, catalog, calibration, previousSessionId] = await Promise.all([
         this.engine.qualify(analysisProject, task),
-        this.catalog(assignedHarness(routingTask, permissionSettings)),
+        this.catalog(preferred),
+        readRoutingCalibration(this.dataDir),
+        previousProvider && (!preferred || preferred === previousProvider.harness)
+          ? resumableProviderSession(previousProvider, { ...task, harness: previousProvider.harness }, workspace)
+          : undefined,
       ]);
       continuing();
       task.evidence = evidence;
@@ -845,12 +849,23 @@ export class WorkerManager {
       const approved = connectedRuntimes(this.state(), catalog);
       if (!approved.length)
         throw Error("Connect a worker in Workers before starting a worker.");
-      task.route = planRoute(
-        { ...routingTask, permissionMode: permissionPreference },
-        task.evidence,
-        approved,
-        permissionSettings,
+      const canContinue = previousSessionId && previousProvider && approved.some((runtime) =>
+        runtime.id === previousProvider.harness && !runtime.allModelsDenied &&
+        supportsPermissionMode(runtime.id,
+          effectivePermissionMode({ ...task, permissionMode: permissionPreference }, permissionSettings, runtime.id)),
       );
+      const pool = canContinue && !preferred
+        ? approved.filter((runtime) => runtime.id === previousProvider?.harness)
+        : approved;
+      task.route = planRoute(
+        { ...task, permissionMode: permissionPreference },
+        task.evidence,
+        pool,
+        permissionSettings,
+        calibration,
+      );
+      if (canContinue && !preferred)
+        task.route.reasons.push("Continuing this story’s verified local provider conversation.");
       permissionMode = effectivePermissionMode(
         { ...task, permissionMode: permissionPreference },
         permissionSettings,
@@ -874,8 +889,9 @@ export class WorkerManager {
       await progress("Coordinating with the goal’s other tasks");
       task.run.changeRunId = randomUUID();
       await this.fleet.before(project, task);
-      const workspace = task.run.workspace!;
-      const resumeSessionId = await resumableProviderSession(previousProvider, task, workspace);
+      const resumeSessionId = canContinue && previousProvider?.harness === task.harness
+        ? previousSessionId
+        : undefined;
       continuing();
       // Graph preparation and Fleet admission are serialized within an epic.
       // Brief retrieval and provider startup are per-worker reads: holding the
@@ -1101,7 +1117,7 @@ export class WorkerManager {
         workspace,
         prompt,
         task.route.model,
-        this.state().settings.localModel,
+        !!task.route.localModel,
         task.route.effort,
         briefPath,
         contextConfig,
@@ -1223,9 +1239,9 @@ export class WorkerManager {
         command,
         cwd: workspace,
         model: task.route.model,
-        automaticModelTier: task.modelOverride || permissionSettings.model ? undefined : task.route.tier,
         effort: task.route.effort,
-        localModel: this.state().settings.localModel,
+        calibratedModel: task.route.selection?.calibratedModel,
+        localModel: task.route.localModel,
         permissionMode,
         prompt,
         briefPath,

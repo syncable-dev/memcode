@@ -27,7 +27,8 @@ import { WorkerManager } from "./workers";
 import { PreviewManager } from "./preview";
 import { localURL } from "./urls";
 import { discoverHarnesses } from "./catalog";
-import { planDefinedStory } from "./story-route";
+import { planDefinedStory, readRoutingCalibration } from "./story-route";
+import { qualificationRequestFingerprint } from "./qualification";
 import { registerPlanning } from "./planning";
 import { registerPlanningControls } from "./planning-controls";
 import { ensureTaskEpic } from "./epic-workspace";
@@ -769,20 +770,31 @@ export async function createRuntime(
     if (parent.analysis !== "ready") await analyze(parent.id);
     const current = task(id);
     if (isActive(current)) throw new Error(activeRouteError);
-    const installed = await discover();
-    current.evidence = await engine.qualify(
-      epicAnalysisProject(project(current.projectId), current),
-      current,
-    );
+    const measurement = { ...current, scope: current.scope?.slice() };
+    const measuredRequest = qualificationRequestFingerprint(measurement);
+    const [installed, evidence, calibration] = await Promise.all([
+      discover(),
+      engine.qualify(
+        epicAnalysisProject(project(measurement.projectId), measurement),
+        measurement,
+      ),
+      readRoutingCalibration(store.dir),
+    ]);
     const latest = task(id);
     if (isActive(latest)) throw new Error(activeRouteError);
-    latest.route = planDefinedStory(
+    if (latest.epicId !== measurement.epicId ||
+      qualificationRequestFingerprint(latest) !== measuredRequest)
+      throw Error("The story changed during measurement. Plan the worker again for the new scope.");
+    const route = planDefinedStory(
       latest,
-      latest.evidence,
+      evidence,
       installed,
       store.state,
+      calibration,
     );
-    latest.harness = latest.route.harness;
+    latest.evidence = evidence;
+    latest.route = route;
+    latest.harness = route.harness;
     latest.updatedAt = now();
     await changed();
   };

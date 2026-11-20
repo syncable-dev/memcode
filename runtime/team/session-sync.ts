@@ -495,7 +495,11 @@ export class TeamSessionSync {
         harness: task.harness,
         requestedModel: task.route?.model,
         actualModel: task.run.measurements?.modelId,
-        route: task.route ? { ...task.route, reasons: [] } : undefined,
+        // The v1 relay accepts only the v2 route shape. Requested and actual
+        // models above remain available with any local routing policy.
+        route: task.route?.policyVersion === "memcode-envelope-v2"
+          ? { ...task.route, reasons: [] }
+          : undefined,
         state: task.run.state,
         startedAt: task.run.startedAt,
         finishedAt: task.run.finishedAt,

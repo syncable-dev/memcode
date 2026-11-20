@@ -1,16 +1,27 @@
 import { createHash } from "node:crypto";
-import { readFile, stat } from "node:fs/promises";
-import { basename, resolve } from "node:path";
+import { readFile, realpath, stat } from "node:fs/promises";
+import { resolve } from "node:path";
 import { isActive } from "../src/domain";
 import type { Evidence, Project, WorkItem } from "../src/shared";
 import { git, now, within } from "./local";
-import { verifiedIndexRevision } from "./memtrace-peer-index";
+import {
+  exactRevisionSource,
+  pathKey as checkoutKey,
+  verifiedIndexRevision,
+} from "./memtrace-peer-index";
+import { collectQualificationImpact } from "./qualification-impact";
+import {
+  isNearbyTest,
+  resolveQualificationTargets,
+} from "./qualification-targets";
+import { analyzeRoutingIntent } from "./routing-intent";
 
 interface GraphClient {
   call(
     project: Project,
     name: string,
     args: Record<string, unknown>,
+    signal?: AbortSignal,
   ): Promise<any>;
 }
 
@@ -36,6 +47,9 @@ export interface EvidenceBinding {
   indexBranch?: string;
   /** The engine's own reason for not being ready, when it gave one. */
   indexReason?: string;
+  /** Re-evaluate when the request changed even if the source did not. */
+  requestFingerprint?: string;
+  resolvedFiles?: string[];
   checkedAt: string;
 }
 export interface BoundEvidence extends Evidence {
@@ -49,6 +63,12 @@ export interface IndexObservation {
   branch?: string;
   /** Why the engine is not ready, in its words (branch_publication_incomplete). */
   reason?: string;
+  revision?: string;
+  graphRevision?: string;
+  sourceRevision?: string;
+  sourceCommit?: string;
+  changedDuringRead?: boolean;
+  wrongCheckout?: boolean;
   /** Repo-relative files whose working content differs from the index. */
   mismatched: string[];
   /** The engine counted more mismatches than it listed. */
@@ -79,7 +99,19 @@ export interface EvidenceRefresh {
 
 const BOUND_FILES = 64,
   DIRECTORY_MEMBERS = 200,
-  HASHED_BYTES = 2 * 1024 * 1024;
+  HASHED_BYTES = 2 * 1024 * 1024,
+  QUALIFICATION_READ_MS = 12_000;
+export const qualificationRequestFingerprint = (task: WorkItem) =>
+  createHash("sha256")
+    .update(
+      JSON.stringify([
+        task.title,
+        task.description,
+        task.kind ?? null,
+        task.scope ?? [],
+      ]),
+    )
+    .digest("hex");
 const fileKey = (file: string) =>
   process.platform === "win32" ? file.toLowerCase() : file;
 const overlaps = (a: string, b: string) => {
@@ -100,7 +132,7 @@ function repoFile(root: string, file: string): string | null {
       .replace(/\/+$/, "");
   const base = clean(root),
     value = clean(file).replace(/^\.\//, "");
-  if (!value || value === ".." || value.startsWith("../")) return null;
+  if (!value || value.split("/").includes("..")) return null;
   if (!/^([A-Za-z]:\/|\/)/.test(value)) return value;
   if (
     fileKey(value.slice(0, base.length)) !== fileKey(base) ||
@@ -113,12 +145,15 @@ function repoFile(root: string, file: string): string | null {
 export function boundFiles(
   project: Project,
   task: WorkItem,
-  evidence?: Pick<Evidence, "symbols">,
+  evidence?: Pick<BoundEvidence, "symbols"> & {
+    binding?: Pick<EvidenceBinding, "resolvedFiles">;
+  },
 ): string[] {
   if (!project.path) return [];
   const files = new Map<string, string>();
   for (const raw of [
     ...(task.scope ?? []),
+    ...(evidence?.binding?.resolvedFiles ?? []),
     ...(evidence?.symbols ?? []).map((symbol) => symbol.file),
   ]) {
     const file = repoFile(project.path, raw);
@@ -147,13 +182,19 @@ async function fileHash(path: string): Promise<string | null> {
 async function sourceHash(root: string, file: string): Promise<string | null> {
   const path = resolve(root, file);
   if (!within(root, path)) return null;
-  let directory = false;
+  let canonicalRoot: string, absolute: string;
   try {
-    directory = (await stat(path)).isDirectory();
-  } catch {
-    /* fileHash reports a missing file. */
+    [canonicalRoot, absolute] = await Promise.all([
+      realpath(root),
+      realpath(path),
+    ]);
+    if (!within(canonicalRoot, absolute)) return null;
+    if (!(await stat(absolute)).isDirectory()) return fileHash(absolute);
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ENOENT"
+      ? "missing"
+      : null;
   }
-  if (!directory) return fileHash(path);
   let members: string[];
   try {
     members = (
@@ -175,16 +216,23 @@ async function sourceHash(root: string, file: string): Promise<string | null> {
   }
   if (members.length > DIRECTORY_MEMBERS) return null;
   const digest = createHash("sha256");
-  for (const member of members)
-    digest
-      .update(member + "\0")
-      .update(((await fileHash(resolve(root, member))) ?? "?") + "\0");
+  for (const member of members) {
+    const memberPath = await realpath(resolve(root, member)).catch(
+      () => undefined,
+    );
+    const hash =
+      memberPath && within(canonicalRoot, memberPath)
+        ? await fileHash(memberPath)
+        : null;
+    digest.update(member + "\0").update((hash ?? "?") + "\0");
+  }
   return digest.digest("hex").slice(0, 32);
 }
 /** Ask the engine once whether its index matches the working source. */
 export async function observeIndex(
   client: GraphClient,
   project: Project,
+  expectedRevision?: string,
 ): Promise<IndexObservation> {
   const unobserved: IndexObservation = {
     known: false,
@@ -197,21 +245,31 @@ export async function observeIndex(
   try {
     revision = await client.call(project, "get_query_revision", {
       repo_id: project.repoId,
+      ...(expectedRevision ? { expected_revision: expectedRevision } : {}),
     });
   } catch {
     return unobserved;
   }
   if (typeof revision?.ready !== "boolean") return unobserved;
-  if (
-    project.analysisCheckout === "owned-worktree-v1" &&
-    !verifiedIndexRevision(revision, project, project.repoId)
-  )
-    return {
-      ...unobserved,
-      known: true,
-      branch: revision.branch,
-      reason: "This goal's exact worktree graph has not been certified.",
-    };
+  const owned = project.analysisCheckout === "owned-worktree-v1";
+  const wrongCheckout =
+    (revision.repo_id && revision.repo_id !== project.repoId) ||
+    (revision.branch && revision.branch !== project.branch) ||
+    (typeof revision.worktree === "string" &&
+      checkoutKey(revision.worktree) !== checkoutKey(project.path)) ||
+    (owned
+      ? !exactRevisionSource(revision, project, project.repoId)
+      : revision.checkout_mode === "owned-worktree-v1" ||
+        revision.graph_scope === "owned_worktree_graph");
+  const ready = verifiedIndexRevision(revision, project, project.repoId);
+  const graphRevision =
+    revision._meta?.graph_revision ?? revision.graph_revision;
+  const reason = wrongCheckout
+    ? "The engine answered for a different checkout."
+    : (revision.reason ??
+      (owned && !ready
+        ? "This goal's exact worktree graph has not been certified."
+        : undefined));
   const listed: unknown[] = Array.isArray(revision.mismatched_paths)
     ? revision.mismatched_paths
     : [];
@@ -222,9 +280,19 @@ export async function observeIndex(
   });
   return {
     known: true,
-    ready: revision.ready,
+    ready,
     ...(typeof revision.branch === "string" ? { branch: revision.branch } : {}),
-    ...(typeof revision.reason === "string" ? { reason: revision.reason } : {}),
+    ...(typeof reason === "string" ? { reason } : {}),
+    revision: revision.token || undefined,
+    graphRevision: graphRevision?.token ?? revision.publication?.token,
+    sourceRevision: revision.source_revision || undefined,
+    sourceCommit: revision.source_commit || undefined,
+    changedDuringRead:
+      revision.requested_revision_matches === false ||
+      revision.requested_source_matches === false ||
+      revision.source_unchanged_during_observation === false ||
+      graphRevision?.publication_unchanged_during_call === false,
+    wrongCheckout,
     mismatched,
     truncated:
       mismatched.length < listed.length ||
@@ -271,7 +339,10 @@ export async function observeBinding(
   if (staleFiles.length) return binding("stale", { staleFiles });
   // The engine named why this checkout is not ready, such as a branch it has
   // not finished publishing. That holds for every file on the branch.
-  if (index.reason) return binding("stale", { indexReason: index.reason });
+  if (index.reason || index.changedDuringRead)
+    return binding("stale", {
+      indexReason: index.reason ?? "The graph was changing.",
+    });
   // A complete mismatch list that omits these files means they are published.
   return binding(
     index.mismatched.length && !index.truncated ? "current" : "unknown",
@@ -292,6 +363,29 @@ function staleNote(binding: EvidenceBinding): string | null {
 const unconfirmed = (change: string) =>
   `Stale source binding: ${change} Code context has not confirmed its index for this revision, so the last measurements are kept.`;
 
+type QualityRow = Record<string, any>;
+
+const measureNumber = (value: unknown): number | undefined =>
+  typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? value
+    : undefined;
+
+function qualityMatches(
+  row: QualityRow,
+  target: { name: string; file: string; line: number; scopePath?: string },
+  root: string,
+) {
+  return (
+    (!row.name || row.name === target.name) &&
+    (!row.file_path ||
+      fileKey(repoFile(root, row.file_path) ?? "") === fileKey(target.file)) &&
+    (!row.start_line || !target.line || row.start_line === target.line) &&
+    (!row.scope_path ||
+      !target.scopePath ||
+      row.scope_path === target.scopePath)
+  );
+}
+
 export async function collectEvidence(
   client: GraphClient,
   project: Project,
@@ -307,180 +401,254 @@ export async function collectEvidence(
       note: "Analyze this project to add measured code context.",
       measuredAt,
     };
-  const rows = new Map<string, any>();
-  let incomplete = false,
-    graphRevision: string | undefined;
-  if (task.scope?.length) {
-    const scopedRows: any[][] = [];
-    for (const file of task.scope.slice(0, 3)) {
-      const context = await client.call(project, "get_symbol_context", {
-        repo_id: project.repoId,
-        branch: project.branch,
-        symbol: basename(file),
-        file_path: file,
-        limit: 64,
-      });
-      graphRevision = context._meta?.graph_revision?.token ?? graphRevision;
-      const callables = (context.contains ?? []).filter(
-        (row: any) => row.kind === "Function" || row.kind === "Method",
-      );
-      callables.sort(
-        (a: any, b: any) =>
-          Number(b.kind === "Function") - Number(a.kind === "Function"),
-      );
-      scopedRows.push(callables);
-      incomplete ||=
-        !context.found || !!context.truncated || !!context.graph_truncated;
-    }
-    // Sample each declared file before taking more symbols from any one file.
-    for (let index = 0; index < 8; index++)
-      for (const group of scopedRows) {
-        const row = group[index];
-        if (row)
-          rows.set(row.file_path + "::" + (row.node_id ?? row.name), row);
-      }
-  } else {
-    const result = await client.call(project, "find_code", {
-      repo_id: project.repoId,
-      branch: project.branch,
-      query: (task.title + " " + task.description).slice(0, 1000),
-      limit: 6,
-      include_context: true,
+
+  const deadline = new AbortController();
+  const timeout = setTimeout(() => deadline.abort(), QUALIFICATION_READ_MS);
+  const stopped = new Promise<undefined>((done) => {
+    deadline.signal.addEventListener("abort", () => done(undefined), {
+      once: true,
     });
-    incomplete ||=
-      result.status !== "complete" ||
-      !!result.context?.incomplete_reasons?.length;
-    graphRevision = result._meta?.graph_revision?.token ?? graphRevision;
-    for (const row of result.results ?? [])
-      rows.set(row.file_path + "::" + row.name, row);
-  }
-  const selected = [...rows.values()]
-    .filter((row) => row.kind === "Function" || row.kind === "Method")
-    .slice(0, 8);
-  const symbols: Evidence["symbols"] = [];
-  for (const row of selected) {
-    symbols.push({
-      name: row.name,
-      file: row.file_path,
-      line: row.symbol_start_line ?? row.start_line,
-    });
-  }
-  const measureSymbol = async (symbol: Evidence["symbols"][number]) => {
+  });
+  const bounded: GraphClient = {
+    call: (scope, name, args) =>
+      deadline.signal.aborted
+        ? Promise.resolve(undefined)
+        : Promise.race([
+            stopped,
+            client.call(scope, name, args, deadline.signal),
+          ]),
+  };
+  let changedPublication = false,
+    missingPublication = false;
+  const graphRevisions = new Set<string>();
+  const read = async (
+    name: string,
+    args: QualityRow,
+  ): Promise<QualityRow | undefined> => {
     try {
-      const context = await client.call(project, "get_symbol_context", {
+      const value = await bounded.call(project, name, {
         repo_id: project.repoId,
         branch: project.branch,
-        symbol: symbol.name,
-        file_path: symbol.file,
-        limit: 3,
+        ...args,
       });
-      if (context.found) {
-        symbol.nodeId = context.symbol.node_id;
-        symbol.file = context.symbol.file_path;
-        symbol.line = context.symbol.start_line;
-      }
-      const result = await client.call(
-        project,
-        "get_function_quality_metrics",
-        {
-          repo_id: project.repoId,
-          branch: project.branch,
-          function_name: symbol.name,
-          file_path: symbol.file,
-        },
-      );
-      const m = result.function;
-      if (!m) {
-        incomplete = true;
+      if (!value || typeof value !== "object") return;
+      const revision = value._meta?.graph_revision;
+      if (typeof revision?.token === "string" && revision.token)
+        graphRevisions.add(revision.token);
+      else missingPublication = true;
+      if (
+        revision?.publication_unchanged_during_call === false ||
+        graphRevisions.size > 1
+      ) {
+        changedPublication = true;
         return;
       }
-      symbol.metricSource = m.complexity_source === "ast" ? "ast" : "estimated";
-      if (typeof m.cognitive_complexity === "number")
-        symbol.cognitive = m.cognitive_complexity;
-      if (typeof m.complexity === "number") symbol.cyclomatic = m.complexity;
-      if (typeof m.max_nesting === "number") symbol.nesting = m.max_nesting;
-      if (symbol.metricSource !== "ast") incomplete = true;
+      if (revision?.status === "partial") missingPublication = true;
+      return value;
     } catch {
-      incomplete = true;
+      return undefined;
     }
   };
-  const measured = symbols.slice(0, 5);
-  for (let offset = 0; offset < measured.length; offset += 3)
-    await Promise.all(measured.slice(offset, offset + 3).map(measureSymbol));
-  if (symbols.length > 5) incomplete = true;
-  let affected: number | undefined,
-    affectedProcesses: number | undefined,
-    affectedFiles: number | undefined;
-  if (symbols[0])
-    try {
-      const impact = await client.call(project, "get_impact", {
-        repo_id: project.repoId,
-        branch: project.branch,
-        target: symbols[0].nodeId ?? symbols[0].name,
-        file_path: symbols[0].file,
-        direction: "upstream",
-        depth: 3,
-      });
-      if (typeof impact.total_affected === "number")
-        affected = impact.total_affected;
-      affectedProcesses =
-        impact.affected_processes_count ??
-        (Array.isArray(impact.affected_processes)
-          ? impact.affected_processes.length
-          : undefined);
-      affectedFiles =
-        impact.affected_files_count ??
-        (Array.isArray(impact.affected_files)
-          ? impact.affected_files.length
-          : undefined);
-      incomplete ||=
-        !impact.found ||
-        !!impact.graph_incomplete ||
-        !!impact.truncated ||
-        impact.risk === "UNKNOWN" ||
-        !!impact.total_affected_is_lower_bound;
-    } catch {
-      incomplete = true;
+
+  try {
+    const before = Promise.resolve(observed ?? observeIndex(bounded, project));
+    const intent = analyzeRoutingIntent(task);
+    const scope = await resolveQualificationTargets(
+      project,
+      task,
+      intent,
+      read,
+    );
+    const callable = scope.symbols.filter(
+      (target) => target.kind === "Function" || target.kind === "Method",
+    );
+    const measurable = callable.slice(0, 5);
+    const measuredMetrics = new Map<
+      (typeof callable)[number],
+      Partial<Evidence["symbols"][number]>
+    >();
+    const measurements = async () => {
+      for (let offset = 0; offset < measurable.length; offset += 2) {
+        await Promise.all(
+          measurable.slice(offset, offset + 2).map(async (target) => {
+            const result = await read("get_function_quality_metrics", {
+              function_name: target.scopePath ?? target.name,
+              file_path: target.file,
+              kind: target.kind,
+            });
+            const matching = (
+              result?.matches > 1 && Array.isArray(result?.candidates)
+                ? result.candidates
+                : [result?.function]
+            ).filter(
+              (row) => row && qualityMatches(row, target, project.path ?? ""),
+            );
+            if (matching.length !== 1) return;
+            const row = matching[0];
+            measuredMetrics.set(target, {
+              cognitive: measureNumber(row.cognitive_complexity),
+              cyclomatic: measureNumber(row.complexity),
+              nesting: measureNumber(row.max_nesting),
+              metricSource:
+                row.complexity_source === "ast" ? "ast" : "estimated",
+            });
+          }),
+        );
+      }
+    };
+    const [reach] = await Promise.all([
+      collectQualificationImpact(
+        scope.confirmed,
+        scope.inferred,
+        project.repoId,
+        read,
+        scope.incomplete,
+      ),
+      measurements(),
+    ]);
+    const firstIndex = await before;
+    const index = firstIndex.revision
+      ? await observeIndex(bounded, project, firstIndex.revision)
+      : firstIndex;
+    for (const value of [firstIndex.graphRevision, index.graphRevision]) {
+      if (value) graphRevisions.add(value);
     }
-  let sourceRevision: string | undefined, binding: EvidenceBinding | undefined;
-  if (project.path)
-    try {
-      sourceRevision = await git(project.path, ["rev-parse", "HEAD"]);
-      const index = observed ?? (await observeIndex(client, project));
-      binding = await observeBinding(
-        project,
-        boundFiles(project, task, { symbols }),
-        index,
+    const incorrectCheckout =
+      firstIndex.wrongCheckout === true || index.wrongCheckout === true;
+    changedPublication ||=
+      graphRevisions.size > 1 ||
+      incorrectCheckout ||
+      firstIndex.changedDuringRead === true ||
+      index.changedDuringRead === true ||
+      !!(
+        firstIndex.revision &&
+        index.revision &&
+        firstIndex.revision !== index.revision
       );
-      // The engine compares its index with the working files, so uncommitted
-      // saves it has published count as measured. Without its answer a dirty
-      // tree cannot be shown to be indexed.
-      if (!index.known)
-        incomplete ||= !!(await git(project.path, ["status", "--porcelain"]));
-      else if (!index.ready || binding.index !== "current") incomplete = true;
-    } catch {
-      incomplete = true;
+    const { impact } = reach;
+    const tests = reach.testPaths;
+    for (const file of scope.sourceFiles.filter(isNearbyTest)) tests.add(file);
+    for (const target of scope.confirmed.filter((entry) =>
+      isNearbyTest(entry.file),
+    ))
+      tests.add(target.file);
+    const completeMetrics = [...measuredMetrics.values()].filter(
+      (metrics) =>
+        metrics.metricSource === "ast" &&
+        metrics.cognitive !== undefined &&
+        metrics.cyclomatic !== undefined &&
+        metrics.nesting !== undefined,
+    ).length;
+    const metricsComplete =
+      callable.length > 0 && callable.length === completeMetrics;
+    const symbols: Evidence["symbols"] = scope.symbols.map((target) => {
+      const metrics = changedPublication
+        ? undefined
+        : measuredMetrics.get(target);
+      return {
+        name: target.name,
+        file: target.file,
+        line: target.line,
+        nodeId: target.nodeId,
+        ...metrics,
+      };
+    });
+    let binding: EvidenceBinding | undefined;
+    let sourceRevision = index.sourceRevision;
+    let incomplete =
+      scope.incomplete ||
+      !scope.confirmed.length ||
+      impact.incomplete ||
+      !metricsComplete ||
+      changedPublication ||
+      missingPublication ||
+      !firstIndex.revision ||
+      !index.revision ||
+      deadline.signal.aborted;
+    if (project.path) {
+      try {
+        const sourceCommit = await git(project.path, ["rev-parse", "HEAD"]);
+        const current = await observeBinding(
+          project,
+          boundFiles(project, task, {
+            symbols,
+            binding: { resolvedFiles: scope.sourceFiles },
+          }),
+          index,
+        );
+        binding = {
+          ...current,
+          resolvedFiles: scope.sourceFiles,
+          requestFingerprint: qualificationRequestFingerprint(task),
+        };
+        sourceRevision ??= sourceCommit;
+        incomplete ||= current.index !== "current" || !index.ready;
+        if (index.sourceCommit && index.sourceCommit !== sourceCommit) {
+          // The checkout moved after the question was answered.
+          changedPublication = true;
+          incomplete = true;
+        }
+      } catch {
+        incomplete = true;
+      }
     }
-  if (!symbols.length) incomplete = true;
-  return {
-    state: incomplete ? "partial" : "measured",
-    symbols,
-    affected,
-    affectedFiles,
-    affectedProcesses,
-    incomplete,
-    sourceRevision,
-    graphRevision,
-    measuredAt,
-    note:
-      (binding && staleNote(binding)) ??
-      (!symbols.length
-        ? "No source anchors matched. The route remains provisional and starts above the fast tier."
-        : incomplete
-          ? "Source measurements are available, with incomplete scope or dependency coverage. Impact refers to the primary source anchor."
-          : "AST measurements and observed primary-anchor impact are attached. Envelope thresholds remain provisional policy."),
-    ...(binding ? { binding } : {}),
-  };
+    return {
+      state: incomplete ? "partial" : "measured",
+      symbols: changedPublication ? [] : symbols,
+      // A union containing rows from two publications is not an observation.
+      impact: changedPublication
+        ? {
+            basis: impact.basis,
+            targetCount: impact.targetCount,
+            observedTargets: 0,
+            incomplete: true,
+          }
+        : impact,
+      scopeCoverage: {
+        confirmedTargets: changedPublication ? 0 : scope.confirmed.length,
+        inferredTargets: changedPublication ? 0 : scope.inferred.length,
+        unresolvedReferences: scope.unresolved,
+        measuredTargets: changedPublication ? 0 : completeMetrics,
+        incomplete,
+        ...(changedPublication || !tests.size
+          ? {}
+          : { nearbyTests: tests.size }),
+        ...(changedPublication
+          ? {}
+          : {
+              publicContracts:
+                scope.confirmed.filter((target) => target.exported).length ||
+                undefined,
+            }),
+      },
+      affected: changedPublication ? undefined : impact.affectedSymbols,
+      affectedFiles: changedPublication ? undefined : impact.affectedFiles,
+      affectedProcesses: changedPublication
+        ? undefined
+        : impact.affectedProcesses,
+      sourceRevision,
+      graphRevision: changedPublication
+        ? undefined
+        : graphRevisions.values().next().value,
+      incomplete,
+      measuredAt,
+      note: incorrectCheckout
+        ? "Memtrace answered for a different checkout. Measure again on this story's epic."
+        : changedPublication
+          ? "The source or graph changed while the task was measured. Measure again to use one revision."
+          : ((binding && staleNote(binding)) ??
+            (deadline.signal.aborted
+              ? "The code context check reached its time limit. The route uses the evidence collected so far."
+              : !symbols.length
+                ? "No source anchors matched. The route remains provisional and starts above the fast tier."
+                : incomplete
+                  ? "Source measurements cover a bounded scope. Impact may be an observed lower bound."
+                  : "AST measurements and observed upstream impact cover the confirmed source anchors.")),
+      ...(binding ? { binding } : {}),
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 /** Compare the binding recorded with a story's evidence to the current one. */
@@ -602,6 +770,17 @@ export async function refreshEvidence(
     index ??= await observeIndex(client, project);
     const current = await observeBinding(project, files, index);
     let freshness = evidenceFreshness(evidence.binding, current);
+    if (
+      evidence.binding?.requestFingerprint &&
+      evidence.binding.requestFingerprint !==
+        qualificationRequestFingerprint(task)
+    ) {
+      const change = "The work request or its declared scope changed.";
+      freshness =
+        current.index === "current"
+          ? { state: "changed", reason: change }
+          : { state: "stale", reason: unconfirmed(change) };
+    }
     // Unbound evidence has nothing to compare, but a worker's edit to its
     // files is a known change.
     if (freshness.state === "unknown" && touched && !evidence.binding) {
@@ -630,7 +809,11 @@ export async function refreshEvidence(
               state: "partial",
               incomplete: true,
               note: freshness.reason,
-              binding: current,
+              binding: {
+                ...current,
+                requestFingerprint: evidence.binding?.requestFingerprint,
+                resolvedFiles: evidence.binding?.resolvedFiles,
+              },
             },
       );
     } else if (freshness.state === "changed") {

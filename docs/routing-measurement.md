@@ -45,8 +45,89 @@ Custom or unrecognized model names use a fixed non-content bucket.
 Show sample counts and measurement/model coverage beside comparisons. Wall-clock
 duration includes machine, tool and human waits; it is not pure model latency.
 Router selection, task mix and review delays can bias comparisons. This feature
-collects evidence for later investigation; it does not automatically alter routing
-policy or declare a winning model.
+collects observational evidence for later investigation. Controlled calibration
+uses its own opt-in input.
+
+## Controlled routing comparisons
+
+Compare the current, wording-only, graph-only and combined policies on the
+same frozen stories. Decide the policy versions, candidate catalog, effort,
+verification and rework budget before starting. Put all checkouts of each
+repository in one group. Reserve whole repositories for evaluation before
+fitting policy thresholds or estimating model performance. Use unfamiliar
+repositories for the holdout and independent blind review for each first pass.
+
+Record one initial worker run per frozen story and candidate. Candidate identity
+includes the harness, exact requested model, effort and resolved model when the
+catalog supplies one. Keep candidate receipts tied to the same source revision
+and cohort. Collect the provider-confirmed model, the applied effort, structured
+verification, blind review and explicit first-pass acceptance. A failed check,
+rejected delivery or observed provider fallback counts against the route. An
+unfinished run or missing proof stays unresolved. Record token usage, elapsed
+time and actual USD cost in millionths through the same bounded rework window.
+Use `null` for unavailable totals, including costs a subscription cannot expose.
+
+Run the evaluator locally from a development checkout with dependencies installed.
+
+```sh
+node --import tsx scripts/routing-evaluate.ts path/to/frozen-outcomes.json
+```
+
+The input uses `version: 1`, `heldOutRepoIds`, `outcomes` and `decisions`. Use
+opaque `repoId` and `storyId` values and the frozen Git commit as `revision`.
+Each outcome supplies `cohort` (`kind`, `tier`, `coverage`), `candidate`
+(`harness`, `model`, `effort`, optional `resolvedModel`), `observedModel`,
+`observedEffort`, `execution`, `checks`, `blindReview`, `acceptance` and the
+nullable totals `totalCostMicros`, `totalTokens` and `totalDurationMs`. A policy
+decision has the same frozen story identity and a `routes` map with the four
+policy names. Each route is the selected candidate or `null` for an abstention.
+The execution states are `running`, `completed` and `failed`. For checks and
+blind review, use `passed`, `failed` or `unverified`. For acceptance, use
+`accepted`, `rejected` or `pending`.
+Keep the raw experiment file local. The evaluator reads measurements and emits
+aggregates. It launches no workers and makes no network calls.
+
+The held-out report compares policies on stories with an observed choice for
+every policy and reports coverage for each. Cost, tokens and duration each use a
+common denominator across policies. A missing outcome stays visible in the
+coverage counts. Keep those counts alongside any reported improvement.
+
+The calibration snapshot uses paired stories from the training repositories.
+Each repository contributes one equally weighted first-pass acceptance share
+per cohort and candidate. Unresolved runs contribute zero to the lower bound.
+The bound uses a one-sided Hoeffding margin with a correction for the candidates
+compared in the cohort. It assumes independently sampled repository groups and
+applies only to the frozen protocol and cohort. [Hoeffding, 1963](https://doi.org/10.1080/01621459.1963.10500830)
+
+Automatic calibrated selection requires at least 30 paired stories across eight
+repositories, complete cost coverage, an exact eligible model and effort, and a
+lower bound at or above the task’s reliability target. The targets are 80% for
+fast, 85% for balanced, 90% for frontier and 95% for extreme. A model alias
+needs its concrete provider identity before its results can apply.
+
+To enable calibrated selection, save only the evaluator’s `calibration` object
+as `routing-calibration.json` in the local MemCode data directory shown in
+Settings. MemCode reads that snapshot when planning and when starting a worker.
+The snapshot digest detects accidental alteration of the aggregate. The
+operator supplies the underlying receipts and vouches for the experiment's
+provenance. Missing, malformed or sparse evidence leads to the deterministic
+envelope policy.
+
+## Routing a story locally
+
+The router reads the story title, brief and declared scope. It resolves exact
+references against that checkout and records which targets came from search.
+Work size uses AST measurements and scope. Impact uses the union of the observed
+callers, files and flows across up to five anchors. Module counts are available
+when the graph returns module identities. Incomplete coverage raises the minimum
+tier and missing counts stay unknown. Review the inputs under **Why this model?**
+on the story card.
+
+Automatic routing compares the account catalogs of connected, approved workers.
+Story overrides take precedence. When a follow-up can resume a verified local
+conversation, its provider takes priority unless a story or workspace choice
+specifies another provider. The story brief remains the routing input for that
+pass.
 
 ## Planning and privacy
 

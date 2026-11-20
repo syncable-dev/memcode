@@ -886,6 +886,7 @@ export function SettingsDialog({
                       }
                     />
                   )}
+                  <small>Automatic stories use this override. Story assignments take precedence.</small>
                 </label>
                 <label className="checkbox-label">
                   <input
@@ -902,8 +903,8 @@ export function SettingsDialog({
                   <span>
                     Use a local Ollama model with Codex
                     <small>
-                      Requires a model name and an existing local Ollama
-                      installation.
+                      Requires a model name and a local Ollama installation.
+                      Applies to automatic stories and stories assigned to Codex.
                     </small>
                   </span>
                 </label>

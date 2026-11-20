@@ -35,7 +35,7 @@ rl.on('line',line=>{const p=JSON.parse(line);
   send({id:p.id,result:{userAgent:'fixture'}});
  }else if(p.method==='initialized')initialized=true;
  else if(p.method==='account/read')send({id:p.id,result:{account:{type:'chatgpt',id:'fixture'}}});
- else if(p.method==='model/list')send({id:p.id,result:{data:process.env.NO_CATALOG==='yes'?[]:[{model:'chosen-model',isDefault:true}]}});
+ else if(p.method==='model/list')send({id:p.id,result:{data:process.env.NO_CATALOG==='yes'?[]:[{model:'chosen-model',isDefault:true,...(process.env.ADVERTISED_EFFORT?{supportedReasoningEfforts:[{reasoningEffort:process.env.ADVERTISED_EFFORT}]}:{})}]}});
  else if(p.method==='thread/start'||p.method==='thread/resume'){
   if(process.env.RESUME && (p.method!=='thread/resume'||p.params.threadId!==process.env.RESUME)){send({id:p.id,error:{message:'Expected the original thread to resume'}});return;}
   if(process.env.RESUME_ERROR){send({id:p.id,error:{message:'Unknown thread '+p.params.threadId}});return;}
@@ -43,7 +43,7 @@ rl.on('line',line=>{const p=JSON.parse(line);
   if(process.env.MODEL_DENIED==='yes'){send({id:p.id,error:{code:-32603,message:'The requested model is not supported when using Codex with a ChatGPT account.',data:{code:'model_not_found'}}});return;}
   const full=process.env.MODE==='full-access';
   if(!initialized||p.params.approvalPolicy!==(full?'never':'on-request')||p.params.sandbox!==(full?'danger-full-access':'workspace-write')||p.params.approvalsReviewer!==(process.env.MODE==='auto'?'auto_review':'user')||(p.method==='thread/start'&&p.params.allowProviderModelFallback!==false)||p.params.model!==(process.env.NO_CATALOG==='yes'?undefined:'chosen-model'))process.exit(12);
-  send({id:p.id,result:{thread:{id:process.env.WRONG_RESUME?'unrelated-thread':'thread-native'},...(process.env.NO_MODEL_METADATA==='yes'?{}:{model:'resolved-model',reasoningEffort:'medium'}),approvalPolicy:p.params.approvalPolicy,approvalsReviewer:process.env.DOWNGRADE==='yes'?'user':p.params.approvalsReviewer,sandbox:{type:full?'dangerFullAccess':'workspaceWrite'}}});
+  send({id:p.id,result:{thread:{id:process.env.WRONG_RESUME?'unrelated-thread':'thread-native'},...(process.env.NO_MODEL_METADATA==='yes'?{}:{model:process.env.THREAD_MODEL||'resolved-model',reasoningEffort:process.env.THREAD_EFFORT||'medium'}),approvalPolicy:p.params.approvalPolicy,approvalsReviewer:process.env.DOWNGRADE==='yes'?'user':p.params.approvalsReviewer,sandbox:{type:full?'dangerFullAccess':'workspaceWrite'}}});
  }else if(p.method==='turn/start'){
   turnSettings=p.params;
   if(p.params.effort!==(process.env.NO_CATALOG==='yes'?undefined:'high')||p.params.input[0].text!=='The exact prompt')process.exit(13);
@@ -76,6 +76,7 @@ async function runFixture(
     env: { ...process.env, ...env },
     model: env.REQUESTED ?? "chosen-model",
     automaticModelTier: env.AUTO_TIER === "yes" ? "balanced" : undefined,
+    calibratedModel: env.CALIBRATED_MODEL,
     effort: "high",
     resumeSessionId: env.RESUME,
     prompt: "The exact prompt",
@@ -150,6 +151,29 @@ test("Codex refuses an unavailable pinned model before the brief is sent", async
     assert.match((await fixture.session.completion).error ?? "", /cannot confirm access/);
     assert.equal(fixture.events.some(e => e.type === "prompted"), false);
   } finally { await fixture.cleanup(); }
+});
+
+test("Codex validates a calibrated route against both the account catalog and the native thread before sending the brief", async () => {
+  const exact = {
+    CALIBRATED_MODEL: "chosen-model",
+    ADVERTISED_EFFORT: "high",
+    THREAD_MODEL: "chosen-model",
+    THREAD_EFFORT: "high",
+  };
+  for (const [overrides, shouldPrompt] of [
+    [{}, true],
+    [{ ADVERTISED_EFFORT: "medium" }, false],
+    [{ THREAD_MODEL: "fallback-model" }, false],
+    [{ THREAD_EFFORT: "medium" }, false],
+  ] as const) {
+    const f = await runFixture({ ...exact, ...overrides });
+    try {
+      const result = await f.session.completion;
+      assert.equal(f.events.some(event => event.type === "prompted"), shouldPrompt);
+      assert.equal(result.exitCode, shouldPrompt ? 0 : 1);
+      if (!shouldPrompt) assert.match(result.error ?? "", /could not confirm the calibrated model and effort/);
+    } finally { await f.cleanup(); }
+  }
 });
 
 test("Codex remembers a provider model rejection for the same account and runtime", async () => {
