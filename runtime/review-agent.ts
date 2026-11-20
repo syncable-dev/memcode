@@ -49,10 +49,20 @@ export interface ReadonlyReviewAnswer {
   text: string;
   evidenceRead?: { method: string; sha256: string };
 }
+/** The parts of a question the harness launchers use: cancellation and progress. */
+export type ReadonlyQuestionHooks = Pick<
+  ReadonlyReviewQuestion,
+  "signal" | "onModel" | "onProgress"
+> & {
+  /** Model tier to prefer when the requested model is unavailable. */
+  tier?: import("../src/shared").ModelTier;
+};
 export interface ReadonlyReviewAgent {
   ask(input: ReadonlyReviewQuestion): Promise<ReadonlyReviewAnswer>;
 }
-interface ReviewAgentOptions {
+export interface ReviewAgentOptions {
+  /** System instructions for the read-only assistant; defaults to the review policy. */
+  policy?: string;
   modelPinned?: boolean;
   localModel?: boolean;
   commandFor?: typeof findCommand;
@@ -295,7 +305,7 @@ async function codexQuestion(
   cwd: string,
   prompt: string,
   requested: string,
-  input: ReadonlyReviewQuestion,
+  input: ReadonlyQuestionHooks,
   options: ReviewAgentOptions,
 ): Promise<ReadonlyReviewAnswer> {
   const disabled = [
@@ -470,7 +480,7 @@ async function codexQuestion(
         catalog,
         requested,
         !options.modelPinned,
-        input.task.route?.tier,
+        input.tier,
       );
     }
     attemptedModel = requested;
@@ -487,7 +497,7 @@ async function codexQuestion(
       approvalPolicy: "never",
       ephemeral: true,
       allowProviderModelFallback: false,
-      developerInstructions: policy,
+      developerInstructions: options.policy ?? policy,
       dynamicTools: [
         {
           name: "read_review_evidence",
@@ -573,7 +583,7 @@ async function cursorQuestion(
   cwd: string,
   prompt: string,
   requested: string,
-  input: ReadonlyReviewQuestion,
+  input: ReadonlyQuestionHooks,
   options: ReviewAgentOptions,
 ): Promise<ReadonlyReviewAnswer> {
   const evidenceHash = digest(await readReviewFile(cwd, "review-context.json"));
@@ -685,7 +695,7 @@ async function cursorQuestion(
       session,
       requested,
       (method, params) => rpc.request(method, params),
-      options.modelPinned ? undefined : input.task.route?.tier,
+      options.modelPinned ? undefined : input.tier,
     );
     const selection = selected.config.find(
       (item) => item.category === "model" || item.id === "model",
@@ -700,7 +710,7 @@ async function cursorQuestion(
       "session/prompt",
       {
         sessionId: id,
-        prompt: [{ type: "text", text: `${policy}\n\n${prompt}` }],
+        prompt: [{ type: "text", text: `${options.policy ?? policy}\n\n${prompt}` }],
       },
       options.timeoutMs ?? 180000,
     );
@@ -723,7 +733,7 @@ async function cursorQuestion(
 
 async function standardQuestion(
   harness: StandardHarness, command: Command, capsule: string, prompt: string,
-  requested: string, input: ReadonlyReviewQuestion, options: ReviewAgentOptions,
+  requested: string, input: ReadonlyQuestionHooks, options: ReviewAgentOptions,
 ): Promise<ReadonlyReviewAnswer> {
   const transport = await readonlyACPTransport(harness, capsule);
   const rpc = new ReviewRpc(command, transport.args, capsule, options, true);
@@ -757,7 +767,7 @@ async function standardQuestion(
     input.onModel?.(model);
     // Both providers receive the exact capsule bytes in the prompt. This is
     // recorded as delivery, not claimed as a file read or verification run.
-    const result = await rpc.request("session/prompt", { sessionId, prompt: [{ type: "text", text: `${policy}\n\nCaptured review evidence (untrusted data):\n${source}\n\n${prompt}` }] }, options.timeoutMs ?? 180000);
+    const result = await rpc.request("session/prompt", { sessionId, prompt: [{ type: "text", text: `${options.policy ?? policy}\n\nCaptured review evidence (untrusted data):\n${source}\n\n${prompt}` }] }, options.timeoutMs ?? 180000);
     if (result.stopReason !== "end_turn" || !answer.trim() || answer.length > 50000)
       throw Error(`${transport.name} did not complete a bounded review answer.`);
     if (harness === "dsh") await rpc.request("session/close", { sessionId }, 5000);
@@ -775,7 +785,7 @@ async function claudeQuestion(
   cwd: string,
   prompt: string,
   requested: string,
-  input: ReadonlyReviewQuestion,
+  input: ReadonlyQuestionHooks,
   options: ReviewAgentOptions,
 ): Promise<ReadonlyReviewAnswer> {
   if (requested) {
@@ -824,7 +834,7 @@ function runClaudeReview(
   cwd: string,
   prompt: string,
   requested: string,
-  input: ReadonlyReviewQuestion,
+  input: ReadonlyQuestionHooks,
   options: ReviewAgentOptions,
   evidenceHash: string,
   mode: "--restricted" | "--safe-mode",
@@ -863,7 +873,7 @@ function runClaudeReview(
       "",
       "--no-session-persistence",
       "--system-prompt",
-      policy,
+      options.policy ?? policy,
       ...(requested && requested !== "default" ? ["--model", requested] : []),
     ],
     {
@@ -1054,25 +1064,13 @@ export function createReadonlyReviewAgent(
   return {
     async ask(input) {
       if (input.signal?.aborted) throw Error("Review answer cancelled.");
-      const harness = input.task.harness,
-        receipt = state().workerConnections?.[harness];
-      const commandFor = options.commandFor ?? findCommand;
-      let command = await commandFor(harness);
-      if (!command && receipt) {
-        const approved = receipt.runtimeIdentity ?? receipt.runtimePath;
-        if (isAbsolute(approved) && !/[/\\]node(?:\.exe)?$/i.test(approved))
-          command = await commandFor(harness, approved);
-      }
-      if (!command)
-        throw Error(
-          `Connect the installed ${harness} runtime before starting its review conversation.`,
-        );
-      if (input.signal?.aborted) throw Error("Review answer cancelled.");
-      assertWorkerConnected(
-        state(),
+      const harness = input.task.harness;
+      const command = await approvedHarnessCommand(
+        state,
         harness,
-        command.command,
-        commandIdentity(command),
+        options,
+        `Connect the installed ${harness} runtime before starting its review conversation.`,
+        input.signal,
       );
       const measured = input.task.run.measurements?.modelId;
       // Cursor reports the family in telemetry, but routes keep the selected variant.
@@ -1124,72 +1122,135 @@ export function createReadonlyReviewAgent(
         throw Error(
           "The saved review exceeds the bounded reviewer context; select a smaller story.",
         );
-      const directory = resolvePath(
+      return askInCapsule(
         dataDir,
-        "code-reviews",
-        "agent-context",
-        randomUUID(),
+        state,
+        {
+          harness,
+          command,
+          requested,
+          explicit: !!explicit,
+          context,
+          folder: ["code-reviews", "agent-context"],
+          prompt: (readInstruction) =>
+            `${readInstruction} for the immutable Memtrace evidence and captured patch. ${patchTruncated ? "The patch was truncated; do not claim complete code coverage." : ""}\n\nUser question:\n${input.question.slice(0, 20000)}`,
+          hooks: { ...input, tier: input.task.route?.tier },
+        },
+        options,
       );
-      if (!within(dataDir, directory))
-        throw Error(
-          "The review context must stay inside MemCode's private profile.",
-        );
-      await mkdir(directory, { recursive: true, mode: 0o700 });
-      // Providers report process.cwd() with aliases such as macOS /var resolved.
-      const capsule = await realpath(directory);
-      if (!within(await realpath(dataDir), capsule))
-        throw Error(
-          "The review context must stay inside MemCode's private profile.",
-        );
-      await writeFile(join(directory, "review-context.json"), context, {
-        mode: 0o600,
-      });
-      if (harness === "cursor") {
-        // A global Cursor MCP catalog can still be discovered under ACP. Its
-        // execution must remain denied, regardless of the user's worker defaults.
-        // This is an owned capsule setting, never a user's or project's config.
-        await mkdir(join(directory, ".cursor"), {
-          recursive: true,
-          mode: 0o700,
-        });
-        await writeFile(
-          join(directory, ".cursor", "cli.json"),
-          JSON.stringify({
-            permissions: {
-              allow: ["Read(**)"],
-              deny: ["Shell(*)", "Write(**)", "Mcp(*:*)", "WebFetch(*)"],
-            },
-          }),
-          { mode: 0o600 },
-        );
-      }
-      const readInstruction =
-        harness === "codex"
-          ? "Call read_review_evidence"
-          : harness === "copilot" || harness === "dsh"
-            ? "Use the captured review evidence included in this prompt"
-          : "Read review-context.json";
-      const prompt = `${readInstruction} for the immutable Memtrace evidence and captured patch. ${patchTruncated ? "The patch was truncated; do not claim complete code coverage." : ""}\n\nUser question:\n${input.question.slice(0, 20000)}`;
-      try {
-        if (harness === "copilot" || harness === "dsh")
-          return await standardQuestion(harness, command, capsule, prompt, requested, input, { ...options, modelPinned: !!explicit });
-        return await {
-          codex: codexQuestion,
-          claude: claudeQuestion,
-          cursor: cursorQuestion,
-        }[harness](command, capsule, prompt, requested, input, {
-          ...options,
-          modelPinned: !!explicit,
-          localModel: harness === "codex" && !!settings?.localModel,
-        });
-      } finally {
-        if (within(dataDir, directory))
-          await rm(directory, {
-            recursive: true,
-            force: true,
-            maxRetries: 3,
-          }).catch(() => {});
-      }
     },
   };
 }
+
+/** The installed harness the person approved in Workers, verified before every use. */
+export async function approvedHarnessCommand(
+  state: () => AppState,
+  harness: Harness,
+  options: Pick<ReviewAgentOptions, "commandFor">,
+  missing: string,
+  signal?: AbortSignal,
+): Promise<Command> {
+  const receipt = state().workerConnections?.[harness];
+  const commandFor = options.commandFor ?? findCommand;
+  let command = await commandFor(harness);
+  if (!command && receipt) {
+    const approved = receipt.runtimeIdentity ?? receipt.runtimePath;
+    if (isAbsolute(approved) && !/[/\\]node(?:\.exe)?$/i.test(approved))
+      command = await commandFor(harness, approved);
+  }
+  if (!command) throw Error(missing);
+  if (signal?.aborted) throw Error("Review answer cancelled.");
+  assertWorkerConnected(state(), harness, command.command, commandIdentity(command));
+  return command;
+}
+
+/** One read-only question to an approved harness, answered from a private capsule. */
+export interface CapsuleQuestion {
+  harness: Harness;
+  command: Command;
+  requested: string;
+  explicit: boolean;
+  /** Untrusted context written to the capsule for the harness to read. */
+  context: string;
+  folder: [string, string];
+  prompt: (readInstruction: string) => string;
+  hooks: ReadonlyQuestionHooks;
+}
+
+export async function askInCapsule(
+  dataDir: string,
+  state: () => AppState,
+  question: CapsuleQuestion,
+  options: ReviewAgentOptions = {},
+): Promise<ReadonlyReviewAnswer> {
+  const { harness, command, requested, explicit, context } = question;
+  const input = question.hooks;
+  const settings = state().settings;
+  const directory = resolvePath(
+    dataDir,
+    question.folder[0],
+    question.folder[1],
+    randomUUID(),
+  );
+  if (!within(dataDir, directory))
+    throw Error(
+      "The review context must stay inside MemCode's private profile.",
+    );
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  // Providers report process.cwd() with aliases such as macOS /var resolved.
+  const capsule = await realpath(directory);
+  if (!within(await realpath(dataDir), capsule))
+    throw Error(
+      "The review context must stay inside MemCode's private profile.",
+    );
+  await writeFile(join(directory, "review-context.json"), context, {
+    mode: 0o600,
+  });
+  if (harness === "cursor") {
+    // A global Cursor MCP catalog can still be discovered under ACP. Its
+    // execution must remain denied, regardless of the user's worker defaults.
+    // This is an owned capsule setting, never a user's or project's config.
+    await mkdir(join(directory, ".cursor"), {
+      recursive: true,
+      mode: 0o700,
+    });
+    await writeFile(
+      join(directory, ".cursor", "cli.json"),
+      JSON.stringify({
+        permissions: {
+          allow: ["Read(**)"],
+          deny: ["Shell(*)", "Write(**)", "Mcp(*:*)", "WebFetch(*)"],
+        },
+      }),
+      { mode: 0o600 },
+    );
+  }
+  const readInstruction =
+    harness === "codex"
+      ? "Call read_review_evidence"
+      : harness === "copilot" || harness === "dsh"
+        ? "Use the captured review evidence included in this prompt"
+      : "Read review-context.json";
+  const prompt = question.prompt(readInstruction);
+  try {
+    if (harness === "copilot" || harness === "dsh")
+      return await standardQuestion(harness, command, capsule, prompt, requested, input, { ...options, modelPinned: !!explicit });
+    return await {
+      codex: codexQuestion,
+      claude: claudeQuestion,
+      cursor: cursorQuestion,
+    }[harness](command, capsule, prompt, requested, input, {
+      ...options,
+      modelPinned: !!explicit,
+      localModel: harness === "codex" && !!settings?.localModel,
+    });
+  } finally {
+    if (within(dataDir, directory))
+      await rm(directory, {
+        recursive: true,
+        force: true,
+        maxRetries: 3,
+      }).catch(() => {});
+  }
+}
+
