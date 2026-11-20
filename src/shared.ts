@@ -28,11 +28,14 @@ export type {
 } from "./planning/types";
 export const stages = ["planned", "working", "review", "done"] as const;
 export type Stage = (typeof stages)[number];
-export type Harness = "codex" | "claude" | "cursor";
+export const harnessIds = ["codex", "claude", "cursor", "copilot", "dsh"] as const;
+export type Harness = (typeof harnessIds)[number];
 export const harnessNames: Record<Harness, string> = {
   codex: "Codex",
   claude: "Claude Code",
   cursor: "Cursor",
+  copilot: "GitHub Copilot",
+  dsh: "DeepSeek Harness",
 };
 export type ModelTier = "fast" | "balanced" | "frontier" | "extreme";
 export type ReasoningEffort = "low" | "medium" | "high" | "xhigh";
@@ -67,6 +70,8 @@ export interface RouteDecision {
   tier: ModelTier;
   harness: Harness;
   model: string;
+  /** Account-discovered presentation label; the opaque ID remains the request. */
+  modelLabel?: string;
   effort: ReasoningEffort;
   mode: "automatic" | "manual";
   status: "measured" | "provisional";

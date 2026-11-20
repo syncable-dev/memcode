@@ -2,6 +2,7 @@ import { probeCodexCatalog } from "./agents/codex";
 import { probeClaudeCatalog } from "./agents/claude";
 import { codexCatalogGeneration } from "./agents/codex-models";
 import { probeCursorCatalog } from "./agents/cursor";
+import { probeStandardCatalog } from "./agents/standard-acp";
 import {
   commandIdentity,
   findCommand,
@@ -38,6 +39,7 @@ async function discoverOne(id: Harness, refresh: boolean): Promise<HarnessRuntim
   }
   if (command && id === "cursor") models = await cursorModels(command, refresh);
   if (command && id === "claude") models = await probeClaudeCatalog(command);
+  if (command && (id === "copilot" || id === "dsh")) models = await probeStandardCatalog(id, command).catch(() => []);
   return {
     id,
     name: harnessNames[id],
@@ -57,7 +59,7 @@ async function discoverOne(id: Harness, refresh: boolean): Promise<HarnessRuntim
   };
 }
 export async function discoverHarnesses(refresh = false, only?: Harness): Promise<HarnessRuntime[]> {
-  const ids: Harness[] = only ? [only] : ["codex", "claude", "cursor"];
+  const ids: Harness[] = only ? [only] : ["codex", "claude", "cursor", "copilot", "dsh"];
   return Promise.all(ids.map((id) => {
     const existing = cached.get(id);
     const generation = id === "codex" ? codexCatalogGeneration : 0;

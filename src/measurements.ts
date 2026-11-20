@@ -5,7 +5,9 @@ export type ModelMeasurementSource =
   | "codex-rerouted"
   | "claude-assistant"
   | "cursor-stop-hook"
-  | "cursor-session";
+  | "cursor-session"
+  | "copilot-session"
+  | "dsh-session";
 export type UsageMeasurementSource =
   | "codex-thread-total"
   | "claude-model-total"

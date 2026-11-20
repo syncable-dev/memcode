@@ -29,7 +29,18 @@ if(harness==='codex' && record.args.some((arg,i)=>arg==='in_app_chat' && record.
 if(harness==='claude' && scenario!=='safe' && scenario!=='writable' && (record.args.includes('--restricted') || (scenario==='unsupported' && record.args.includes('--safe-mode')))){
  const flag=record.args.includes('--restricted')?'--restricted':'--safe-mode';process.stderr.write("error: unknown option '"+flag+"'\\n");process.exit(1);
 }
-if(harness==='claude' && record.args[record.args.indexOf('--input-format')+1]==='stream-json'){
+if(harness==='copilot'||harness==='dsh'){
+ const lines=readline.createInterface({input:process.stdin});
+ lines.on('line',line=>{const p=JSON.parse(line);record.requests.push(p);save();
+  if(p.jsonrpc!=='2.0')process.exit(24);
+  const reply=result=>send({jsonrpc:'2.0',id:p.id,result});
+  if(!p.method)return;
+  if(p.method==='initialize')return reply({});
+  if(p.method==='session/new')return reply({sessionId:'standard-review',models:{currentModelId:'requested-model',availableModels:[{modelId:'requested-model',name:'Tested model'}]}});
+  if(p.method==='session/prompt'){record.prompted=true;record.prompt=p.params.prompt;save();send({jsonrpc:'2.0',method:'session/update',params:{sessionId:'standard-review',update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'Captured patch reviewed.'}}}});return reply({stopReason:'end_turn'});}
+  if(p.method==='session/close')return reply({});
+ });
+}else if(harness==='claude' && record.args[record.args.indexOf('--input-format')+1]==='stream-json'){
  const lines=readline.createInterface({input:process.stdin});
  lines.on('line',line=>{const p=JSON.parse(line);if(p.request?.subtype==='initialize')send({type:'control_response',response:{subtype:'success',request_id:p.request_id,response:{models:[{value:'requested-model'}]}}});});
  lines.on('close',()=>process.exit(0));
@@ -122,6 +133,21 @@ async function fixture(harness: Harness, scenario = "safe") {
     close: () => rm(root, { recursive: true, force: true, maxRetries: 3 }),
   };
 }
+
+for (const harness of ["copilot", "dsh"] as const) test(`${harness} review uses strict JSON-RPC and delivers captured evidence without writable tools`, async () => {
+  const f = await fixture(harness);
+  try {
+    const result = await f.agent.ask({ task: f.task, review: f.review, question: "Explain", patch: "export const retained = true;" });
+    assert.equal(result.model, "requested-model");
+    assert.equal(result.evidenceRead?.method, "captured-context-delivered");
+    const record = await f.record();
+    assert.ok(record.requests.every((packet: any) => packet.jsonrpc === "2.0"));
+    assert.match(record.prompt[0].text, /export const retained = true/);
+    const init = record.requests.find((packet: any) => packet.method === "initialize");
+    assert.equal(init.params.clientCapabilities.terminal, false);
+    assert.deepEqual(record.requests.find((packet: any) => packet.method === "session/new").params.mcpServers, []);
+  } finally { await f.close(); }
+});
 
 test("Codex review requires a native readOnly handshake and denies file-change approval", async () => {
   const f = await fixture("codex");

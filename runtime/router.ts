@@ -188,11 +188,11 @@ export function planRoute(
     )
   )
     throw new Error(
-      "Cursor’s interactive ACP connection does not support Smart auto. Choose Review or Full access, or select Codex or Claude Code.",
+      "The assigned ACP connection does not support Smart auto. Choose Review or Full access, or select Codex or Claude Code.",
     );
   const ranked = [
     wanted,
-    ...(["codex", "claude", "cursor"] as Harness[]).filter(
+    ...(["codex", "claude", "cursor", "copilot", "dsh"] as Harness[]).filter(
       (id) => id !== wanted,
     ),
   ];
@@ -208,6 +208,8 @@ export function planRoute(
         ? selectCodexModel(runtime, pinnedModel, false)
         : id === "claude" ? selectClaudeModel(runtime.models, pinnedModel, true)
         : cursorCatalog ? cursorCatalogValue(pinnedModel, runtime.models) : pinnedModel;
+      if ((id === "copilot" || id === "dsh") && !runtime.models.some(model => model.id === selectedId))
+        throw Error(`${runtime.name} does not advertise ${pinnedModel}. Refresh Workers and choose an available model.`);
       if (!selectedId)
         throw Error(`Cursor no longer offers ${pinnedModel}. Choose Match task complexity or another model in ${task.modelOverride ? "Worker assignment" : "Settings"}.`);
       const supportedEffort = cursorCatalog ? runtime.models.find((model) => model.id === selectedId)?.efforts?.[0] : undefined;
@@ -221,6 +223,7 @@ export function planRoute(
         tier,
         harness: id,
         model: selectedId,
+        modelLabel: runtime.models.find(model => model.id === selectedId || model.resolvedId === selectedId)?.label,
         effort: (["low","medium","high","xhigh"].includes(supportedEffort ?? "") ? supportedEffort : effort[tier]) as ReasoningEffort,
         mode: "manual",
         status: "provisional",
@@ -233,7 +236,11 @@ export function planRoute(
       .filter(
         (model) => model.tier && tierOrder.indexOf(model.tier) >= tierOrder.indexOf(tier),
       )
-      .sort((a, b) => tierOrder.indexOf(a.tier!) - tierOrder.indexOf(b.tier!));
+      .sort((a, b) =>
+        tierOrder.indexOf(a.tier!) - tierOrder.indexOf(b.tier!) ||
+        Number(!!b.isDefault) - Number(!!a.isDefault) ||
+        (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+      );
     let model = candidates[0];
     if (id === "codex" && !model) {
       if (runtime.allModelsDenied && !manual) continue;
@@ -248,6 +255,12 @@ export function planRoute(
     if (id === "cursor" && !model) {
       model = { id: cursorDefaultModel, label: cursorDefaultModel, source: "acp" };
       reasons.push("Cursor will use the current session’s configured model.");
+    }
+    if ((id === "copilot" || id === "dsh") && !model) {
+      // New providers are uncalibrated. Use only their advertised default and
+      // label it provisional, rather than infer capability from a model name.
+      model = runtime.models.find(option => option.isDefault)!;
+      if (model) reasons.push(`${runtime.name}'s advertised default is available; model capability is not yet calibrated against the measured envelope.`);
     }
     if (!model) continue;
     const desired = effort[tier];
@@ -265,6 +278,7 @@ export function planRoute(
       tier,
       harness: id,
       model: model.id,
+      modelLabel: model.label,
       effort: level,
       mode: manual ? "manual" : "automatic",
       status: inputs.incomplete || !candidates.length ? "provisional" : "measured",
@@ -285,7 +299,7 @@ export function planRoute(
       )
       ? "No connected harness supports Smart auto. Connect Codex or Claude Code, or choose Review or Full access."
       : manual
-        ? `No detected model in the assigned harness satisfies the ${tier} envelope. Choose Automatic, a different harness, or an explicit model.`
-        : "No eligible installed harness has a discovered model for this task. Refresh the worker catalog or configure a model override.",
+        ? `The assigned worker is not connected or has no model for the ${tier} envelope. Connect it in Workers, choose Automatic, or choose an available model.`
+        : "No eligible connected worker has a discovered model for this task. Connect a worker in Workers, then refresh its model catalog.",
   );
 }

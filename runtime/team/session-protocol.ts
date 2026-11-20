@@ -118,7 +118,7 @@ export const sessionPayload = z
     id: teamId,
     storyId: teamId,
     epoch: z.number().int().positive(),
-    harness: z.enum(["claude", "codex", "cursor"]),
+    harness: z.enum(["claude", "codex", "cursor", "copilot", "dsh"]),
     requestedModel: z.string().max(200).optional(),
     actualModel: z.string().max(200).optional(),
     route: z

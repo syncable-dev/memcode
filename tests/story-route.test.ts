@@ -7,7 +7,7 @@ import { createRuntime } from "../runtime/app.ts";
 import { MemtraceEngine } from "../runtime/memtrace.ts";
 import { planDefinedStory } from "../runtime/story-route.ts";
 import { initialState } from "../src/seed.ts";
-import type { Evidence, HarnessRuntime, WorkItem } from "../src/shared.ts";
+import { harnessIds, type Evidence, type HarnessRuntime, type WorkItem } from "../src/shared.ts";
 
 const measured: Evidence = {
   state: "measured",
@@ -38,14 +38,40 @@ const catalog: HarnessRuntime[] = ["codex", "claude", "cursor"].map((id) => ({
   ),
 }));
 
-test("a defined story names an installed harness and model without starting work", () => {
+function connectedState(ids = catalog.map(runtime => runtime.id)) {
   const state = initialState();
+  state.workerConnections = Object.fromEntries(ids.map(id => [id, {
+    harness: id, runtimePath: "fixture", approvedAt: "2026-11-20T00:00:00Z",
+    auth: "authenticated", scopeVersion: 1,
+  }]));
+  return state;
+}
+
+test("every nonempty connection combination routes only within its approvals, independently of discovery order", () => {
+  const all: HarnessRuntime[] = harnessIds.map(id => ({ id, name: id, available: true, path: "fixture", models: [{ id: id + "-default", label: id, source: "acp", isDefault: true, tier: "extreme" }] }));
+  for (let mask = 1; mask < 1 << all.length; mask++) {
+    const enabled = all.filter((_, index) => mask & (1 << index)).map(runtime => runtime.id);
+    const state = connectedState(enabled);
+    const task = { ...state.tasks[0], assignment: "auto" as const };
+    for (const evidence of [measured, undefined, { ...measured, affected: 2000 }]) {
+      const first = planDefinedStory(task, evidence, all, state);
+      const reverse = planDefinedStory(task, evidence, [...all].reverse(), state);
+      assert.ok(enabled.includes(first.harness));
+      assert.equal(first.harness, reverse.harness);
+      assert.equal(first.model, reverse.model);
+      assert.equal(first.effort, reverse.effort);
+    }
+  }
+});
+
+test("a defined story names an approved harness and model without starting work", () => {
+  const state = connectedState();
   const task = {
     ...state.tasks[0],
     assignment: "auto" as const,
     run: { state: "idle" as const },
   };
-  const route = planDefinedStory(task, measured, catalog, state.settings);
+  const route = planDefinedStory(task, measured, catalog, state);
   assert.equal(route.mode, "automatic");
   assert.equal(route.status, "measured");
   assert.equal(route.harness, "cursor");
@@ -62,20 +88,20 @@ test("an uninstalled harness is not named for a defined story", () => {
         task,
         measured,
         catalog.map((runtime) => ({ ...runtime, available: false })),
-        state.settings,
+        state,
       ),
-    /No eligible installed harness/,
+    /No eligible connected worker/,
   );
 });
 
 test("a manual harness stays selected while its model comes from the measurement", () => {
-  const state = initialState();
+  const state = connectedState();
   const task = {
     ...state.tasks[0],
     assignment: "manual" as const,
     harness: "claude" as const,
   };
-  const route = planDefinedStory(task, measured, catalog, state.settings);
+  const route = planDefinedStory(task, measured, catalog, state);
   assert.equal(route.harness, "claude");
   assert.equal(route.model, "claude-fast");
   assert.equal(route.mode, "manual");
@@ -96,6 +122,7 @@ test("defining a story records the assignee and leaves the worker idle", async (
     { discoverHarnesses: async () => catalog },
   );
   try {
+    runtime.store.state.workerConnections = connectedState().workerConnections;
     const project = runtime.store.state.projects[0];
     project.example = false;
     project.analysis = "ready";
@@ -128,6 +155,36 @@ test("defining a story records the assignee and leaves the worker idle", async (
     await runtime.close();
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test("automatic planning excludes installed tools without a matching approval", () => {
+  const state = connectedState(["codex"]);
+  const task = { ...state.tasks[0], assignment: "auto" as const };
+  for (const order of [catalog, [...catalog].reverse()]) {
+    const route = planDefinedStory(task, measured, order, state);
+    assert.equal(route.harness, "codex");
+  }
+  assert.throws(() => planDefinedStory(task, measured, catalog, initialState()), /No eligible connected worker/);
+  const changed = catalog.map(runtime => ({ ...runtime, path: "different-provider-entry" }));
+  assert.throws(() => planDefinedStory(task, measured, changed, state), /No eligible connected worker/);
+});
+
+test("a disconnected manual worker never silently switches to another provider", () => {
+  const state = connectedState(["codex"]);
+  const task = { ...state.tasks[0], assignment: "manual" as const, harness: "claude" as const };
+  assert.throws(() => planDefinedStory(task, measured, catalog, state), /assigned worker is not connected/);
+});
+
+test("routing ties are stable when the provider changes catalog order", () => {
+  const state = connectedState(["codex"]);
+  const task = { ...state.tasks[0], assignment: "auto" as const };
+  const runtime = { ...catalog[0], models: [
+    { id: "z-fast", label: "Z", tier: "fast" as const, source: "cli" as const },
+    { id: "a-fast", label: "A", tier: "fast" as const, source: "cli" as const },
+  ] };
+  const first = planDefinedStory(task, measured, [runtime], state);
+  const second = planDefinedStory(task, measured, [{ ...runtime, models: [...runtime.models].reverse() }], state);
+  assert.equal(first.model, second.model);
 });
 
 test("example stories stay unmeasured and idle", async () => {

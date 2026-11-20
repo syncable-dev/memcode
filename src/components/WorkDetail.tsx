@@ -918,7 +918,7 @@ export function WorkDetail({
                         <WorkerMark task={task} small />
                         <span>
                           {task.route
-                            ? `${harnessNames[task.route.harness]} · ${task.route.model}`
+                            ? `${harnessNames[task.route.harness]} · ${task.route.modelLabel || task.route.model}`
                             : task.assignment === "auto"
                               ? "Choosing a harness"
                               : harnessNames[task.harness]}
@@ -1267,8 +1267,8 @@ export function WorkDetail({
                                     : "Working on the shared epic branch"
                               : task.route
                                 ? connection.routeConnected
-                                  ? `${task.route.model} · assigned, not started`
-                                  : `${task.route.model} · connect before starting`
+                                  ? `${task.route.modelLabel || task.route.model} · assigned, not started`
+                                  : `${task.route.modelLabel || task.route.model} · connect before starting`
                                 : task.assignment === "auto"
                                   ? planning
                                     ? "Measuring who picks this up"

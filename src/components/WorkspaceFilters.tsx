@@ -138,6 +138,8 @@ export function WorkspaceFilters({
             <option value="codex">Codex</option>
             <option value="claude">Claude Code</option>
             <option value="cursor">Cursor</option>
+            <option value="copilot">GitHub Copilot</option>
+            <option value="dsh">DeepSeek Harness</option>
           </Select>
         </label>
       </div>

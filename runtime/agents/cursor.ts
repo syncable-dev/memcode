@@ -10,6 +10,7 @@ import { cursorDefaultModel, type ModelOption } from "../../src/shared";
 export { cursorModelValue } from "../../src/cursor-models";
 import { join } from "node:path";
 import type { AgentSession, AgentSessionOptions } from "./types";
+import { standardACPCatalog, selectStandardACPModel, standardModelMeasurement } from "./acp-models";
 import { withoutPermissionArgs } from "./permissions";
 import type { AgentMeasurement } from "../../src/measurements";
 import type {
@@ -180,7 +181,36 @@ export async function probeCursorCatalog(command: Command): Promise<ModelOption[
   }
 }
 
-function runCursorSession(options: AgentSessionOptions, inspect?: (session: Json) => void): AgentSession {
+export interface ACPTransport {
+  id: "copilot" | "dsh";
+  name: string;
+  args: string[];
+}
+
+export function startStandardACPSession(transport: ACPTransport, options: AgentSessionOptions): AgentSession {
+  return runCursorSession(options, undefined, transport);
+}
+
+export async function probeStandardACPCatalog(transport: ACPTransport, command: Command): Promise<ModelOption[]> {
+  const cwd = await mkdtemp(join(tmpdir(), `memcode-${transport.id}-catalog-`));
+  let models: ModelOption[] = [];
+  try {
+    const session = runCursorSession({ command, cwd, env: childEnv(), model: "", effort: "low", prompt: "", briefPath: "", toolArgs: [],
+      onEvent: () => {}, requestInput: async () => ({ cancelled: true }),
+    }, result => { models = standardACPCatalog(result); }, transport);
+    const timer = setTimeout(() => { void session.stop(); }, 15000);
+    try {
+      const result = await session.completion;
+      if (result.exitCode !== 0) throw Error(result.error || `${transport.name}'s model catalog did not respond.`);
+    } finally { clearTimeout(timer); }
+    return models;
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+}
+
+function runCursorSession(options: AgentSessionOptions, inspect?: (session: Json) => void, transport?: ACPTransport): AgentSession {
+  const brand = transport?.name ?? "Cursor";
   // Current ACP ignores --auto-review even though interactive Cursor supports it.
   // Never silently run an allowlist/bypass session labelled as Smart auto.
   if (options.permissionMode === "auto")
@@ -213,7 +243,7 @@ function runCursorSession(options: AgentSessionOptions, inspect?: (session: Json
   }
   const child = spawn(
     options.command.command,
-    [
+    transport ? [...options.command.prefix, ...transport.args] : [
       ...options.command.prefix,
       ...toolArgs,
       ...(options.permissionMode === "full-access"
@@ -273,15 +303,15 @@ function runCursorSession(options: AgentSessionOptions, inspect?: (session: Json
     timeoutMs = 30_000,
   ): Promise<Json> =>
     new Promise((resolve, reject) => {
-      if (ended || stopped) {
-        reject(Error("Cursor session is closed."));
+      if ((ended || stopped) && method !== "session/close") {
+        reject(Error(`${brand} session is closed.`));
         return;
       }
       const id = ++nextId;
       const timer = timeoutMs
         ? setTimeout(() => {
             pending.delete(id);
-            reject(Error(`Cursor did not answer ${method} in time.`));
+            reject(Error(`${brand} did not answer ${method} in time.`));
           }, timeoutMs)
         : undefined;
       pending.set(id, { method, resolve, reject, timer });
@@ -302,6 +332,8 @@ function runCursorSession(options: AgentSessionOptions, inspect?: (session: Json
         method: "session/cancel",
         params: { sessionId },
       });
+    if (transport?.id === "dsh" && sessionId && child.exitCode === null)
+      await request("session/close", { sessionId }, 5000).catch(() => {});
     child.stdin?.end();
     if (child.exitCode !== null || child.signalCode !== null || !child.pid)
       return;
@@ -350,7 +382,7 @@ function runCursorSession(options: AgentSessionOptions, inspect?: (session: Json
     if (ended) return;
     ended = true;
     flush();
-    rejectPending(value.error ?? "Cursor turn completed.");
+    rejectPending(value.error ?? `${brand} turn completed.`);
     await shutdown();
     lines.close();
     settle(value);
@@ -391,8 +423,8 @@ function runCursorSession(options: AgentSessionOptions, inspect?: (session: Json
       emit({
         type: "activity",
         label: inputs.size
-          ? "Cursor needs your input."
-          : "Cursor is continuing…",
+          ? `${brand} needs your input.`
+          : `${brand} is continuing…`,
         phase: inputs.size ? "waiting" : "working",
       });
     } catch {
@@ -402,11 +434,16 @@ function runCursorSession(options: AgentSessionOptions, inspect?: (session: Json
   const permission = (id: RpcId, params: Json) => {
     const tool = record(params.toolCall),
       choices = array(params.options);
+    if (transport && options.permissionMode === "full-access") {
+      const allow = choices.find(choice => choice.kind === "allow_once");
+      respond(id, { outcome: allow ? { outcome: "selected", optionId: allow.optionId } : { outcome: "cancelled" } });
+      return;
+    }
     return ask(
       id,
       {
         kind: "approval",
-        title: text(tool.title) || "Cursor needs permission",
+        title: text(tool.title) || `${brand} needs permission`,
         toolName: text(tool.name) || text(tool.kind) || undefined,
         description: text(tool.kind)
           ? `Review this ${tool.kind} action before it runs.`
@@ -436,7 +473,7 @@ function runCursorSession(options: AgentSessionOptions, inspect?: (session: Json
       id,
       {
         kind: "question",
-        title: text(params.title) || "A question from Cursor",
+        title: text(params.title) || `A question from ${brand}`,
         questions: questions.map((question) => ({
           id: text(question.id),
           question: text(question.prompt),
@@ -473,7 +510,7 @@ function runCursorSession(options: AgentSessionOptions, inspect?: (session: Json
       id,
       {
         kind: "plan",
-        title: text(params.name) || "Review Cursor’s plan",
+        title: text(params.name) || `Review ${brand}’s plan`,
         description: text(params.overview) || undefined,
         details: text(params.plan),
         options: [
@@ -491,10 +528,19 @@ function runCursorSession(options: AgentSessionOptions, inspect?: (session: Json
       }),
     );
 
+  let liveConfig: Json[] = [];
+  let liveModel: string | undefined;
   const update = (params: Json) => {
     if (sessionId && params.sessionId && params.sessionId !== sessionId) return;
     const event = record(params.update);
-    if (event.sessionUpdate === "agent_message_chunk") {
+    if (event.sessionUpdate === "config_option_update") {
+      liveConfig = array(event.configOptions);
+      const measured = transport ? standardModelMeasurement(transport.id, liveConfig, liveModel) : cursorSessionModel(liveConfig, liveModel);
+      if (measured) emit(measured);
+    } else if (event.sessionUpdate === "agent_thought_chunk") {
+      const label = text(event.content?.text).trim().slice(-500);
+      if (label) emit({ type: "activity", label, phase: "working" });
+    } else if (event.sessionUpdate === "agent_message_chunk") {
       const content = record(event.content);
       const delta =
         content.type === "text"
@@ -503,7 +549,7 @@ function runCursorSession(options: AgentSessionOptions, inspect?: (session: Json
             ? `[${text(content.name) || text(content.uri)}](${text(content.uri)})`
             : "";
       if (delta) {
-        assistantId ??= `cursor:${sessionId}:${++messageNumber}`;
+        assistantId ??= `${transport?.id ?? "cursor"}:${sessionId}:${++messageNumber}`;
         emit({
           type: "message",
           role: "assistant",
@@ -521,7 +567,7 @@ function runCursorSession(options: AgentSessionOptions, inspect?: (session: Json
           text(event.title) ||
           text(event.name) ||
           toolTitles.get(id) ||
-          "Cursor tool";
+          `${brand} tool`;
       toolTitles.set(id, title);
       const finished = event.status === "failed" || event.status === "completed";
       if (id) emit({ type: "activity", label: title, toolId: id, phase: "tool",
@@ -545,7 +591,7 @@ function runCursorSession(options: AgentSessionOptions, inspect?: (session: Json
       if (message.error)
         call.reject(
           Error(
-            `Cursor ${call.method}: ${text(message.error.message) || "ACP request failed."}`,
+            `${brand} ${call.method}: ${text(message.error.message) || "ACP request failed."}`,
           ),
         );
       else call.resolve(record(message.result));
@@ -603,7 +649,7 @@ function runCursorSession(options: AgentSessionOptions, inspect?: (session: Json
     } catch {
       emit({
         type: "error",
-        message: "Cursor emitted an unreadable ACP message.",
+        message: `${brand} emitted an unreadable ACP message.`,
         fatal: false,
       });
     }
@@ -626,7 +672,7 @@ function runCursorSession(options: AgentSessionOptions, inspect?: (session: Json
           ? {}
           : {
               error:
-                stderr.trim() || "Cursor exited before completing this turn.",
+                stderr.trim() || `${brand} exited before completing this turn.`,
             }),
       });
   });
@@ -635,7 +681,7 @@ function runCursorSession(options: AgentSessionOptions, inspect?: (session: Json
     try {
       emit({
         type: "activity",
-        label: "Connecting to Cursor…",
+        label: `Connecting to ${brand}…`,
         phase: "working",
       });
       const initialized = await request("initialize", {
@@ -657,31 +703,35 @@ function runCursorSession(options: AgentSessionOptions, inspect?: (session: Json
       if (options.resumeSessionId !== undefined) {
         const resume = initialized.agentCapabilities?.sessionCapabilities?.resume != null;
         if (!sessionId || (!resume && initialized.agentCapabilities?.loadSession !== true))
-          throw Error("This Cursor CLI cannot reopen the previous Cursor conversation.");
+          throw Error(`This ${brand} CLI cannot reopen the previous ${brand} conversation.`);
         try {
           // ACP acknowledges the requested ID with an empty or config-only load result.
           session = await request(resume ? "session/resume" : "session/load", { ...context, sessionId });
         } catch {
-          throw Error("Could not load the previous Cursor conversation on this computer.");
+          throw Error(`Could not load the previous ${brand} conversation on this computer.`);
         }
         if (session.sessionId !== undefined && session.sessionId !== sessionId)
-          throw Error("Cursor did not confirm the previous Cursor conversation.");
+          throw Error(`${brand} did not confirm the previous ${brand} conversation.`);
         session = { ...session, sessionId };
         loadingHistory = false;
       } else {
         session = await request("session/new", context);
         sessionId = text(session.sessionId);
       }
-      if (!sessionId) throw Error("Cursor did not return a session identity.");
+      if (!sessionId) throw Error(`${brand} did not return a session identity.`);
       if (inspect) {
         inspect(session);
         await finish({ exitCode: 0 });
         return;
       }
       emit({ type: "session", sessionId });
-      const selected = await selectCursorModel(session, options.model, request, options.automaticModelTier);
+      const selected = transport
+        ? await selectStandardACPModel(session, options.model, request, brand)
+        : await selectCursorModel(session, options.model, request, options.automaticModelTier);
       let config = selected.config;
       const legacyModel = selected.legacyModel;
+      liveConfig = config;
+      liveModel = legacyModel;
       if (selected.alternative)
         emit({ type: "message", role: "system", text: selected.alternative });
       const effort = config.find(
@@ -703,14 +753,16 @@ function runCursorSession(options: AgentSessionOptions, inspect?: (session: Json
         });
         config = array(selected.configOptions);
       }
-      const modelMeasurement = cursorSessionModel(config, legacyModel);
+      const modelMeasurement = transport
+        ? standardModelMeasurement(transport.id, config, legacyModel)
+        : cursorSessionModel(config, legacyModel);
       if (modelMeasurement) emit(modelMeasurement);
       if (
         session.modes?.currentModeId !== "agent" &&
         array(session.modes?.availableModes).some((mode) => mode.id === "agent")
       )
         await request("session/set_mode", { sessionId, modeId: "agent" });
-      emit({ type: "activity", label: "Cursor is working…", phase: "working" });
+      emit({ type: "activity", label: `${brand} is working…`, phase: "working" });
       emit({ type: "prompted" });
       const result = await request(
         "session/prompt",
@@ -723,10 +775,10 @@ function runCursorSession(options: AgentSessionOptions, inspect?: (session: Json
       if (reason && !["end_turn", "cancelled"].includes(reason)) {
         emit({
           type: "error",
-          message: `Cursor stopped: ${reason}.`,
+          message: `${brand} stopped: ${reason}.`,
           fatal: false,
         });
-        await finish({ exitCode: 1, error: `Cursor stopped: ${reason}.` });
+        await finish({ exitCode: 1, error: `${brand} stopped: ${reason}.` });
       } else await finish({ exitCode: reason === "cancelled" ? null : 0 });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

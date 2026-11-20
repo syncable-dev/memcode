@@ -15,11 +15,15 @@ const modelSources = {
   codex: ["codex-thread", "codex-rerouted"],
   claude: ["claude-assistant"],
   cursor: ["cursor-stop-hook", "cursor-session"],
+  copilot: ["copilot-session"],
+  dsh: ["dsh-session"],
 };
 const usageSources = {
   codex: ["codex-thread-total"],
   claude: ["claude-model-total", "claude-main-loop"],
   cursor: ["cursor-stop-hook", "cursor-acp"],
+  copilot: [] as string[],
+  dsh: [] as string[],
 };
 
 export function applyAgentMeasurement(

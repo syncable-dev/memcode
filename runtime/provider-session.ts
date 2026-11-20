@@ -28,7 +28,7 @@ export function previousProviderSession(
     sessionId &&
     workspace &&
     branch &&
-    (harness === "codex" || harness === "claude" || harness === "cursor")
+    (harness === "codex" || harness === "claude" || harness === "cursor" || harness === "copilot" || harness === "dsh")
   )
     return { sessionId, workspace, branch, harness, epicId: task.epicId };
 }

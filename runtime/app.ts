@@ -72,7 +72,7 @@ import {
 const identifier = z.string().min(1).max(200),
   nonempty = z.string().trim().min(1),
   stage = z.enum(["planned", "working", "review", "done"]),
-  harness = z.enum(["codex", "claude", "cursor"]),
+  harness = z.enum(["codex", "claude", "cursor", "copilot", "dsh"]),
   kind = z.enum(["feature", "fix", "refactor", "research", "test"]),
   priority = z.enum(["high", "medium", "low"]);
 const taskPatch = z
@@ -735,7 +735,7 @@ export async function createRuntime(
       latest,
       latest.evidence,
       installed,
-      store.state.settings,
+      store.state,
     );
     latest.harness = latest.route.harness;
     latest.updatedAt = now();

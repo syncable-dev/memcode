@@ -404,7 +404,7 @@ test("connection consent uses only read-only auth probes and persists no credent
     },
     () => join(f.directory, "not-installed.exe"),
     { call: async () => undefined as any },
-    async (name) => ({ command: process.execPath, prefix: [f.script, name] }),
+    async (name) => ["copilot", "dsh"].includes(name) ? null : ({ command: process.execPath, prefix: [f.script, name] }),
   );
   const call = (name: string, input?: unknown) => {
     const r = routes.get(name)!;
@@ -413,7 +413,7 @@ test("connection consent uses only read-only auth probes and persists no credent
   try {
     const installed = await call("connection:status");
     assert.equal(
-      installed.every((s: any) => s.installed && !s.connected),
+      installed.filter((s: any) => !["copilot", "dsh"].includes(s.harness)).every((s: any) => s.installed && !s.connected),
       true,
     );
     assert.equal(state.workerConnections, undefined);

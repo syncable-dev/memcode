@@ -125,6 +125,8 @@ export function WorkerAssignment({
           <option value="codex">Codex</option>
           <option value="claude">Claude Code</option>
           <option value="cursor">Cursor</option>
+          <option value="copilot">GitHub Copilot</option>
+          <option value="dsh">DeepSeek Harness</option>
         </Select>
       </label>
       <label className="inspector-field">
@@ -203,7 +205,7 @@ export function WorkerAssignment({
           <p>
             {automatic
               ? task.route
-                ? `${harnessNames[task.route.harness]} / ${task.route.model} is named for this story. Connect it in Workers before starting. The assignment does not start the work.`
+                ? `${harnessNames[task.route.harness]} / ${task.route.modelLabel || task.route.model} is named for this story. Connect it in Workers before starting. The assignment does not start the work.`
                 : "Memtrace names a harness and model from the measured story. Connect a worker in Workers before starting."
               : readiness.runtimeKnown
                 ? `${harnessNames[task.harness]} is installed. Approve its connection before starting work.`

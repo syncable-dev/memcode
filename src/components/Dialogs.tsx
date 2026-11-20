@@ -315,6 +315,8 @@ export function NewTaskDialog({
                 <option value="codex">Codex</option>
                 <option value="claude">Claude Code</option>
                 <option value="cursor">Cursor</option>
+                <option value="copilot">GitHub Copilot</option>
+                <option value="dsh">DeepSeek Harness</option>
               </Select>
             </label>
             <label className="field">
@@ -840,6 +842,8 @@ export function SettingsDialog({
                       <option value="codex">Codex</option>
                       <option value="claude">Claude Code</option>
                       <option value="cursor">Cursor</option>
+                      <option value="copilot">GitHub Copilot</option>
+                      <option value="dsh">DeepSeek Harness</option>
                     </Select>
                   </label>
                   <label className="field">

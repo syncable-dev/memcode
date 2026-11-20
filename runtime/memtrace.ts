@@ -26,6 +26,7 @@ import {
 } from "./memtrace-owner";
 import {
   certifiedPublication,
+  currentSourceNeedsIndex,
   pathKey,
   exactRevisionSource,
   incompletePublication,
@@ -999,7 +1000,14 @@ export class MemtraceEngine {
         );
       // Native startup can publish the repository summary before its independent
       // source certificate. Follow that publication without enqueueing a duplicate.
-      if (!retryPublication || !incompletePublication(revision))
+      // A published source view may be behind a peer's completed save. No
+      // startup job will arrive for it: request ordinary incremental indexing.
+      // index_directory arbitrates a concurrent writer, and its exact source
+      // certificate is still mandatory before any worker can proceed.
+      const catchUp =
+        !retryPublication &&
+        currentSourceNeedsIndex(revision, project, match.repo_id);
+      if (!catchUp && (!retryPublication || !incompletePublication(revision)))
         return waitForPeerIndex(
           this,
           project,

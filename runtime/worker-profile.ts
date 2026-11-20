@@ -42,6 +42,8 @@ export async function workerToolProfile(
       "This installed Cursor ACP transport does not support Smart auto. Choose Review or Full access.",
     );
   const { mcpServers } = JSON.parse(await readFile(configPath, "utf8"));
+  // These ACP providers receive the same scoped MCP entries in session/new.
+  if (harness === "copilot" || harness === "dsh") return { args: [] };
   if (harness === "claude") return { args: [] };
   if (harness === "codex") {
     const args = [

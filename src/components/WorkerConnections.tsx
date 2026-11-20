@@ -65,7 +65,7 @@ export function WorkerConnections({
     [savingDefault, setSavingDefault] = useState<Harness>();
   const selectedHarness = selected?.harness;
   const readyToApprove =
-    selected?.auth === "authenticated" || selected?.auth === "local";
+    selected?.auth === "authenticated" || selected?.auth === "local" || selected?.auth === "provider-managed";
   const busyRef = useRef(busy);
   busyRef.current = busy;
   const onRuntimeRef = useRef(onRuntime);
@@ -622,6 +622,8 @@ export function WorkerConnections({
                   <p>
                     {selected.auth === "local"
                       ? "Using the configured local model."
+                      : selected.auth === "provider-managed"
+                        ? "This CLI manages provider sign-in and confirms model access when work starts. If needed, use the CLI’s sign-in or provider setup first."
                       : "An existing provider sign-in was detected."}
                   </p>
                 </details>

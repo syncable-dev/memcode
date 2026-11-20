@@ -92,6 +92,33 @@ export class StartupPublicationTimeout extends Error {}
 /** The same checkout advanced while its current-source certificate was pending. */
 export class SourcePublicationChanged extends Error {}
 
+/** A stable published epic graph can lag a peer's save without an index job. */
+export function currentSourceNeedsIndex(
+  value: Json | undefined,
+  project: Project,
+  repoId: string,
+): boolean {
+  const boundary = value?._meta?.graph_revision ?? value?.graph_revision;
+  return (
+    (project.analysisCurrentSource === true ||
+      project.analysisCheckout === "owned-worktree-v1") &&
+    exactRevisionSource(value, project, repoId) &&
+    value?.ready === false &&
+    value.status === "partial" &&
+    value.reason === undefined &&
+    value.publication?.status === "published" &&
+    boundary?.publication_unchanged_during_call === true &&
+    value.requested_source_matches === true &&
+    value.requested_revision_matches === true &&
+    value.source_unchanged_during_observation === true &&
+    value.ambiguous_indexed_files === false &&
+    value.default_branch_matches === true &&
+    value.retry_query_group !== true &&
+    Number.isSafeInteger(value.mismatched_files) &&
+    value.mismatched_files > 0
+  );
+}
+
 /** A worker may refresh only after its exact checkout's previous job has finished. */
 export function completedEpicIndex(
   result: unknown,

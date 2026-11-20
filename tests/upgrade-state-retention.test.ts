@@ -233,10 +233,14 @@ test("an approved workspace survives an app resource move and two restarts with 
       const statuses = await statusRoute.handler(
         statusRoute.schema.parse(undefined),
       );
-      assert.equal(statuses.length, 3);
+      assert.equal(statuses.length, 5);
       assert.ok(
-        statuses.every((status: any) => status.connected),
+        statuses.filter((status: any) => harnesses.includes(status.harness)).every((status: any) => status.connected),
         "Changing only the MemCode Node/resource path must not revoke provider consent.",
+      );
+      assert.ok(
+        statuses.filter((status: any) => !harnesses.includes(status.harness)).every((status: any) => !status.connected),
+        "New adapters must not inherit consent from an already approved worker.",
       );
       for (const harness of harnesses)
         assert.equal(

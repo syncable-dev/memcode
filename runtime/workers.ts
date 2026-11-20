@@ -147,6 +147,8 @@ export function harnessArgs(
         `Read ${briefPath} for this work item. Follow its scope and return a reviewable implementation.`,
       ],
     };
+  if (id === "copilot") return { args: ["--acp", "--stdio"] };
+  if (id === "dsh") return { args: ["--profile", "acp"] };
   throw new Error("Unsupported worker harness.");
 }
 

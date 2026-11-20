@@ -245,6 +245,10 @@ export async function findCommand(
           ? "@anthropic-ai/claude-code/cli.js"
           : name === "codex"
             ? "@openai/codex/bin/codex.js"
+            : name === "copilot"
+              ? "@github/copilot/npm-loader.js"
+              : name === "dsh"
+                ? "@deepseek-ai/dsh/lib/bin.js"
             : null;
     if (packageEntry)
       for (const base of [dir, dirname(dir)]) {

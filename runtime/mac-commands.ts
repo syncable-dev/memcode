@@ -173,6 +173,10 @@ export async function findMacCommand(
           ? "@anthropic-ai/claude-code/cli.js"
           : name === "memtrace"
             ? "memtrace/bin/memtrace.js"
+            : name === "copilot"
+              ? "@github/copilot/npm-loader.js"
+              : name === "dsh"
+                ? "@deepseek-ai/dsh/lib/bin.js"
             : undefined;
     if (entry)
       for (const base of [
