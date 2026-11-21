@@ -709,6 +709,8 @@ test("boards connected on an earlier run are synchronized again when MemCode sta
 
     const again = f.restarted();
     try {
+      // How a board stood on the last run is not shown as how it stands now.
+      assert.equal(f.state.sharedBoards?.length, 0);
       f.state.tasks.push(
         task("local-web", "task-3", { title: "Made while MemCode was closed" }),
       );
