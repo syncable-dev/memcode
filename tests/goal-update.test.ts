@@ -83,7 +83,7 @@ test("updating a goal saves its work, brings in the newer dev and clears the war
     const result = await f.updates.updateFromBase("e1");
     assert.deepEqual(result, { merged: true, savedWork: true });
     assert.equal(
-      await readFile(join(f.goal, "news.ts"), "utf8"),
+      (await readFile(join(f.goal, "news.ts"), "utf8")).replaceAll("\r\n", "\n"),
       "export const fromDev = 1;\n",
       "the teammate's dev change is now in the goal",
     );
@@ -133,7 +133,7 @@ test("a conflicting update is undone, keeps the goal's work and names the files"
     );
     assert.equal(await git(f.goal, ["status", "--porcelain"]), "");
     assert.equal(
-      await readFile(join(f.goal, "app.ts"), "utf8"),
+      (await readFile(join(f.goal, "app.ts"), "utf8")).replaceAll("\r\n", "\n"),
       "export const version = 2;\n",
       "the goal's own change is kept",
     );
