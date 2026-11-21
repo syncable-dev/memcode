@@ -4,6 +4,7 @@ import { grpcChannel } from "../runtime/sharing/memsync/grpc";
 import { SharingUnavailable } from "../runtime/sharing/problems";
 import { refusalRules } from "../src/sharing-refusals";
 import { actingAs } from "./support/memsync-owner";
+import { boardsApiScenarios } from "./support/boards-api-scenarios";
 import {
   cast,
   projectsApiScenarios,
@@ -36,6 +37,9 @@ projectsApiScenarios(
     skip: realMemsyncMissing,
   },
 );
+boardsApiScenarios("real memsync-server", async () => worldOn(await server()), {
+  skip: realMemsyncMissing,
+});
 
 test(
   "real memsync-server: a token it has no reason to trust is turned away",

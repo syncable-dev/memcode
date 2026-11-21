@@ -9,6 +9,7 @@ import {
   SignedCalls,
   type AccessTokens,
 } from "../../runtime/sharing/memsync/signed-calls";
+import { MemsyncBoards } from "../../runtime/sharing/memsync/boards-api";
 import { MemsyncProjects } from "../../runtime/sharing/memsync/projects-api";
 import { SharingRefused } from "../../runtime/sharing/problems";
 import type { RefusalRule } from "../../src/sharing-refusals";
@@ -58,13 +59,15 @@ export function cast() {
 export function signedInTo(world: SharingWorld, person: StandInPerson) {
   const token = world.tokenFor(person);
   const channel = grpcChannel(world.address);
+  const access = {
+    current: async () => ({ token, accountId: person.accountId }),
+    forget() {},
+  };
   return {
     token,
-    /** MemCode's own client. */
-    projects: projectsOver(channel, {
-      current: async () => ({ token, accountId: person.accountId }),
-      forget() {},
-    }),
+    /** MemCode's own clients. */
+    projects: projectsOver(channel, access),
+    boards: new MemsyncBoards(new SignedCalls(channel, access)),
     /** What the same person does at memtrace.io. */
     website: actingAs(world.address, token),
     close: () => channel.close(),
