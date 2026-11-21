@@ -1,7 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { grpcChannel, grpcStatus } from "../runtime/sharing/memsync/grpc";
-import { MemsyncProjects } from "../runtime/sharing/memsync/projects-api";
 import {
   SharingRefused,
   SharingSignedOut,
@@ -17,6 +16,7 @@ import { startStandInMemsync } from "./support/memsync-stand-in";
 import {
   cast,
   projectsApiScenarios,
+  projectsOver,
   signedInTo,
 } from "./support/projects-api-scenarios";
 
@@ -30,7 +30,7 @@ async function fixture(timeoutMs?: number) {
   let issued = 0;
   const channel = grpcChannel(service.address);
   const state = { token: service.tokenFor(people.alex) };
-  const projects = new MemsyncProjects(
+  const projects = projectsOver(
     channel,
     {
       current: async () => {
@@ -215,14 +215,13 @@ test("a reply that lacks what it always holds is not passed on half read", async
     // The same bytes read as an invitation have no project id, sender or dates.
     const channel = grpcChannel(f.service.address);
     context.after(() => channel.close());
-    const asInvitation = new MemsyncProjects(
+    const asInvitation = projectsOver(
       {
         unary: (call) =>
           channel.unary({
             ...call,
             path: call.path.replace("ListInvitations", "ListProjects"),
           }),
-        close() {},
       },
       {
         current: async () => ({ token: f.state.token, accountId: "" }),
@@ -255,10 +254,9 @@ test("a project or invitation that is missing a part every one has is refused wh
   };
   const whole = { id: "project-1", name: "Launch plan", owner, guest_limit: 2 };
   const answering = (message: string, value: WireMessage) =>
-    new MemsyncProjects(
+    projectsOver(
       {
         unary: async () => encodeMessage(projectsContract, message, value),
-        close() {},
       },
       {
         current: async () => ({ token: "t", accountId: "acct-1" }),
@@ -308,7 +306,7 @@ test("having no sign-in, or no way to get a token, stops the call before it is m
       new SharingSignedOut(),
       new SharingUnavailable("memtrace.io could not be reached."),
     ]) {
-      const projects = new MemsyncProjects(channel, {
+      const projects = projectsOver(channel, {
         current: async () => {
           throw problem;
         },

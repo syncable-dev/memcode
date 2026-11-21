@@ -1,18 +1,11 @@
-import type { AccessToken } from "../access";
-import { refusalNamed, SharingUnavailable } from "../problems";
-import { GrpcFailure, grpcStatus, type GrpcChannel } from "./grpc";
+import { WireError, type WireMessage } from "./wire";
 import {
   projectsCalls,
   projectsContract,
   projectsService,
   type ProjectsCall,
 } from "./projects-contract";
-import {
-  decodeMessage,
-  encodeMessage,
-  WireError,
-  type WireMessage,
-} from "./wire";
+import { SignedCalls, type ServiceCall } from "./signed-calls";
 
 export interface PersonRecord {
   accountId: string;
@@ -49,14 +42,6 @@ export interface ProjectsApi {
     invitationId: string,
   ): Promise<ProjectRecord>;
 }
-
-/** Where access tokens come from, and where one the service refused is handed back. */
-export interface AccessTokens {
-  current(): Promise<AccessToken>;
-  forget(token: string): void;
-}
-
-const REFUSAL_HEADER = "memsync-refusal";
 
 const unreadable = () =>
   new WireError("A reply lacks something it always holds.");
@@ -105,120 +90,36 @@ function project(sent: WireMessage): ProjectRecord {
   };
 }
 
-function unavailable(failure: GrpcFailure): SharingUnavailable {
-  const serviceAnswered = failure.metadata["grpc-status"] !== undefined;
-  let sentence =
-    "The sharing address did not answer as a sharing service. Check it in Settings.";
-  if (failure.code === grpcStatus.UNAUTHENTICATED)
-    sentence =
-      "The sharing service did not accept this sign-in. Try again in a few minutes.";
-  else if (failure.code === grpcStatus.DEADLINE_EXCEEDED)
-    sentence =
-      "The sharing service did not answer in time. Try again in a moment.";
-  else if (serviceAnswered)
-    sentence =
-      "The sharing service is having trouble right now. Try again in a few minutes.";
-  else if (failure.code === grpcStatus.UNAVAILABLE)
-    sentence =
-      "The sharing service could not be reached. Check your connection and try again.";
-  return new SharingUnavailable(sentence, { cause: failure });
-}
-
-/** What to tell the person about a call that did not end in a reply. */
-function problemWith(call: ProjectsCall, failure: unknown): Error {
-  if (failure instanceof WireError)
-    return new SharingUnavailable(
-      "The sharing service sent a reply MemCode could not read. Updating MemCode may help.",
-      { cause: failure },
-    );
-  if (!(failure instanceof GrpcFailure)) return failure as Error;
-  const rule = failure.metadata[REFUSAL_HEADER];
-  const refusal = refusalNamed(rule);
-  if (refusal) return refusal;
-  // The log keeps what the sentence leaves out: which call, and the service's own words.
-  console.error(
-    `[sharing] ${call} failed: status ${failure.code}${rule ? `, rule ${rule}` : ""}: ${failure.message}`,
-  );
-  if (rule)
-    return new SharingUnavailable(
-      "The sharing service turned this down for a reason this version of MemCode does not know. Updating MemCode may help.",
-      { cause: failure },
-    );
-  return unavailable(failure);
-}
-
-const signInWasRefused = (failure: unknown) =>
-  failure instanceof GrpcFailure &&
-  failure.code === grpcStatus.UNAUTHENTICATED &&
-  !failure.metadata[REFUSAL_HEADER];
+const call = (name: ProjectsCall): ServiceCall => ({
+  service: projectsService,
+  name,
+  contract: projectsContract,
+  ...projectsCalls[name],
+});
 
 /** The Projects API over gRPC, signed in with the caller's access token. */
 export class MemsyncProjects implements ProjectsApi {
-  constructor(
-    private readonly channel: GrpcChannel,
-    private readonly access: AccessTokens,
-    private readonly timeoutMs?: number,
-  ) {}
+  constructor(private readonly calls: SignedCalls) {}
 
   listProjects() {
-    return this.call("ListProjects", {}, (reply) =>
+    return this.calls.unary(call("ListProjects"), {}, (reply) =>
       messages(reply.projects).map(project),
     );
   }
   listInvitations() {
-    return this.call("ListInvitations", {}, (reply) =>
+    return this.calls.unary(call("ListInvitations"), {}, (reply) =>
       messages(reply.invitations).map(invitation),
     );
   }
   getProject(projectId: string) {
-    return this.call("GetProject", { project_id: projectId }, project);
+    return this.calls.unary(
+      call("GetProject"),
+      { project_id: projectId },
+      project,
+    );
   }
   acceptInvitation(projectId: string, invitationId: string) {
     const request = { project_id: projectId, invitation_id: invitationId };
-    return this.call("AcceptInvitation", request, project);
-  }
-
-  private async call<Answer>(
-    name: ProjectsCall,
-    request: WireMessage,
-    read: (reply: WireMessage) => Answer,
-  ): Promise<Answer> {
-    // A token the service refuses is replaced once: its keys or the token may have just changed.
-    const first = await this.attempt(name, request, read);
-    if ("answer" in first) return first.answer;
-    const second = await this.attempt(name, request, read);
-    if ("answer" in second) return second.answer;
-    throw problemWith(name, second.signInRefused);
-  }
-
-  /** One try, from the token to the reply as MemCode's own record. */
-  private async attempt<Answer>(
-    name: ProjectsCall,
-    request: WireMessage,
-    read: (reply: WireMessage) => Answer,
-  ): Promise<{ answer: Answer } | { signInRefused: GrpcFailure }> {
-    const { token } = await this.access.current();
-    const shapes = projectsCalls[name];
-    try {
-      const sent = await this.channel.unary({
-        path: `/${projectsService}/${name}`,
-        request: encodeMessage(projectsContract, shapes.request, request),
-        metadata: { authorization: `Bearer ${token}` },
-        timeoutMs: this.timeoutMs,
-      });
-      return {
-        answer: read(decodeMessage(projectsContract, shapes.reply, sent)),
-      };
-    } catch (failure) {
-      if (signInWasRefused(failure)) {
-        this.access.forget(token);
-        return { signInRefused: failure as GrpcFailure };
-      }
-      const problem = problemWith(name, failure);
-      // A newly verified address reaches the service only in a new token.
-      if ("rule" in problem && problem.rule === "email_not_verified")
-        this.access.forget(token);
-      throw problem;
-    }
+    return this.calls.unary(call("AcceptInvitation"), request, project);
   }
 }
