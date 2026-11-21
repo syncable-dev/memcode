@@ -51,6 +51,47 @@ export interface SharedProjectLink {
   /** The sharing service it lives on. */
   service: string;
   connectedAt: string;
+  /**
+   * How many times the shared board has changed this workspace. Board sync
+   * keeps the same number beside the workspace file, and compares the two to
+   * tell whether a save was cut off.
+   */
+  applied?: number;
+}
+
+/** How the board of one connected project stands with the shared one. */
+export interface SharedBoardStatus {
+  projectId: string;
+  /**
+   * `starting`: reading what the shared board holds.
+   * `synced`: both hold the same. `sending`: changes made here are on their way.
+   * `offline`: the sharing service cannot be reached; changes wait on this computer.
+   * `choose`: both boards have work on them and nobody has said to keep both yet.
+   * `newer`: a newer MemCode laid the board out; it is shown here and not changed.
+   * `gone`: the shared project is not there for this person any more.
+   * `stopped`: sync cannot go on, and `detail` says why.
+   */
+  state:
+    | "starting"
+    | "synced"
+    | "sending"
+    | "offline"
+    | "choose"
+    | "newer"
+    | "gone"
+    | "stopped";
+  /** A sentence for the person, when there is something to say. */
+  detail?: string;
+  /** Changes made on this computer that the shared board does not have yet. */
+  waiting: number;
+  /** Changes in the shared board's log that could not be read and were left out. */
+  leftOut: Array<{ by: string; on: string; count: number }>;
+  /** Changes are set aside until one they build on arrives. */
+  setAside: boolean;
+  /** Values too large for the sharing service. They stay on this computer. */
+  tooLarge: number;
+  /** For `choose`: how many tasks each board has that the other lacks. */
+  choice?: { shared: number; added: number };
 }
 
 export type SharingOverview =
