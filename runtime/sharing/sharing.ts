@@ -114,6 +114,8 @@ export class Sharing {
   private readonly now: () => string;
   constructor(private readonly options: SharingOptions) {
     this.now = options.now ?? (() => new Date().toISOString());
+    // The workspace file may hold how boards stood when MemCode last ran.
+    options.state().sharedBoards = [];
   }
 
   /** What the Sharing view shows. A problem is part of the answer, with what to do about it. */
