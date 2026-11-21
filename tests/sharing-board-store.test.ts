@@ -48,6 +48,7 @@ const kept = (changes: Partial<KeptBoard> = {}): KeptBoard => ({
       reason: "unreadable",
     },
   ],
+  arrived: { "task-1": 4 },
   log: Uint8Array.of(9, 8, 7, 6),
   ...changes,
 });

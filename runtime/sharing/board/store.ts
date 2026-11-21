@@ -33,6 +33,8 @@ export interface KeptBoard {
   seen: Board;
   unsent: UnsentUpdate[];
   leftOut: LeftOutUpdate[];
+  /** The number of the log entry that made each task. It decides who keeps an identifier two tasks share. */
+  arrived: Record<string, number>;
   /** The document as the log has built it. */
   log: Uint8Array;
 }
@@ -57,6 +59,7 @@ interface StateFile {
   seen: Board;
   unsent: Array<{ id: string; payload: string }>;
   leftOut: LeftOutUpdate[];
+  arrived?: Record<string, number>;
   log: { bytes: number; sha256: string };
 }
 
@@ -148,6 +151,7 @@ export class BoardStore {
         payload: Buffer.from(update.payload, "base64"),
       })),
       leftOut: file.leftOut,
+      arrived: file.arrived ?? {},
       log,
     };
   }
@@ -171,6 +175,7 @@ export class BoardStore {
         payload: Buffer.from(update.payload).toString("base64"),
       })),
       leftOut: kept.leftOut,
+      arrived: kept.arrived,
       log: { bytes: this.logBytes, sha256: this.logDigest },
     };
     await writeFile(this.path(STATE + NEXT), JSON.stringify(file), "utf8");
