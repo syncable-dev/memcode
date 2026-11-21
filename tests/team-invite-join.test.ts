@@ -75,7 +75,7 @@ test("an invitation opens the complete shared board without an empty local proje
     assert.equal(f.b.status(project.id)!.workspace.claims[0].storyId, task.id);
     await assert.rejects(f.a.acquire("seeded-story", "host-project"), /Bob already owns/);
     await f.b.release(task.id, project.id); await f.a.acquire("seeded-story", "host-project");
-    await assert.rejects(f.b.assertDeletionAllowed("story:delete", task.id), /active story claim/);
+    await assert.rejects(f.b.assertDeletionAllowed("story:delete", task.id), /active task claim/);
     await f.a.release("seeded-story", "host-project");
     const bobOutput = join(f.root, "b", "captures", task.id, "bob-report.md"); await mkdir(dirname(bobOutput), { recursive: true }); await writeFile(bobOutput, "# Bob result\n");
     f.bState.artifacts.push({ id: "bob-report", projectId: project.id, taskId: task.id, name: "bob-report.md", path: bobOutput, kind: "text", purpose: "report", source: "fixture", createdAt: at });

@@ -359,7 +359,7 @@ export function WorkDetail({
       !workerReadiness(task, runtime.harnesses, state.workerConnections)
         .canStart
     ) {
-      notify("Connect a worker in Workers before sending this story.");
+      notify("Connect a worker in Workers before sending this task.");
       return;
     }
     await act(async () => {
@@ -381,6 +381,12 @@ export function WorkDetail({
         checklist: task.checklist.map((item) =>
           item.id === id ? { ...item, done: !item.done } : item,
         ),
+      }),
+    );
+  const removeCheck = (id: string) =>
+    void act(() =>
+      window.memcode.updateTask(task.id, {
+        checklist: task.checklist.filter((item) => item.id !== id),
       }),
     );
   const addCheck = async () => {
@@ -482,7 +488,9 @@ export function WorkDetail({
     : {
         stopping: "Stopping worker…",
         stopped: "Worker stopped",
-        blocked: "Worker needs attention",
+        blocked: task.run.waitingOnDecision
+          ? "Paused until you decide"
+          : "Worker needs attention",
         failed: "Worker needs attention",
         finished: "Worker finished",
         idle: undefined,
@@ -496,7 +504,7 @@ export function WorkDetail({
         JSON.stringify({ draft, comments: attachedComments }),
       );
     } catch {
-      notify("Keep this story open until its draft is saved.");
+      notify("Keep this task open until its draft is saved.");
       return;
     }
     onConnections();
@@ -563,7 +571,7 @@ export function WorkDetail({
             )}
             <button
               className="icon-button"
-              title="Open epic workspace"
+              title="Open goal workspace"
               disabled={!!remote || (!task.run.workspace && !task.run.worktree)}
               onClick={() =>
                 void act(() => window.memcode.openWorkerWorkspace(task.id))
@@ -739,13 +747,13 @@ export function WorkDetail({
               <Empty
                 icon={<ExternalLink size={23} />}
                 title={`Open the ${tab} on ${remote.device}.`}
-                description={`${remote.name} holds this story there. You can leave a comment for the team here.`}
+                description={`${remote.name} holds this task there. You can leave a comment for the team here.`}
                 action={
                   <button
                     className="secondary-button"
                     onClick={() => setTab("comments")}
                   >
-                    Story comments
+                    Task comments
                   </button>
                 }
               />
@@ -833,7 +841,7 @@ export function WorkDetail({
                         <strong>Worker connection lost.</strong>
                         <p>
                           Live status is unavailable. Reopen MemCode before
-                          continuing this story.
+                          continuing this task.
                         </p>
                       </div>
                     </div>
@@ -969,7 +977,7 @@ export function WorkDetail({
                                     !task.example &&
                                     !active &&
                                     !connection.canStart
-                                  ? "Connect in Workers before sending this story"
+                                  ? "Connect in Workers before sending this task"
                                   : active
                                     ? `Queue follow-up · ${shortcutLabel("Enter")}`
                                     : `Send follow-up · ${shortcutLabel("Enter")}`
@@ -1020,7 +1028,7 @@ export function WorkDetail({
                   </p>
                 </div>
                 <div className="runbook-heading">
-                  <h4>Implementation runbook</h4>
+                  <h4>Runbook</h4>
                   <span>
                     {task.checklist.filter((item) => item.done).length} of{" "}
                     {task.checklist.length} complete
@@ -1031,16 +1039,25 @@ export function WorkDetail({
                 </div>
                 <div className="checklist">
                   {task.checklist.map((item) => (
-                    <button
-                      key={item.id}
-                      className={item.done ? "checked" : ""}
-                      onClick={() => toggle(item.id)}
-                    >
-                      <span className="check-box">
-                        {item.done && <Check size={12} />}
-                      </span>
-                      <span>{item.text}</span>
-                    </button>
+                    <div key={item.id} className="checklist-row">
+                      <button
+                        className={item.done ? "checked" : ""}
+                        onClick={() => toggle(item.id)}
+                      >
+                        <span className="check-box">
+                          {item.done && <Check size={12} />}
+                        </span>
+                        <span>{item.text}</span>
+                      </button>
+                      <button
+                        className="checklist-remove"
+                        aria-label={`Remove step “${item.text}”`}
+                        title="Remove this step"
+                        onClick={() => removeCheck(item.id)}
+                      >
+                        <X size={13} />
+                      </button>
+                    </div>
                   ))}
                 </div>
                 <form
@@ -1067,9 +1084,9 @@ export function WorkDetail({
                 <div className="runbook-note">
                   <GitBranch size={15} />
                   <p>
-                    This runbook accompanies the worker’s brief. Checked steps
-                    reflect workspace progress; review the actual result before
-                    accepting a change.
+                    The worker follows this runbook and ticks each step as it
+                    finishes it. A tick is the worker’s own progress report, so
+                    review the actual result before accepting a change.
                   </p>
                 </div>
               </div>
@@ -1132,7 +1149,7 @@ export function WorkDetail({
                 <Empty
                   icon={<Files size={27} />}
                   title="Keep the output close."
-                  description="Reports, images and HTML files saved by the worker under .memcode/workers/<story-id>/artifacts/ will appear here."
+                  description="Reports, images and HTML files saved by the worker under .memcode/workers/<task-id>/artifacts/ will appear here."
                 />
               ))}
             {tab === "browser" && !remote && (
@@ -1272,7 +1289,7 @@ export function WorkDetail({
                                   ? "Waiting for a Fleet handoff"
                                   : task.run.activity?.phase === "finishing"
                                     ? "Finishing the worker turn"
-                                    : "Working on the shared epic branch"
+                                    : "Working on the goal"
                               : task.route
                                 ? connection.routeConnected
                                   ? `${task.route.modelLabel || task.route.model} · assigned, not started`
@@ -1380,7 +1397,7 @@ export function WorkDetail({
                     {requestedAt
                       ? "Starting worker…"
                       : task.run.workspace
-                        ? "Resume story"
+                        ? "Resume task"
                         : "Start worker"}
                     <ArrowUpRight size={12} />
                   </button>
@@ -1526,7 +1543,7 @@ export function WorkDetail({
               </div>
               <div className="agreement-row">
                 <Check size={12} />
-                <span>Shared epic branch with Fleet coordination</span>
+                <span>Shared goal work with Fleet coordination</span>
               </div>
               <div className="agreement-row">
                 <Check size={12} />
@@ -1537,7 +1554,7 @@ export function WorkDetail({
                   <GitBranch size={12} />
                   <span>{task.run.branch}</span>
                   <button
-                    title="Open epic workspace"
+                    title="Open goal workspace"
                     className="icon-button"
                     onClick={() =>
                       void act(() =>

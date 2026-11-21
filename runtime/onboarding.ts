@@ -67,7 +67,7 @@ export function registerOnboarding(
         )
       ) {
         if (patch.epicId || patch.storyId)
-          throw Error("Choose an epic in this project.");
+          throw Error("Choose a goal in this project.");
         delete next.epicId;
       }
       if (
@@ -79,7 +79,7 @@ export function registerOnboarding(
             (t.epicId ?? undefined) === next.epicId,
         )
       )
-        throw Error("Choose a story in this epic.");
+        throw Error("Choose a task in this goal.");
       if (complete) {
         next.completedAt = new Date().toISOString();
         next.dismissed = true;

@@ -180,7 +180,7 @@ try {
     .getByRole("button", { name: "Release claim", exact: true })
     .click();
   await expect(
-    page.getByText("No story is claimed.", { exact: false }),
+    page.getByText("No task is claimed.", { exact: false }),
   ).toBeVisible();
   expect(
     (await page.evaluate(() => window.calls)).some(
@@ -193,7 +193,7 @@ try {
     page.getByRole("button", { name: "Invite teammate" }),
   ).toBeDisabled();
   await expect(
-    page.getByText("New shared workers need an online story claim.", {
+    page.getByText("New shared workers need an online task claim.", {
       exact: false,
     }),
   ).toBeVisible();

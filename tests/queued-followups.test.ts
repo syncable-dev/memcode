@@ -113,7 +113,6 @@ async function fixture(
       },
     ]),
   );
-  let releases = 0;
   let releasePickup!: () => void,
     pickupHeld = false;
   const pickupGate = new Promise<void>((resolve) => {
@@ -157,11 +156,18 @@ async function fixture(
         };
       },
       call: async (_project: unknown, name: string) => {
+        // An agent outside MemCode on the same branch, as Fleet reports it, names
+        // files by the shared base checkout.
         if (name === "fleet_branch_context" && options.ownedCheckout)
-          return { canonicalScope: "file::" + join(repo, "scope-0.ts"), recalled: JSON.stringify({ workspace_scope: repo }) };
-        if (name === "fleet_acquire_lease")
-          return { state: "granted", lease_id: "queue-lease" };
-        if (name === "fleet_release_lease") releases++;
+          return {
+            peers: [
+              {
+                agent_id: "outside-agent",
+                assignment: JSON.stringify({ workspace_scope: repo }),
+                touched: [join(repo, "scope-0.ts")],
+              },
+            ],
+          };
         return {};
       },
     } as unknown as MemtraceEngine,
@@ -234,7 +240,6 @@ async function fixture(
     enqueue,
     releasePickup,
     releaseSettlement,
-    releases: () => releases,
     async cleanup() {
       releasePickup();
       releaseSettlement();
@@ -347,16 +352,13 @@ test("all three adapters automatically coalesce busy follow-ups after Fleet clea
         async () => (await f.runs(task)).length === 2,
         "automatic next pass",
       );
-      assert.ok(
-        f.releases() > 0,
-        "previous Fleet lease released before next pass",
-      );
       const passes = await f.runs(task);
       assert.notEqual(task.run.workspace, f.repo);
       for (const { prompt } of passes) {
-        const fleet = JSON.parse(prompt.split("Current Fleet plans and branch context:\n")[1].split("\n")[0]);
-        assert.equal(fleet.engine.canonicalScope, "file::" + join(task.run.workspace!, "scope-0.ts"));
-        assert.equal(JSON.parse(fleet.engine.recalled).workspace_scope, task.run.workspace);
+        const fleet = JSON.parse(prompt.split("decisions involving you):\n")[1].split("\n")[0]);
+        const [outsider] = fleet.otherAgents;
+        assert.equal(outsider.symbols[0], join(task.run.workspace!, "scope-0.ts"));
+        assert.equal(JSON.parse(outsider.plan).workspace_scope, task.run.workspace);
         assert.ok(!prompt.includes(f.repo), "neither the fresh nor resumed provider prompt exposes the shared base");
       }
       const prompt = passes[1].prompt;

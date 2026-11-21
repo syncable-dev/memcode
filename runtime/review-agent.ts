@@ -502,7 +502,7 @@ async function codexQuestion(
         {
           name: "read_review_evidence",
           description:
-            "Read this story's immutable Memtrace findings, measurements, captured patch and review conversation. This is the only evidence snapshot made available by MemCode.",
+            "Read this task's immutable Memtrace findings, measurements, captured patch and review conversation. This is the only evidence snapshot made available by MemCode.",
           inputSchema: {
             type: "object",
             properties: {},
@@ -1120,7 +1120,7 @@ export function createReadonlyReviewAgent(
       ).replace(/^ +/gm, "");
       if (context.length > 180000)
         throw Error(
-          "The saved review exceeds the bounded reviewer context; select a smaller story.",
+          "The saved review exceeds the bounded reviewer context; select a smaller task.",
         );
       return askInCapsule(
         dataDir,

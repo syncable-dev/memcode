@@ -31,7 +31,7 @@ function phaseFor(run: WorkItem["run"]): TeamWorkerPhase {
   const activity = run.activity;
   if (run.state === "stopping") return "stopping";
   if (run.state === "preparing") {
-    if (activity?.label === "Joining the epic Fleet") return "joining";
+    if (activity?.label === "Coordinating with the goal’s other tasks") return "joining";
     if (activity?.label.startsWith("Starting ") || activity?.label === "Preparing the worker brief") return "starting";
     return "preparing";
   }

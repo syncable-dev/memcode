@@ -9,7 +9,10 @@ import {
 } from "node:path";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import { newRunbook } from "../src/runbook";
+import { repoRelativePath } from "./context/source";
 import type { AppState, Project, WorkItem } from "../src/shared";
+import { maxWorkerSlots } from "../src/worker-slots";
 import { isActive } from "../src/domain";
 import { LocalStore, exists, findCommand, git, now, within } from "./local";
 import { observePersistence } from "./persistence";
@@ -288,7 +291,7 @@ export async function createRuntime(
     handlers = new Map<string, Handler>();
   const task = (id: string) => {
     const item = store.state.tasks.find((task) => task.id === id);
-    if (!item) throw new Error("Story not found.");
+    if (!item) throw new Error("Task not found.");
     return item;
   };
   const project = (id: string) => {
@@ -325,7 +328,7 @@ export async function createRuntime(
         item.updatedAt = command.updatedAt;
         await changed();
       } else if (command.kind === "review-start") {
-        if (!isCodeReviewTask(state(), item)) throw Error("Move this story to Code review before starting its review.");
+        if (!isCodeReviewTask(state(), item)) throw Error("Move this task to Code review before starting its review.");
         await codeReviews.start(item.id);
       } else {
         await codeReviews.discuss(item.id, command.reviewRunId!, command.text, {id: command.id, actor: command.author});
@@ -472,7 +475,7 @@ export async function createRuntime(
     z.object({ projectId: identifier, taskId: identifier }).strict(),
     async ({ projectId, taskId }) => {
       if (task(taskId).projectId !== projectId)
-        throw Error("Choose a story in this project.");
+        throw Error("Choose a task in this project.");
       await team!.acquire(taskId, projectId);
       return team!.status(projectId);
     },
@@ -482,7 +485,7 @@ export async function createRuntime(
     z.object({ projectId: identifier, taskId: identifier }).strict(),
     async ({ projectId, taskId }) => {
       if (task(taskId).projectId !== projectId)
-        throw Error("Choose a story in this project.");
+        throw Error("Choose a task in this project.");
       if (isActive(task(taskId)))
         throw Error("Stop this worker before releasing its team claim.");
       await team!.release(taskId, projectId);
@@ -997,8 +1000,8 @@ export async function createRuntime(
         (item) => item.id === id,
       );
       if (!conflict) throw new Error("Fleet decision not found.");
-      await workers.pause(conflict.taskIds);
-      await workers.fleet.resolve(id, resolution, winnerTaskId);
+      // Running workers hear the decision at their next call; paused ones are brought back with it.
+      await workers.decide(id, resolution, winnerTaskId);
     },
   );
   register(
@@ -1028,7 +1031,7 @@ export async function createRuntime(
         defaultHarness: harness,
         model: z.string().max(200),
         localModel: z.boolean(),
-        maxWorkers: z.number().int().min(1).max(8),
+        maxWorkers: z.number().int().min(1).max(maxWorkerSlots),
         contextAssistant: z
           .object({
             enabled: z.boolean(),
@@ -1189,7 +1192,6 @@ export async function createRuntime(
   const relatedFiles = async (projectId: string, request: string) => {
     const target = project(projectId);
     if (target.analysis !== "ready" || !target.path) return [];
-    const root = target.path;
     const result = await engine.call(target, "find_code", {
       repo_id: target.repoId,
       branch: target.branch,
@@ -1201,10 +1203,8 @@ export async function createRuntime(
         ((result?.results ?? []) as Array<{ file_path?: string }>)
           .map((row) => String(row.file_path ?? ""))
           .filter(Boolean)
-          .map((file) =>
-            (isAbsolute(file) ? relativePath(root, file) : file).replaceAll("\\", "/"),
-          )
-          .filter((file) => !file.startsWith("..")),
+          .map((file) => repoRelativePath(target, file))
+          .filter((file) => !file.startsWith("..") && !isAbsolute(file)),
       ),
     ];
   };
@@ -1327,7 +1327,7 @@ export async function createRuntime(
   const requireReviewLane = (taskId: string) => {
     if (!isCodeReviewTask(state(), task(taskId)))
       throw Error(
-        "Move this story to the Code review lane to run a review or change its outcome.",
+        "Move this task to the Code review lane to run a review or change its outcome.",
       );
   };
   register("code-review:get", reviewTask, ({ taskId }) => {
@@ -1338,7 +1338,7 @@ export async function createRuntime(
     requireReviewLane(taskId);
     const remote = team?.remoteSession(taskId);
     if (remote) {
-      await team!.sendSessionCommand(taskId, "review-start", "Run code review for this story's recorded changes.");
+      await team!.sendSessionCommand(taskId, "review-start", "Run code review for this task's recorded changes.");
       return task(taskId).sharedSession?.review ?? null;
     }
     return codeReviews.start(taskId);
@@ -1440,6 +1440,8 @@ export async function createRuntime(
       permissionMode: z.enum(permissionModes).nullable().optional(),
       epicId: identifier.nullable().optional(),
       kind: kind.optional(),
+      runbook: z.array(z.string().max(2000)).max(100).optional(),
+      scope: z.array(z.string().max(1000)).max(20).optional(),
       ...taskPlanningShape,
     }),
     async (input) => {
@@ -1475,19 +1477,7 @@ export async function createRuntime(
         epicId: input.epicId,
         category: "Work",
         stage: "planned",
-        checklist: [
-          {
-            id: randomUUID(),
-            text: "Understand the relevant source and requirements",
-            done: false,
-          },
-          { id: randomUUID(), text: "Implement a focused change", done: false },
-          {
-            id: randomUUID(),
-            text: "Review the result and checks",
-            done: false,
-          },
-        ],
+        checklist: newRunbook(input.runbook, randomUUID),
         messages: [
           {
             id: randomUUID(),
@@ -1501,7 +1491,7 @@ export async function createRuntime(
         updatedAt: now(),
         ...(parent.example ? { example: true } : {}),
       };
-      const { projectId, ...fields } = input;
+      const { projectId, runbook, ...fields } = input;
       applyTaskPatch(state(), item, taskPatch.parse(fields));
       ensureTaskEpic(state(), item);
       state().tasks.push(item);
@@ -1548,7 +1538,7 @@ export async function createRuntime(
       unique.sort((a, b) => depth(b) - depth(a));
       for (const id of unique) {
         const item = candidate.tasks.find((task) => task.id === id);
-        if (!item) throw new Error("A selected story no longer exists.");
+        if (!item) throw new Error("A selected task no longer exists.");
         applyTaskPatch(candidate, item, patch);
       }
       for (const id of unique)
@@ -1571,7 +1561,7 @@ export async function createRuntime(
   register("worker:open-folder", identifier, async (id) => {
     const item = task(id),
       path = item.run.workspace ?? item.run.worktree;
-    if (!path) throw new Error("This story has no epic workspace yet.");
+    if (!path) throw new Error("This task has no goal workspace yet.");
     await host.call("open_path", { path });
   });
   register(
@@ -1721,7 +1711,7 @@ export async function createRuntime(
           if (item.codeReview)
             await codeReviews.interruptForWorker(
               item.id,
-              "The story or its epic is being removed. The saved review is preserved but no reviewer continues running.",
+              "The task or its goal is being removed. The saved review is preserved but no reviewer continues running.",
             );
         }
         const deletion = await team?.beginDeletion(

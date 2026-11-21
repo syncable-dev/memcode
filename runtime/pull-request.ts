@@ -355,8 +355,8 @@ function blockerFor(
   if (!facts.exists) return "No task in this goal has run yet.";
   if (activeStories)
     return activeStories === 1
-      ? "Wait for 1 running story to finish, or stop it."
-      : `Wait for ${activeStories} running stories to finish, or stop them.`;
+      ? "Wait for 1 running task to finish, or stop it."
+      : `Wait for ${activeStories} running tasks to finish, or stop them.`;
   if (openConflicts)
     return openConflicts === 1
       ? "Resolve 1 open Fleet decision first."

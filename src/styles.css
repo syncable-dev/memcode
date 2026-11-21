@@ -894,6 +894,45 @@ kbd {
   letter-spacing: 0;
   color: #6e947e;
 }
+.hero-new-work {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 11px 8px 10px;
+  border-radius: 8px;
+  background: #f1fbf5;
+  color: #0b4735;
+  font:
+    560 12.5px "Inter Variable",
+    sans-serif;
+  letter-spacing: 0;
+  box-shadow:
+    0 1px 0 #ffffff inset,
+    0 6px 18px -8px #36d6ae80;
+  transition:
+    background 0.15s ease,
+    transform 0.15s ease;
+}
+.hero-new-work:hover {
+  background: #ffffff;
+  transform: translateY(-1px);
+}
+.hero-new-work:focus-visible {
+  outline: 2px solid #55dcb5;
+  outline-offset: 2px;
+}
+.hero-new-work kbd {
+  margin-left: 2px;
+  padding: 1px 5px;
+  border: 1px solid #a9cfbb;
+  border-radius: 4px;
+  font: 10px var(--mono);
+  color: #3f7a63;
+}
+.focus-kicker .example-pill {
+  margin-left: 4px;
+  font-style: normal;
+}
 .example-pill {
   padding: 4px 6px;
   color: #87958b;

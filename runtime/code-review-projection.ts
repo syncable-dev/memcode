@@ -224,7 +224,7 @@ function projectContribution(
     );
   if (savedBaseline !== before)
     return rejected(
-      "The story's saved hunks do not have unique exact context.",
+      "The task's saved hunks do not have unique exact context.",
     );
   const baseline = applyExact(current, edits, true, deadline);
   if (Date.now() > deadline)

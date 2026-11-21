@@ -185,7 +185,7 @@ test("the fleet receipt is folded away at the end with the measured table", () =
   );
   assert.match(
     pullRequest,
-    /<details>\n<summary>Fleet receipt · 1 story · 1 agent · epic\/session-auth<\/summary>\n\n\| Story \| Agent \| Files \| Lines \|/,
+    /<details>\n<summary>Fleet receipt · 1 task · 1 agent · epic\/session-auth<\/summary>\n\n\| Task \| Agent \| Files \| Lines \|/,
   );
   assert.match(
     pullRequest,
@@ -433,7 +433,7 @@ test("an unknown epic is refused", async () => {
       "missing",
       async (task) => changes(task.id, 0),
     ),
-    /Epic not found/,
+    /Goal not found/,
   );
 });
 

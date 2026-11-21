@@ -98,7 +98,7 @@ export async function collectEpicReceipt(
   readChanges: ReadChanges,
 ): Promise<EpicReceipt> {
   const epic = sources.epics.find((item) => item.id === epicId);
-  if (!epic) throw Error("Epic not found.");
+  if (!epic) throw Error("Goal not found.");
   const stories = sources.tasks.filter((task) => task.epicId === epicId);
   const conflicts = sources.fleetConflicts.filter((item) =>
     belongsToEpic(item, epic),
@@ -239,7 +239,7 @@ function summarySection(receipt: EpicReceipt): string {
     ? receipt.stories
         .map((story) => `- ${singleLine(story.title)} (${story.identifier})`)
         .join("\n")
-    : "- No story has recorded changes yet.";
+    : "- No task has recorded changes yet.";
   return [
     "## Summary",
     ...(receipt.summary ? [receipt.summary] : []),
@@ -255,7 +255,7 @@ function storyChange(story: StoryReceipt): string {
   const heading = `### ${story.identifier} · ${singleLine(story.title)}\n_${harnessNames[story.harness]} · ${counted(story.files, "file", "files")} · +${story.additions} −${story.deletions}_`;
   const explanation = story.report
     ? reportExcerpt(story.report)
-    : (story.brief ?? "The agent left no report for this story.");
+    : (story.brief ?? "The agent left no report for this task.");
   return [heading, explanation, ...fileLine(story.paths)].join("\n\n");
 }
 
@@ -291,7 +291,7 @@ function receiptDetails(receipt: EpicReceipt, credit: HandoffCredit): string {
   const agents = new Set(receipt.stories.map((story) => story.harness)).size;
   const summary = [
     "Fleet receipt",
-    counted(receipt.stories.length, "story", "stories"),
+    counted(receipt.stories.length, "task", "tasks"),
     counted(agents, "agent", "agents"),
     ...(receipt.branch ? [receipt.branch] : []),
   ].join(" · ");
@@ -308,13 +308,13 @@ function receiptDetails(receipt: EpicReceipt, credit: HandoffCredit): string {
 
 function storyTable(stories: StoryReceipt[]): string {
   if (!stories.length)
-    return "No story in this epic has recorded worker changes yet.";
+    return "No task in this goal has recorded worker changes yet.";
   const rows = stories.map(
     (story) =>
       `| **${story.identifier}** ${tableCell(story.title)} | ${harnessNames[story.harness]} | ${story.files} | +${story.additions} −${story.deletions} |`,
   );
   return [
-    "| Story | Agent | Files | Lines |",
+    "| Task | Agent | Files | Lines |",
     "| --- | --- | ---: | ---: |",
     ...rows,
   ].join("\n");
@@ -358,7 +358,7 @@ function commitSubject(title: string): string {
 }
 
 function storyList(stories: StoryReceipt[]): string {
-  if (!stories.length) return "No story has recorded changes yet.";
+  if (!stories.length) return "No task has recorded changes yet.";
   return stories
     .map(
       (story) =>

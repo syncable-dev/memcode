@@ -210,7 +210,7 @@ export async function observeIndex(
       ...unobserved,
       known: true,
       branch: revision.branch,
-      reason: "This epic's exact worktree graph has not been certified.",
+      reason: "This goal's exact worktree graph has not been certified.",
     };
   const listed: unknown[] = Array.isArray(revision.mismatched_paths)
     ? revision.mismatched_paths
@@ -605,7 +605,7 @@ export async function refreshEvidence(
     // Unbound evidence has nothing to compare, but a worker's edit to its
     // files is a known change.
     if (freshness.state === "unknown" && touched && !evidence.binding) {
-      const change = "A worker edited this story's files.";
+      const change = "A worker edited this task's files.";
       freshness =
         current.index === "current"
           ? { state: "changed", reason: change }

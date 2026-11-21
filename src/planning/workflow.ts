@@ -94,12 +94,12 @@ export function validateHierarchy(
   let id = parentId;
   const seen = new Set([owner.id]);
   while (id) {
-    if (seen.has(id)) throw new Error("A story cannot be its own ancestor.");
+    if (seen.has(id)) throw new Error("A task can’t be placed under one of its own subtasks.");
     seen.add(id);
     const parent = tasks.find(
       (task) => task.id === id && task.projectId === owner.projectId,
     );
-    if (!parent) throw new Error("Choose a parent story from this project.");
+    if (!parent) throw new Error("Choose a parent task from this project.");
     id = parent.parentId;
   }
 }

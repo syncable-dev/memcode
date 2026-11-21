@@ -80,33 +80,89 @@ test("placement still works when Memtrace has nothing to say", async () => {
 
 test("a harness answer becomes a goal plan, fenced or not", () => {
   const plan = readGoalPlan(
-    'Here is the plan:\n```json\n{"title":"Dark mode","tasks":[{"title":"Theme tokens","brief":"Add tokens","files":["src/theme.ts"]},{"title":"Convert dashboard","brief":"Use tokens"}]}\n```',
+    'Here is the plan:\n```json\n{"goals":[{"title":"Dark mode","tasks":[{"title":"Theme tokens","brief":"Add tokens","files":["src/theme.ts"]},{"title":"Convert dashboard","brief":"Use tokens"}]}]}\n```',
     "Add dark mode",
   );
   assert.deepEqual(plan, {
-    title: "Dark mode",
-    tasks: [
-      { title: "Theme tokens", brief: "Add tokens", files: ["src/theme.ts"] },
-      { title: "Convert dashboard", brief: "Use tokens", files: [] },
+    goals: [
+      {
+        title: "Dark mode",
+        tasks: [
+          { title: "Theme tokens", brief: "Add tokens", files: ["src/theme.ts"], steps: [] },
+          { title: "Convert dashboard", brief: "Use tokens", files: [], steps: [] },
+        ],
+      },
     ],
   });
 });
 
-test("an unreadable or oversized answer falls back to the request as one task", () => {
+test("a big request can come back as several goals, and a single-goal answer still reads", () => {
+  const several = readGoalPlan(
+    JSON.stringify({
+      goals: [
+        { title: "Billing", tasks: [{ title: "Invoices" }, { title: "Refunds" }] },
+        { title: "Onboarding", tasks: [{ title: "Welcome screen" }] },
+      ],
+    }),
+    "Billing and onboarding",
+  );
+  assert.deepEqual(
+    several.goals.map((goal) => [goal.title, goal.tasks.length]),
+    [
+      ["Billing", 2],
+      ["Onboarding", 1],
+    ],
+  );
+  const single = readGoalPlan('{"title":"Dark mode","tasks":[{"title":"Theme tokens"}]}', "Dark mode");
+  assert.deepEqual(single.goals.map((goal) => goal.title), ["Dark mode"]);
+});
+
+test("the planner's steps become each task's runbook, tidied and kept short", () => {
+  const plan = readGoalPlan(
+    JSON.stringify({
+      goals: [
+        {
+          title: "Export reports",
+          tasks: [
+            {
+              title: "Add the export endpoint",
+              steps: ["  Add GET /reports/export  ", "", "Stream rows as CSV", "x".repeat(400), ...Array.from({ length: 12 }, (_, i) => `Extra ${i}`)],
+            },
+            { title: "Add the Export button" },
+          ],
+        },
+      ],
+    }),
+    "Export reports",
+  );
+  const [endpoint, button] = plan.goals[0].tasks;
+  assert.deepEqual(endpoint.steps.slice(0, 2), ["Add GET /reports/export", "Stream rows as CSV"]);
+  assert.equal(endpoint.steps[2].length, 200, "an overlong step is cut, not a reason to drop the plan");
+  assert.equal(endpoint.steps.length, 8, "a runbook stays short");
+  assert.deepEqual(button.steps, [], "a task without steps gets the standard runbook when created");
+});
+
+test("an unreadable answer falls back to the request as one task", () => {
   const fallback = readGoalPlan("I could not plan this.", "Fix the login banner typo");
   assert.deepEqual(fallback, {
-    title: "Fix the login banner typo",
-    tasks: [{ title: "Fix the login banner typo", brief: "Fix the login banner typo", files: [] }],
+    goals: [
+      {
+        title: "Fix the login banner typo",
+        tasks: [{ title: "Fix the login banner typo", brief: "Fix the login banner typo", files: [], steps: [] }],
+      },
+    ],
     fallback: true,
   });
+});
+
+test("every task the worker planned is kept, even past the size it was asked for", () => {
   const many = readGoalPlan(
     JSON.stringify({
-      title: "Big",
-      tasks: Array.from({ length: 9 }, (_, i) => ({ title: `Task ${i}`, brief: "b" })),
+      goals: [{ title: "Big", tasks: Array.from({ length: 9 }, (_, i) => ({ title: `Task ${i}`, brief: "b" })) }],
     }),
     "Big",
   );
-  assert.equal(many.tasks.length, 5, "a goal plan keeps at most five tasks");
+  assert.equal(many.goals[0].tasks.length, 9);
 });
 
 test("the planner asks the chosen harness read-only, with the request and the relevant code", async () => {
@@ -122,17 +178,27 @@ test("the planner asks the chosen harness read-only, with the request and the re
       return {
         harness: question.harness,
         model: "sonnet",
-        text: '{"title":"Dark mode","tasks":[{"title":"Theme tokens","brief":"Add tokens"}]}',
+        text: '{"goals":[{"title":"Dark mode","tasks":[{"title":"Theme tokens","brief":"Add tokens"}]}]}',
       };
     },
   });
   const plan = await planner.plan({ projectId: "p1", request: "Add dark mode", harness: "claude" });
-  assert.equal(plan.title, "Dark mode");
+  assert.deepEqual(plan.goals.map((goal) => goal.title), ["Dark mode"]);
   assert.equal(plan.harness, "claude");
   assert.equal(plan.model, "sonnet");
   assert.equal(asked[0].harness, "claude");
-  assert.match(asked[0].policy ?? "", /read-only/);
-  assert.match(asked[0].policy ?? "", /one task/);
+  const policy = asked[0].policy ?? "";
+  assert.match(policy, /read-only/);
+  assert.match(policy, /One task is the default/, "a clear change stays one task");
+  assert.match(policy, /don't need each other's result/, "tasks split on separate outcomes");
+  assert.match(policy, /Two tasks may change the same file/, "sharing a file is no reason to merge tasks");
+  assert.match(policy, /one task for each listed part/, "a request that lists its parts keeps them");
+  assert.match(policy, /No standalone tasks for tests/, "no padding tasks");
+  assert.match(policy, /its own pull request/, "separate goals only for separate outcomes");
+  assert.match(policy, /Add nothing that wasn't asked for/);
+  assert.match(policy, /"goals"/);
+  assert.match(policy, /steps: the task's runbook/, "the planner writes each task's runbook");
+  assert.match(policy, /No generic steps/);
   const context = JSON.parse(asked[0].context);
   assert.equal(context.request, "Add dark mode");
   assert.deepEqual(context.relevantFiles, ["src/theme.ts"]);

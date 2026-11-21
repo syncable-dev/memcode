@@ -72,14 +72,14 @@ export function validateDependencies(
   while (pending.length) {
     const id = pending.pop()!;
     if (id === owner.id)
-      throw new Error("This dependency would create a story cycle.");
+      throw new Error("This dependency would create a cycle between tasks.");
     if (seen.has(id)) continue;
     seen.add(id);
     const task = tasks.find(
       (t) => t.id === id && t.projectId === owner.projectId,
     );
     if (!task)
-      throw new Error("Prerequisite stories must belong to the same project.");
+      throw new Error("Prerequisite tasks must belong to the same project.");
     pending.push(...(task.dependsOn ?? []));
   }
 }
@@ -138,7 +138,7 @@ export function restartSafeState(state: AppState): AppState {
               state: "stopped",
               activity: undefined,
               error:
-                "MemCode restarted. The shared epic branch may contain unfinished changes.",
+                "MemCode restarted. The goal may contain unfinished changes.",
             },
           }
         : task;

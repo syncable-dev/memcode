@@ -795,7 +795,7 @@ export async function startTeamRelay(
             if (input.expectedHead !== room.snapshot.head) return error("HISTORY_HEAD", "The board changed before its history import. Refresh and verify the source planning before retrying.", 409);
             const exactIds = (ids: string[], expected: string[]) => ids.length === expected.length && [...ids].sort().every((id, i) => id === [...expected].sort()[i]);
             if (!exactIds(input.history.stories.map((item) => item.id), room.snapshot.stories.map((item) => item.id)) || !exactIds(input.history.cycles.map((item) => item.id), room.snapshot.cycles.map((item) => item.id)) || input.history.comments.some((item) => !room.snapshot.comments.some((comment) => comment.id === item.id)))
-              return error("HISTORY_SCOPE", "The imported planning must match this project's current stories, cycles and discussions.", 409);
+              return error("HISTORY_SCOPE", "The imported planning must match this project's current tasks, cycles and discussions.", 409);
             const at = new Date().toISOString();
             try { validatePlanningImport(input.history, room.snapshot, at); } catch (failure) { return error("HISTORY_SOURCE", (failure as Error).message, 409); }
             const event = teamEvent(room.snapshot, actor, input.opId, at, [], "Original project planning history imported", "planning.imported");
@@ -814,17 +814,17 @@ export async function startTeamRelay(
               if (prior.commandHash !== hash) return error("OP_ID_REUSE", "This planning update ID was used for different data.", 409);
               return reply(response, 200, { history: room.history, replayed: true });
             }
-            if (metadata.stories.some((item) => !room.snapshot.stories.some((story) => story.id === item.id))) return error("HISTORY_SCOPE", "A story in this planning update no longer exists.", 409);
+            if (metadata.stories.some((item) => !room.snapshot.stories.some((story) => story.id === item.id))) return error("HISTORY_SCOPE", "A task in this planning update no longer exists.", 409);
             if (input.expected) {
               const current = planningMetadata(room.history);
               for (const value of input.expected.stories) {
                 const meta = current.stories.find((item) => item.id === value.id);
                 const expected = value.hash ?? planningValueHash({id:value.id,category:"Work",checklist:[],archivedAt:null});
-                if (!meta || planningValueHash(meta) !== expected) return error("PLANNING_CONFLICT", "This runbook or story planning changed on another computer. Its accepted version was preserved; review your saved local edit before trying again.", 409);
+                if (!meta || planningValueHash(meta) !== expected) return error("PLANNING_CONFLICT", "This runbook or task planning changed on another computer. Its accepted version was preserved; review your saved local edit before trying again.", 409);
               }
               if (metadata.planning && input.expected.planningHash !== planningValueHash(current.planning)) return error("PLANNING_CONFLICT", "Project workflow or saved views changed on another computer. Its accepted version was preserved; review your saved local edit.", 409);
             }
-            const at = new Date().toISOString(), event = teamEvent(room.snapshot, actor, input.opId, at, [], "Story runbooks and planning updated", "planning.updated");
+            const at = new Date().toISOString(), event = teamEvent(room.snapshot, actor, input.opId, at, [], "Task runbooks and planning updated", "planning.updated");
             await commit(room, { kind: "planning_metadata", dedup: key, commandHash: hash, event, metadata, preserveUnchangedTimestamps:true });
             return reply(response, 200, { history: room.history, replayed: false });
           });
@@ -846,7 +846,7 @@ export async function startTeamRelay(
             let corrections:Array<{id:string;from:string;to:string}>;
             try{corrections=originalTimestampRepairs(room.history,room.importedPlanning);}catch(failure){return error("HISTORY_RECOVERY",(failure as Error).message,409);}
             if(!corrections.length)return error("HISTORY_RECOVERY","Original import timestamps already match; no recovery is needed.",409);
-            const event=teamEvent(room.snapshot,actor,input.opId,new Date().toISOString(),[],`Recovered ${corrections.length} original story timestamps from the immutable planning import`,"planning.timestamps-recovered");
+            const event=teamEvent(room.snapshot,actor,input.opId,new Date().toISOString(),[],`Recovered ${corrections.length} original task timestamps from the immutable planning import`,"planning.timestamps-recovered");
             await commit(room,{kind:"planning_timestamps_repair",dedup:key,commandHash:hash,event,sourceImportOpId:room.history.import!.opId,sourceImportHash:room.history.import!.hash,corrections});
             return reply(response,200,{history:room.history,corrected:corrections.length,replayed:false});
           });

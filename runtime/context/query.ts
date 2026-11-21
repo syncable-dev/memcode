@@ -32,7 +32,7 @@ export function scopedQuery(
         !verifiedIndexRevision(result, binding.project, binding.project.repoId!)
       )
         throw Error(
-          "The selected epic worktree graph is not certified. No other branch's graph can substitute for it.",
+          "The selected goal worktree graph is not certified. No other branch's graph can substitute for it.",
         );
       recordCoverage(name, result, coverage);
       recordSavedReadCoverage(result, binding, coverage);

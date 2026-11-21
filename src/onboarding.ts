@@ -60,9 +60,12 @@ export type GuideAction =
   | "analyze"
   | "team";
 
+/** "epic" stays valid for saved progress, but the guide no longer stops there. */
+const guideOrder = guideSteps.filter((step) => step !== "epic");
+
 export function previousGuideStep(step: GuideStep): GuideStep | undefined {
-  const index = guideSteps.indexOf(step);
-  return index > 0 ? guideSteps[index - 1] : undefined;
+  const index = guideOrder.indexOf(step === "epic" ? "story" : step);
+  return index > 0 ? guideOrder[index - 1] : undefined;
 }
 
 /** Device-local progress; Team projection never shares setup/preferences. */

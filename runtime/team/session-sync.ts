@@ -56,13 +56,13 @@ const safeText = (value: string) =>
     );
 const progressLabels: Record<string, string> = {
   preparing: "Preparing the worker",
-  joining: "Joining the epic Fleet",
+  joining: "Coordinating with the goal’s other tasks",
   starting: "Starting the harness",
   responding: "Worker is responding",
   reading: "Reading project context",
   editing: "Editing project files",
   testing: "Running checks",
-  working: "Working on the story",
+  working: "Working on the task",
   waiting: "Waiting for input or a handoff",
   waiting_for_user: "Waiting for an answer on the worker's device",
   finishing: "Finishing the worker turn",
@@ -243,7 +243,7 @@ export class TeamSessionSync {
   ) {
     const session = this.remote(connection, taskId);
     if (!session)
-      throw Error("This story has no shared remote worker session.");
+      throw Error("This task has no shared remote worker session.");
     if (connection.sessionsUnsupported)
       throw Error(
         "Update the Team service to enable shared worker conversations.",
@@ -505,7 +505,7 @@ export class TeamSessionSync {
               phase: task.run.activity.phase,
               label:
                 progressLabels[task.run.activity.phase] ??
-                "Working on the story",
+                "Working on the task",
               updatedAt: task.run.activity.at,
             }
           : undefined,

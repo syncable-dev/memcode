@@ -487,7 +487,7 @@ export async function verifyInteraction(page, context) {
     await click(page.getByRole("button", { name: /^Roadmap(?:\s+\d+)?$/ }));
     const epicCard = page.locator(".epic-card").filter({ hasText: epic.title });
     await click(
-      epicCard.getByRole("button", { name: "Delete epic", exact: true }),
+      epicCard.getByRole("button", { name: "Delete goal", exact: true }),
     );
     await confirmDelete("epic", "delete-epic");
     let state = await load(),
@@ -517,20 +517,20 @@ export async function verifyInteraction(page, context) {
     await click(
       page
         .locator(".work-detail")
-        .getByRole("button", { name: "Delete story", exact: true }),
+        .getByRole("button", { name: "Delete task", exact: true }),
     );
     let deletionModal = page.getByRole("dialog", {
       name: "Delete this story?",
       exact: true,
     });
     await click(
-      deletionModal.getByRole("button", { name: "Keep story", exact: true }),
+      deletionModal.getByRole("button", { name: "Keep task", exact: true }),
     );
     assert.ok((await load()).tasks.some((task) => task.id === leaf.id));
     await click(
       page
         .locator(".work-detail")
-        .getByRole("button", { name: "Delete story", exact: true }),
+        .getByRole("button", { name: "Delete task", exact: true }),
     );
     await confirmDelete("story", "delete-story");
     state = await load();

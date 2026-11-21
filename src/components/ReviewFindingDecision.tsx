@@ -121,7 +121,7 @@ export default function ReviewFindingDecision({
       />
       <div className="review-decision-actions">
         <small>
-          The evidence stays saved. This does not accept the story or mark
+          The evidence stays saved. This does not accept the task or mark
           checks as passed.
         </small>
         <button

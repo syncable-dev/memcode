@@ -248,7 +248,7 @@ function WorkspaceDisplay({
         <Settings2 size={12} />
       </button>
       <p>
-        Grouping changes how work is organized. Moving a story changes the
+        Grouping changes how work is organized. Moving a task changes the
         matching planning field.
       </p>
     </section>

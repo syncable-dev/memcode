@@ -188,9 +188,9 @@ export class CodeReviewManager {
   }
   private waitNote(reason: ReviewWait): string {
     return reason === "writers"
-      ? "Waiting for this epic's workers to finish editing. Review has not captured or certified the source."
+      ? "Waiting for this goal's workers to finish editing. Review has not captured or certified the source."
       : reason === "epic"
-        ? "Waiting for the earlier review in this epic."
+        ? "Waiting for the earlier review in this goal."
         : "Waiting for local capacity. Reviews and implementation workers share the limit in Settings.";
   }
 
@@ -198,14 +198,14 @@ export class CodeReviewManager {
     const task = this.state().tasks.find(
       (item) => item.id === id && !item.archivedAt,
     );
-    if (!task) throw Error("This story is no longer available.");
+    if (!task) throw Error("This task is no longer available.");
     return task;
   }
   private project(task: WorkItem): Project {
     const project = this.state().projects.find(
       (item) => item.id === task.projectId,
     );
-    if (!project) throw Error("This story's project is no longer available.");
+    if (!project) throw Error("This task's project is no longer available.");
     return (
       this.hooks.reviewProject?.(task, project) ?? {
         ...project,
@@ -379,7 +379,7 @@ export class CodeReviewManager {
     this.task(taskId);
     const saved = await this.load(taskId);
     if (!saved || (runId && runId !== saved.run.id))
-      throw Error("This review is no longer the current review for the story.");
+      throw Error("This review is no longer the current review for the task.");
     return saved;
   }
   private async stale(saved: SavedReview): Promise<boolean> {
@@ -406,7 +406,7 @@ export class CodeReviewManager {
       saved.run.state = "stale";
       saved.run.coverage.complete = false;
       saved.run.note =
-        "The source, story contribution or execution branch changed. Run a fresh review before acceptance.";
+        "The source, task contribution or execution branch changed. Run a fresh review before acceptance.";
       await this.persist(saved);
     }
     return changed;
@@ -439,7 +439,7 @@ export class CodeReviewManager {
       if (retryFrom && isActive(task)) return clone(retryFrom.run);
       if (isActive(task))
         throw Error(
-          "Finish this story's worker pass before reviewing its contribution.",
+          "Finish this task's worker pass before reviewing its contribution.",
         );
       if (task.example || project.example || !project.path)
         throw Error("Connect a real local project to review its code.");
@@ -475,7 +475,7 @@ export class CodeReviewManager {
           state: "queued",
           ...(retryFrom
             ? {
-                note: "The epic changed during review. One fresh review is queued after its workers finish; the earlier snapshot is preserved.",
+                note: "The goal changed during review. One fresh review is queued after its workers finish; the earlier snapshot is preserved.",
               }
             : {}),
           phases: codeReviewPhases.map(({ id }) => ({ id, state: "queued" })),
@@ -510,10 +510,10 @@ export class CodeReviewManager {
               role: "system",
               at,
               text: retryFrom
-                ? "The previous review was interrupted by edits in this epic. A fresh snapshot will be reviewed after editing finishes. Automatic recovery is limited to this one additional pass; nothing is accepted automatically."
+                ? "The previous review was interrupted by edits in this goal. A fresh snapshot will be reviewed after editing finishes. Automatic recovery is limited to this one additional pass; nothing is accepted automatically."
                 : this.hooks.reviewer
-                  ? "Memtrace checks this story's recorded changes locally, then a separate read-only model reviewer explains the captured patch and measurements. The implementation worker is not running in this review conversation."
-                  : "Memtrace review checks this story's recorded changes locally. This is a deterministic review; no model or implementation worker is running in this conversation.",
+                  ? "Memtrace checks this task's recorded changes locally, then a separate read-only model reviewer explains the captured patch and measurements. The implementation worker is not running in this review conversation."
+                  : "Memtrace review checks this task's recorded changes locally. This is a deterministic review; no model or implementation worker is running in this conversation.",
             },
           ],
         },
@@ -569,9 +569,9 @@ export class CodeReviewManager {
         saved.run.completedAt = timestamp();
         saved.run.note =
           error instanceof ReviewStopped
-            ? "Review stopped because this story left the Code review lane. Its saved evidence is preserved."
+            ? "Review stopped because this task left the Code review lane. Its saved evidence is preserved."
             : retry
-              ? "The epic changed during review. This snapshot cannot approve the current source."
+              ? "The goal changed during review. This snapshot cannot approve the current source."
               : error instanceof Error
                 ? error.message
                 : String(error);
@@ -663,15 +663,15 @@ export class CodeReviewManager {
       if (!this.inReviewLane(task)) throw new ReviewStopped();
       if (saved.interrupted)
         throw new ReviewSourceChanged(
-          "Another worker is starting edits in this epic.",
+          "Another worker is starting edits in this goal.",
         );
       if (!this.quiet(task))
         throw new ReviewSourceChanged(
-          "Another worker began editing this epic during review.",
+          "Another worker began editing this goal during review.",
         );
       if (isActive(task) || task.changesRevision !== saved.changesRevision)
         throw new ReviewSourceChanged(
-          "The story began changing while review was running. Wait for its worker and run a fresh review.",
+          "The task began changing while review was running. Wait for its worker and run a fresh review.",
         );
     };
     assertActive();
@@ -702,7 +702,7 @@ export class CodeReviewManager {
       let project = this.project(task);
       await phase(
         "capture",
-        "Capturing only this story's attributed checkpoints.",
+        "Capturing only this task's attributed checkpoints.",
       );
       const capture = await this.capture(clone(task));
       assertActive();
@@ -718,7 +718,7 @@ export class CodeReviewManager {
         this.checks(saved, task, capture);
         await phase(
           "review",
-          "Preparing Memtrace for this story's captured changes.",
+          "Preparing Memtrace for this task's captured changes.",
         );
         await this.graphRetirements.get(project.id);
         assertActive();
@@ -744,15 +744,15 @@ export class CodeReviewManager {
           !capture.limitations.length;
         run.outcome = noSource ? "not-applicable" : "incomplete";
         run.note = noSource
-          ? "This research story has no recorded source change. Review its deliverables before final acceptance."
-          : "There is no current, attributable source patch to review. Inspect this story's Changes and capture its contribution first.";
+          ? "This research task has no recorded source change. Review its deliverables before final acceptance."
+          : "There is no current, attributable source patch to review. Inspect this task's Changes and capture its contribution first.";
         for (const item of run.phases) {
           item.state = item.id === "capture" ? "complete" : "unavailable";
         }
       } else if (!project.repoId) {
         run.outcome = "incomplete";
         run.coverage.limitations.push(
-          "Analyze this story's exact local checkout before running graph-backed review.",
+          "Analyze this task's exact local checkout before running graph-backed review.",
         );
         for (const item of run.phases)
           item.state = item.id === "capture" ? "complete" : "unavailable";
@@ -805,7 +805,7 @@ export class CodeReviewManager {
         if (this.hooks.reviewer) {
           await this.reviewAnswer(
             saved,
-            "Review the captured story patch and Memtrace findings. Explain the most important correctness, maintainability and refactoring concerns with exact captured paths and lines. Separate measured facts from your own suggestions. If no concern is justified, say so without claiming that unverified checks passed.",
+            "Review the captured task patch and Memtrace findings. Explain the most important correctness, maintainability and refactoring concerns with exact captured paths and lines. Separate measured facts from your own suggestions. If no concern is justified, say so without claiming that unverified checks passed.",
             true,
           );
         } else {
@@ -931,9 +931,9 @@ export class CodeReviewManager {
     return (
       `Memtrace review · deterministic evidence\n\n${activeCodeReviewFindings(run).length} active findings across ${run.snapshot.files.length} recorded files. ${run.metrics.length} changed functions measured.\n\n` +
       (run.outcome === "ready"
-        ? "The available detectors, graph measurements and linked verification completed against one stable source snapshot. Ready for your final look; this does not automatically mark the story done."
+        ? "The available detectors, graph measurements and linked verification completed against one stable source snapshot. Ready for your final look; this does not automatically mark the task done."
         : run.outcome === "not-applicable"
-          ? "No recorded source change applies to this research story. Inspect its reports and deliverables."
+          ? "No recorded source change applies to this research task. Inspect its reports and deliverables."
           : run.outcome === "changes-requested"
             ? "Review the findings and failed checks. Select findings to send them back to the implementation worker."
             : "The review is incomplete. Resolve the coverage notes or missing checks before acceptance.")
@@ -988,11 +988,11 @@ export class CodeReviewManager {
       const requireEditable = () => {
         if (this.task(taskId) !== task)
           throw Error(
-            "The story changed while saving this decision. Reload its review.",
+            "The task changed while saving this decision. Reload its review.",
           );
         if (!this.inReviewLane(task))
           throw Error(
-            "Move this story to the Code review lane to change a finding.",
+            "Move this task to the Code review lane to change a finding.",
           );
         if (run.state !== "completed" || !this.quiet(task))
           throw Error(
@@ -1071,7 +1071,7 @@ export class CodeReviewManager {
       const saved = await this.current(taskId);
       if (saved.run.id !== runId && saved.retryOf !== runId)
         throw Error(
-          "This review is no longer the current review for the story.",
+          "This review is no longer the current review for the task.",
         );
       activeId = saved.run.id;
       saved.retryAllowed = false;
@@ -1170,7 +1170,7 @@ export class CodeReviewManager {
           saved.interrupted = true;
           this.reviewerControllers.get(saved.run.id)?.abort();
           saved.run.note =
-            "Another story is starting edits in this epic. This review is stopping before a fresh snapshot can be captured.";
+            "Another task is starting edits in this goal. This review is stopping before a fresh snapshot can be captured.";
           await this.persist(saved);
         });
         const work = this.executionWork.get(saved.run.id);
@@ -1442,7 +1442,7 @@ export class CodeReviewManager {
         selected
           .map(
             (finding) =>
-              `- [${finding!.severity}] ${finding!.path ?? "Story"}${finding!.line ? `:${finding!.line}` : ""}: ${finding!.explanation}${finding!.locationScope === "affected-code" ? `\n  Affected consumer evidence, linked to ${finding!.relatedCapturedPaths?.join(", ")}. This location is not an authored change of this story; requalify and coordinate any additional edit scope.` : ""}${finding!.recommendation ? `\n  ${finding!.recommendation}` : ""}`,
+              `- [${finding!.severity}] ${finding!.path ?? "Task"}${finding!.line ? `:${finding!.line}` : ""}: ${finding!.explanation}${finding!.locationScope === "affected-code" ? `\n  Affected consumer evidence, linked to ${finding!.relatedCapturedPaths?.join(", ")}. This location is not an authored change of this task; requalify and coordinate any additional edit scope.` : ""}${finding!.recommendation ? `\n  ${finding!.recommendation}` : ""}`,
           )
           .join("\n") +
         (input.trim() ? `\n\nUser instruction:\n${input.trim()}` : "");

@@ -23,8 +23,8 @@ export function RoutingCard({
         </span>
         <p>
           {task.example
-            ? "Example stories stay unmeasured. Connect a project to name a real harness and model."
-            : "Memtrace measures this story and names a harness, model and effort. Measuring does not start the worker."}
+            ? "Example tasks stay unmeasured. Connect a project to name a real harness and model."
+            : "Memtrace measures this task and names a harness, model and effort. Measuring does not start the worker."}
         </p>
         <button onClick={plan} disabled={busy || disabled || task.example}>
           {busy ? <Spinner size={12} /> : <GitBranch size={12} />}

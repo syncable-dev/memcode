@@ -43,7 +43,7 @@ export type GroupMove =
 
 export const groupNames: Record<GroupBy, string> = {
   status: "Status",
-  epic: "Epic",
+  epic: "Goal",
   priority: "Priority",
   harness: "Harness",
   cycle: "Cycle",
@@ -86,7 +86,7 @@ function epicGroups({ tasks, epics }: GroupSources): WorkGroup[] {
       name: epic.title,
       color: epicColors[epic.color],
     })),
-    { id: "none", name: "Without an epic", color: "#b4bdb2" },
+    { id: "none", name: "Without a goal", color: "#b4bdb2" },
   ];
   return assignGroups(definitions, tasks, (task) =>
     ids.has(task.epicId ?? "") ? task.epicId! : "none",
@@ -173,7 +173,7 @@ function cycleMove(target: string, cycles: Cycle[]): GroupMove {
   if (cycles.find((cycle) => cycle.id === target)?.state === "completed")
     return {
       kind: "blocked",
-      message: "Choose an upcoming or active cycle for this story.",
+      message: "Choose an upcoming or active cycle for this task.",
     };
   return {
     kind: "update",

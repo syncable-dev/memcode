@@ -1,4 +1,6 @@
 import { Suspense, useCallback, useEffect, useState } from "react";
+import { cardActivityFeed } from "./card-activity";
+import { needsPerson } from "./fleet";
 import {
   ArrowUpRight,
   BookOpen,
@@ -29,7 +31,13 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { harnessIds, type AppState, type RuntimeInfo, type WorkItem, type Artifact } from "./shared";
+import {
+  harnessIds,
+  type AppState,
+  type RuntimeInfo,
+  type WorkItem,
+  type Artifact,
+} from "./shared";
 import { isActive, tasksForProject } from "./domain";
 import {
   Empty,
@@ -129,7 +137,7 @@ const pageCopy: Record<View, [string, string, string]> = {
   fleet: [
     "HUMAN IN THE LOOP",
     "A clear decision. A moving fleet.",
-    "Resolve the overlaps, preserve the work, and choose what continues.",
+    "The workers settle what they can. What’s left shows what each of them wants.",
   ],
   board: [
     "THE BIG PICTURE",
@@ -138,8 +146,8 @@ const pageCopy: Record<View, [string, string, string]> = {
   ],
   roadmap: [
     "FROM IDEA TO IMPLEMENTATION",
-    "A direction for every story.",
-    "Shape the epics. Bank the work. Build it with your fleet.",
+    "A direction for every task.",
+    "Shape the goals. Bank the work. Build it with your fleet.",
   ],
   workers: [
     "YOUR LOCAL FLEET",
@@ -208,6 +216,9 @@ export function App() {
     },
     [notify],
   );
+  useEffect(() => {
+    if (state) cardActivityFeed.publish(state.tasks);
+  }, [state?.tasks]);
   useEffect(() => {
     if (betaStatus?.accessMode !== "installed-cli") return;
     let live = true;
@@ -506,6 +517,30 @@ export function App() {
       }
     });
   };
+  /** The title and New work button above a view. The board shows its green bar instead. */
+  const pageHeading = (
+    <div className="page-heading">
+      <div>
+        <div className="eyebrow">
+          <span />
+          {pageCopy[view][0]}
+        </div>
+        <h1>{pageCopy[view][1]}</h1>
+        <p>{pageCopy[view][2]}</p>
+      </div>
+      {view !== "docs" && (
+        <button
+          className="button primary"
+          data-guide="new-story"
+          onClick={() => create()}
+        >
+          <Plus size={15} />
+          New work
+          <kbd>C</kbd>
+        </button>
+      )}
+    </div>
+  );
   const guideGo = (destination: GuideDestination) => {
     if (destination === "project") {
       setDialog("project");
@@ -548,7 +583,7 @@ export function App() {
       label: "Decisions",
       icon: ShieldCheck,
       count: state.fleetConflicts.filter(
-        (item) => item.projectId === project.id && item.status === "open",
+        (item) => item.projectId === project.id && needsPerson(item),
       ).length,
     },
     {
@@ -834,29 +869,7 @@ export function App() {
           </div>
         )}
         <div className="workspace-scroll">
-          {view !== "team" && (
-            <div className="page-heading">
-              <div>
-                <div className="eyebrow">
-                  <span />
-                  {pageCopy[view][0]}
-                </div>
-                <h1>{pageCopy[view][1]}</h1>
-                <p>{pageCopy[view][2]}</p>
-              </div>
-              {view !== "docs" && (
-                <button
-                  className="button primary"
-                  data-guide="new-story"
-                  onClick={() => create()}
-                >
-                  <Plus size={15} />
-                  {view === "roadmap" ? "New story" : "New work item"}
-                  <kbd>C</kbd>
-                </button>
-              )}
-            </div>
-          )}
+          {view !== "team" && view !== "board" && pageHeading}
           {view === "team" && (
             <TeamOnboarding
               state={state}
@@ -878,7 +891,7 @@ export function App() {
                   setSelectedArtifact(artifact);
                 } else {
                   notify(
-                    "The result is saved locally. Open its shared story to view it.",
+                    "The result is saved locally. Open its shared task to view it.",
                   );
                 }
               }}
@@ -972,6 +985,7 @@ export function App() {
               notify={notify}
               act={act}
               addProject={() => setDialog("project")}
+              heading={pageHeading}
             />
           )}
           {view === "workers" && (
@@ -1032,7 +1046,7 @@ export function App() {
                         <small>
                           {task.identifier} ·{" "}
                           {task.run.workspace
-                            ? "Shared epic branch"
+                            ? "Shared with its goal"
                             : task.example
                               ? "Example session"
                               : "Ready to start a worker"}
@@ -1062,7 +1076,7 @@ export function App() {
                 <Empty
                   icon={<Workflow size={27} />}
                   title="A clear space to get started."
-                  description="Connect a worker, then give it a focused story. Its session will appear here."
+                  description="Connect a worker, then give it a focused task. Its session will appear here."
                   action={
                     <button className="button primary" onClick={() => create()}>
                       <Plus size={14} />
@@ -1212,8 +1226,17 @@ export function App() {
           )}
           fixedEpicId={storyEpic}
           statusId={storyStatus}
+          workerLimit={state.settings.maxWorkers}
+          freeSlots={Math.max(
+            0,
+            state.settings.maxWorkers - state.tasks.filter(isActive).length,
+          )}
           onClose={() => setDialog(null)}
           onAdvanced={() => setDetailedTask(true)}
+          onConnectWorkers={() => {
+            setDialog(null);
+            setView("workers");
+          }}
           onCreated={(task) => {
             setDialog(null);
             setSelectedId(task.id);

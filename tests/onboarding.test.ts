@@ -109,6 +109,11 @@ test("optional local tools have a saved setup step without changing model prefer
   assert.equal(projectGuide(restored, project.id)?.step, "local-tools");
   assert.equal(previousGuideStep("local-tools"), "worker");
   assert.equal(previousGuideStep("epic"), "local-tools");
+  assert.equal(
+    previousGuideStep("story"),
+    "local-tools",
+    "first work is one step; Back never stops at the old goal-first screen",
+  );
   assert.deepEqual(h.state.settings, settings);
   await h.call({ dismissed: false, step: "epic" });
   assert.deepEqual(h.state.settings, settings);
@@ -137,7 +142,7 @@ test("guide progress validates project ownership and can pause, complete and exp
   };
   h.state.tasks.push(story);
   await h.call({ step: "worker", projectId: project.id });
-  await assert.rejects(h.call({ epicId: "missing" }), /epic in this project/);
+  await assert.rejects(h.call({ epicId: "missing" }), /goal in this project/);
   assert.equal(h.saves(), 1);
   await h.call({ step: "story", epicId: "guide-epic" });
   await h.call({ dismissed: true });
@@ -145,7 +150,7 @@ test("guide progress validates project ownership and can pause, complete and exp
   await h.call({ dismissed: false, storyId: story.id, step: "ready" });
   await assert.rejects(
     h.call({ projectId: other.id, epicId: "guide-epic" }),
-    /epic in this project/,
+    /goal in this project/,
   );
   await h.call({ complete: true });
   assert.ok(h.state.onboarding?.completedAt);

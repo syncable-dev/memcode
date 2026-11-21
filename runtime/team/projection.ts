@@ -110,7 +110,7 @@ export function sharedCommands(before: SharedProjection, after: SharedProjection
   const ordered: typeof puts = [], visiting = new Set<string>();
   const visit = (id: string) => {
     const command = pending.get(id); if (!command) return;
-    if (visiting.has(id)) throw Error("Shared stories contain a parent cycle. Fix their parent relationship before syncing.");
+    if (visiting.has(id)) throw Error("Shared tasks contain a parent cycle. Fix their parent relationship before syncing.");
     visiting.add(id);
     if (command.story.parentId) visit(command.story.parentId);
     visiting.delete(id); pending.delete(id); ordered.push(command);
@@ -159,7 +159,7 @@ export function applySharedSnapshot(state: AppState, projectId: string, snapshot
   state.tasks = state.tasks.filter((task) => task.projectId !== projectId || !previousStories.has(task.id) || stories.has(task.id));
   for (const shared of snapshot.stories) {
     let local = state.tasks.find((task) => task.id === shared.id);
-    if (local && local.projectId !== projectId) throw new Error("A shared story ID is already used by another local project. Choose a dedicated local project.");
+    if (local && local.projectId !== projectId) throw new Error("A shared task ID is already used by another local project. Choose a dedicated local project.");
     if (!local) {
       local = {
         id: shared.id, identifier: shared.identifier, projectId,
@@ -183,7 +183,7 @@ export function applySharedSnapshot(state: AppState, projectId: string, snapshot
   for (const shared of snapshot.epics) {
     const { revision: _revision, ...fields } = shared;
     const local = state.epics.find((epic) => epic.id === shared.id);
-    if (local && local.projectId !== projectId) throw new Error("A shared epic ID is already used by another local project.");
+    if (local && local.projectId !== projectId) throw new Error("A shared goal ID is already used by another local project.");
     if (local) Object.assign(local, fields);
     else state.epics.push({ ...fields, projectId });
   }

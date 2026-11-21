@@ -701,11 +701,11 @@ function runCodexSession(options: AgentSessionOptions, inspect?: (result: CodexC
             threadId: options.resumeSessionId,
             excludeTurns: true,
           }).catch(() => {
-            throw Error("Codex could not resume this story’s original thread. Check the local Codex account and retry the follow-up.");
+            throw Error("Codex could not resume this task’s original thread. Check the local Codex account and retry the follow-up.");
           })
         : await request("thread/start", { ...threadOptions, allowProviderModelFallback: false });
       if (options.resumeSessionId && thread.thread?.id !== options.resumeSessionId)
-        throw Error("Codex returned a different thread while resuming this story. The follow-up was not sent.");
+        throw Error("Codex returned a different thread while resuming this task. The follow-up was not sent.");
       if (
         (mode !== "review" || !!options.resumeSessionId) &&
         (thread.approvalPolicy !== policy ||

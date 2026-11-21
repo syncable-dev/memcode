@@ -1604,7 +1604,7 @@ test("real signed Team identities publish exact report/artifact bytes, race clai
     const rejection = race[loser];
     assert.equal(rejection.status, "rejected");
     if (rejection.status === "rejected")
-      assert.match(String(rejection.reason), /already owns this story/);
+      assert.match(String(rejection.reason), /already owns this task/);
     await owner.synchronize("owner-project");
     await member.synchronize(projectId);
     const firstClaim = owner.status("owner-project")!.workspace.claims[0];

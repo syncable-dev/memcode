@@ -109,7 +109,7 @@ export class EpicWorkspace {
     if (!project.path) throw new Error("Choose a local project folder first.");
     if (task.run.worktree && !task.run.workspace)
       throw new Error(
-        "A result from the earlier execution mode is preserved in its previous folder. Review it before starting a new shared-branch story.",
+        "A result from the earlier execution mode is preserved in its previous folder. Review it before starting a new shared-branch task.",
       );
     const epic = ensureTaskEpic(this.state(), task);
     await this.prepareBranch(epic, project.path);
@@ -147,7 +147,7 @@ export class EpicWorkspace {
     );
     if (peers.some((peer) => peer.epicId !== epic.id))
       throw new Error(
-        "The connected Memtrace engine does not support parallel epic checkouts. Reconnect the bundled Memtrace engine in Settings, then retry. Your running workers and their changes have been preserved.",
+        "The connected Memtrace engine does not support parallel goal checkouts. Reconnect the bundled Memtrace engine in Settings, then retry. Your running workers and their changes have been preserved.",
       );
     // Local runtime stores are not source changes. Install these exclusions
     // before checking whether it is safe to switch an otherwise clean project.
@@ -155,7 +155,7 @@ export class EpicWorkspace {
     const actual = await git(project.path, ["branch", "--show-current"]);
     if (!actual)
       throw new Error(
-        "Choose a named project branch before activating an epic.",
+        "Choose a named project branch before activating a goal.",
       );
     const changedBranch = actual !== branch;
     if (changedBranch) {
@@ -165,7 +165,7 @@ export class EpicWorkspace {
         );
       if (await git(project.path, ["status", "--porcelain"]))
         throw new Error(
-          "Commit or finish the existing project changes before activating a different epic branch. No files were changed.",
+          "Commit or finish the existing project changes before activating a different goal branch. No files were changed.",
         );
       const head = await git(project.path, ["rev-parse", "HEAD"]);
       let exists = true;

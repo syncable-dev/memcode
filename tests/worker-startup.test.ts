@@ -303,8 +303,8 @@ for (const owned of [true, false]) {
     const catalogRequests: (Harness | undefined)[] = [];
     const entered: string[] = [];
     const manager = new WorkerManager(() => state, async () => {
-      if (same.run.activity?.label?.includes("preparing this epic")) waitingSame.resolve();
-      if (next.run.activity?.label?.includes("preparing this epic")) waitingNext.resolve();
+      if (same.run.activity?.label?.includes("preparing this goal")) waitingSame.resolve();
+      if (next.run.activity?.label?.includes("preparing this goal")) waitingNext.resolve();
       if (other.run.activity?.label === "Waiting for local worker startup") waitingOther.resolve();
     }, {
       ownedWorktreeSupport: async () => owned,

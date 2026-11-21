@@ -1,6 +1,6 @@
 import type { ContextBinding, ContextPack, ContextRequest } from "./contracts";
 import type { RetrievalAssistant } from "./local-model";
-import { literalSource, normalizedPath, visible } from "./source";
+import { literalSource, normalizedPath, repoRelativePath, visible } from "./source";
 import type { Query, Row } from "./query";
 import { searchRows, textFallback } from "./workflow-find";
 import { targetRows } from "./workflow-target";
@@ -12,13 +12,7 @@ export interface Workflow {
   assistant?: RetrievalAssistant;
 }
 export function relativePath(binding: ContextBinding, raw: string): string {
-  const path = normalizedPath(raw),
-    root = normalizedPath(binding.project.path!);
-  if (path.toLowerCase().startsWith(root.toLowerCase() + "/"))
-    return path.slice(root.length + 1);
-  return path.startsWith(binding.project.repoId + "/")
-    ? path.slice(binding.project.repoId!.length + 1)
-    : path;
+  return repoRelativePath(binding.project, raw);
 }
 export function scopeAllowed(binding: ContextBinding, raw: string): boolean {
   return visible(normalizedPath(raw), binding.scope);

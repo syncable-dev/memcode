@@ -26,7 +26,13 @@ import {
   groupNames,
   groupWork,
 } from "../planning/groups";
-import { backlogStatusId, filterWork, isBacklogStatus, taskStatus, workflowFor } from "../planning/workflow";
+import {
+  backlogStatusId,
+  filterWork,
+  isBacklogStatus,
+  taskStatus,
+  workflowFor,
+} from "../planning/workflow";
 import { storyReadiness, type StoryReadiness } from "../planning/readiness";
 import { WorkBoard } from "./Board";
 import { BoardSettings } from "./BoardSettings";
@@ -51,6 +57,8 @@ interface Props {
   notify: (message: string) => void;
   act: (fn: () => Promise<unknown>) => Promise<void>;
   addProject: () => void;
+  /** Shown in the calendar and timeline, where the green bar would crowd the view. */
+  heading: React.ReactNode;
 }
 
 export function Workspace({
@@ -62,6 +70,7 @@ export function Workspace({
   notify,
   act,
   addProject,
+  heading,
 }: Props) {
   const workspace = useRef<HTMLElement>(null);
   const [config, setConfig] = useState<ViewConfig>(() =>
@@ -109,8 +118,13 @@ export function Workspace({
       if (status) readiness.set(task.id, status);
     }
   }
-  const ready = filtered.filter((task) => readiness.get(task.id)?.state === "ready");
-  const visible = readyOnly && config.mode === "board" && !config.filters.archived ? ready : filtered;
+  const ready = filtered.filter(
+    (task) => readiness.get(task.id)?.state === "ready",
+  );
+  const visible =
+    readyOnly && config.mode === "board" && !config.filters.archived
+      ? ready
+      : filtered;
   const currentView = views.find((view) => view.id === viewId),
     dirty =
       JSON.stringify(config) !==
@@ -183,7 +197,7 @@ export function Workspace({
       setPromotion(null);
       setSelected(new Set());
       setBulk("none");
-      if (ids.length > 1) notify(`${ids.length} stories updated.`);
+      if (ids.length > 1) notify(`${ids.length} tasks updated.`);
     } catch (error) {
       notify((error as Error).message);
     } finally {
@@ -192,10 +206,23 @@ export function Workspace({
   };
   const requestMove = (ids: string[], patch: TaskPatch) => {
     const activeCycle = cycles.find((cycle) => cycle.state === "active");
-    if (activeCycle && patch.stage === "planned" && patch.statusId &&
-        !isBacklogStatus(patch.statusId) && projectTasks.some((task) =>
-          ids.includes(task.id) && isBacklogStatus(taskStatus(task, workflow).id))) {
-      setPromotion({ projectId: project.id, ids, cycleId: activeCycle.id, patch });
+    if (
+      activeCycle &&
+      patch.stage === "planned" &&
+      patch.statusId &&
+      !isBacklogStatus(patch.statusId) &&
+      projectTasks.some(
+        (task) =>
+          ids.includes(task.id) &&
+          isBacklogStatus(taskStatus(task, workflow).id),
+      )
+    ) {
+      setPromotion({
+        projectId: project.id,
+        ids,
+        cycleId: activeCycle.id,
+        patch,
+      });
       return;
     }
     void saveMove(ids, patch);
@@ -239,8 +266,11 @@ export function Workspace({
   const targetCycle = cycles.find((cycle) => cycle.id === promotion?.cycleId);
   const canJoin = targetCycle?.state === "active";
   const selectionIncludesCycle = promotion?.ids.some((id) =>
-    projectTasks.some((task) => task.id === id && task.cycleId));
-  const targetStatus = workflow.find((status) => status.id === promotion?.patch.statusId);
+    projectTasks.some((task) => task.id === id && task.cycleId),
+  );
+  const targetStatus = workflow.find(
+    (status) => status.id === promotion?.patch.statusId,
+  );
   const allSelected =
     visible.length > 0 && visible.every((task) => selected.has(task.id));
   return (
@@ -248,13 +278,18 @@ export function Workspace({
       ref={workspace}
       className={"workspace-planning workspace-mode-" + config.mode}
     >
-      <WorkspaceHero
-        project={project}
-        tasks={projectTasks}
-        runtime={runtime}
-        act={act}
-        addProject={addProject}
-      />
+      {config.mode === "calendar" || config.mode === "timeline" ? (
+        heading
+      ) : (
+        <WorkspaceHero
+          project={project}
+          tasks={projectTasks}
+          runtime={runtime}
+          act={act}
+          addProject={addProject}
+          create={() => create()}
+        />
+      )}
       <WorkspaceToolbar
         config={config}
         change={change}
@@ -348,10 +383,15 @@ export function Workspace({
             </span>
           )}
           {config.mode === "board" && !config.filters.archived && (
-            <button type="button" className="workspace-ready-filter" aria-pressed={readyOnly}
-              title="Show planned stories with clear prerequisites in this view"
-              onClick={() => setReadyOnly((wasReadyOnly) => !wasReadyOnly)}>
-              <CircleCheck size={13} />Ready to start <span>{ready.length}</span>
+            <button
+              type="button"
+              className="workspace-ready-filter"
+              aria-pressed={readyOnly}
+              title="Show planned tasks with clear prerequisites in this view"
+              onClick={() => setReadyOnly((wasReadyOnly) => !wasReadyOnly)}
+            >
+              <CircleCheck size={13} />
+              Ready to start <span>{ready.length}</span>
             </button>
           )}
           <span className="workspace-group-label">
@@ -403,7 +443,7 @@ export function Workspace({
         </span>
         <button onClick={() => create()}>
           <Plus size={11} />
-          New work item
+          New work
         </button>
       </div>
       {settings && (
@@ -417,20 +457,48 @@ export function Workspace({
       {promotion && promotion.projectId === project.id && (
         <Modal
           kicker="CYCLE PLANNING"
-          title={`Plan ${promotion.ids.length === 1 ? "this story" : "these " + promotion.ids.length + " stories"}?`}
-          description={canJoin
-            ? `Move ${promotion.ids.length === 1 ? "this story" : "all selected stories"} to ${targetStatus?.name ?? "Planned"}. Would you also like to add ${promotion.ids.length === 1 ? "it" : "them"} to ${targetCycle.name}?`
-            : "The active cycle changed while this dialog was open. You can still plan this work."}
-          close={() => { if (!busy) setPromotion(null); }}
+          title={`Plan ${promotion.ids.length === 1 ? "this task" : "these " + promotion.ids.length + " tasks"}?`}
+          description={
+            canJoin
+              ? `Move ${promotion.ids.length === 1 ? "this task" : "all selected tasks"} to ${targetStatus?.name ?? "Planned"}. Would you also like to add ${promotion.ids.length === 1 ? "it" : "them"} to ${targetCycle.name}?`
+              : "The active cycle changed while this dialog was open. You can still plan this work."
+          }
+          close={() => {
+            if (!busy) setPromotion(null);
+          }}
         >
           <footer className="modal-footer saved-view-footer">
-            <button className="text-button" disabled={busy} onClick={() => setPromotion(null)}>Cancel</button>
-            <button className="button secondary" disabled={busy} onClick={() => void saveMove(promotion.ids, promotion.patch)}>
-              {selectionIncludesCycle ? "Keep current cycles" : "Plan outside cycle"}
+            <button
+              className="text-button"
+              disabled={busy}
+              onClick={() => setPromotion(null)}
+            >
+              Cancel
             </button>
-            {canJoin && <button className="button primary" disabled={busy} onClick={() => void saveMove(promotion.ids, { ...promotion.patch, cycleId: targetCycle.id })}>
-              {busy ? <Spinner size={14} /> : <CalendarDays size={14} />}Add to cycle
-            </button>}
+            <button
+              className="button secondary"
+              disabled={busy}
+              onClick={() => void saveMove(promotion.ids, promotion.patch)}
+            >
+              {selectionIncludesCycle
+                ? "Keep current cycles"
+                : "Plan outside cycle"}
+            </button>
+            {canJoin && (
+              <button
+                className="button primary"
+                disabled={busy}
+                onClick={() =>
+                  void saveMove(promotion.ids, {
+                    ...promotion.patch,
+                    cycleId: targetCycle.id,
+                  })
+                }
+              >
+                {busy ? <Spinner size={14} /> : <CalendarDays size={14} />}Add
+                to cycle
+              </button>
+            )}
           </footer>
         </Modal>
       )}

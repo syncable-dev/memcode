@@ -1,4 +1,4 @@
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, Plus } from "lucide-react";
 import type { Project, RuntimeInfo, WorkItem } from "../shared";
 import { isActive } from "../domain";
 import { HarnessMark, Spinner } from "./UI";
@@ -10,12 +10,14 @@ export function WorkspaceHero({
   runtime,
   act,
   addProject,
+  create,
 }: {
   project: Project;
   tasks: WorkItem[];
   runtime: RuntimeInfo;
   act: (fn: () => Promise<unknown>) => Promise<void>;
   addProject: () => void;
+  create: () => void;
 }) {
   const health = useRuntimeHealth();
   const current = tasks.filter((task) => !task.archivedAt),
@@ -31,11 +33,12 @@ export function WorkspaceHero({
         <div className="focus-kicker">
           <span />
           {project.example ? "BUILDING MEMCODE" : "PROJECT BRIEF"}
+          {project.example && <em className="example-pill">Example data</em>}
         </div>
         <h2>
           {project.example ? (
             <>
-              Local by default.
+              Your fleet, in focus.
               <br />
               <span>Coordinated by design.</span>
             </>
@@ -69,11 +72,15 @@ export function WorkspaceHero({
       <div className="focus-right">
         <div className="cycle-header">
           <span>WORKSPACE MOMENTUM</span>
-          {project.example ? (
-            <span className="example-pill">Example data</span>
-          ) : (
-            <span>{current.length} work items</span>
-          )}
+          <button
+            className="hero-new-work"
+            data-guide="new-story"
+            onClick={create}
+          >
+            <Plus size={14} />
+            New work
+            <kbd>C</kbd>
+          </button>
         </div>
         <div className="focus-metrics">
           {(["planned", "working", "review"] as const).map((stage) => (

@@ -208,6 +208,8 @@ export interface WorkItem extends TaskPlanningFields {
     measurements?: import("./measurements").WorkerMeasurements;
     checks?: import("./measurements").WorkerCheckResult;
     finishedSourceBinding?: string | null;
+    /** The disagreement this worker stopped to wait on. It carries on when the person decides. */
+    waitingOnDecision?: string;
   };
   evidence?: Evidence;
   diff?: string;
@@ -319,7 +321,10 @@ export interface AppState {
   workerConnections?: Partial<
     Record<Harness, import("./connections").WorkerConnection>
   >;
+  /** Saved by earlier versions, when workers took turns on shared files. No longer written. */
   fleetPlans?: FleetPlan[];
+  /** What each worker is changing right now, and what it changed lately. */
+  fleetDeclarations?: import("./fleet").FleetDeclaration[];
   pullRequests?: import("./pull-request").EpicPullRequest[];
   fleetProposals?: FleetProposal[];
   qualitySnapshots: QualitySnapshot[];
@@ -379,6 +384,10 @@ export interface CreateTask extends TaskPlanningFields {
   permissionMode?: import("./permissions").PermissionMode | null;
   epicId?: string | null;
   kind?: WorkItem["kind"];
+  /** The task's planned steps; without them it starts with the standard runbook. */
+  runbook?: string[];
+  /** Files the task plans to change. Its edits to them are recorded as its own. */
+  scope?: string[];
 }
 export interface ProjectInput {
   mode: "existing" | "new";
@@ -669,7 +678,7 @@ export interface MemCodeAPI extends CodeReviewAPI {
     projectId: string;
     request: string;
     harness: Harness;
-  }): Promise<import("./goal-plan").GoalPlan>;
+  }): Promise<import("./goal-plan").WorkPlan>;
   updateGoalFromBase(epicId: string): Promise<{
     merged: boolean;
     savedWork: boolean;
@@ -720,7 +729,16 @@ export type TaskPatch = Partial<
 >;
 
 export interface FleetConflict {
-  resolutionKind?: "human" | "coordination";
+  /** Who settled it: the person, the workers agreeing, or an earlier version's bookkeeping. */
+  resolutionKind?: "human" | "coordination" | "agents";
+  /** What each task involved wants. */
+  positions?: import("./fleet").FleetPosition[];
+  /** Set once the person is needed: to confirm the workers' recommendation, or to decide. */
+  needs?: "confirm" | "decide";
+  /** Why the workers could not settle it themselves. */
+  needsReason?: string;
+  /** The task the workers recommend should go ahead. */
+  recommendedTaskId?: string;
   id: string;
   projectId: string;
   epicId?: string;

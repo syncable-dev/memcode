@@ -95,7 +95,7 @@ export function Cycles({ state, project, open, notify }: Props) {
               <em>a clear finish line.</em>
             </h2>
             <p>
-              A cycle brings the stories, the goal and the time together. Plan
+              A cycle brings the tasks, the focus and the time together. Plan
               the scope, track real progress, and carry the unfinished work
               forward deliberately.
             </p>
@@ -114,7 +114,7 @@ export function Cycles({ state, project, open, notify }: Props) {
               <Layers3 size={20} />
               <h3>Choose the scope.</h3>
               <p>
-                Gather focused stories from any epic. Keep estimates and
+                Gather focused tasks from any goal. Keep estimates and
                 capacity visible.
               </p>
             </article>
@@ -251,7 +251,7 @@ export function Cycles({ state, project, open, notify }: Props) {
                 <div className="planning-estimate-note">
                   <Layers3 size={13} />
                   <span>
-                    Story points are manual planning estimates. Memtrace
+                    Points are manual planning estimates. Memtrace
                     complexity, nesting and blast radius inform model routing
                     separately.
                   </span>
@@ -394,7 +394,7 @@ function CycleHeader({
         <h2>{cycle.name}</h2>
         <p className="cycle-goal">
           {cycle.goal ||
-            "A focused iteration. Add a goal to make the outcome clear."}
+            "A focused iteration. Add a focus to make the outcome clear."}
         </p>
         <div className="cycle-metadata">
           <span>
@@ -434,7 +434,7 @@ function CycleHeader({
       </section>
       <div className="cycle-stat-grid">
         <div>
-          <span>Stories complete</span>
+          <span>Tasks complete</span>
           <strong>
             {snapshot.completed}
             <small>/ {snapshot.total}</small>
@@ -472,7 +472,7 @@ function CycleHeader({
           </strong>
           <p>
             {cycle.baseline
-              ? "Stories since the starting baseline"
+              ? "Tasks since the starting baseline"
               : "Baseline captured when the cycle starts"}
           </p>
         </div>
@@ -481,8 +481,8 @@ function CycleHeader({
         <p className="cycle-unestimated">
           <span />
           {snapshot.unestimated}{" "}
-          {snapshot.unestimated === 1 ? "story has" : "stories have"} no
-          estimate. Point totals include estimated stories only.
+          {snapshot.unestimated === 1 ? "task has" : "tasks have"} no
+          estimate. Point totals include estimated tasks only.
         </p>
       )}
     </>

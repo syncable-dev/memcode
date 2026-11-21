@@ -117,7 +117,7 @@ test("claim identity distinguishes the same member on another device and never i
   assert.deepEqual(teamClaimForStory(team, "story")?.device, "Bob desktop");
   assert.match(
     teamStartBlocked(team, "story")!,
-    /Bob holds this story on Bob desktop/,
+    /Bob holds this task on Bob desktop/,
   );
   team.memberId = "bob";
   assert.equal(teamClaimForStory(team, "story")?.local, false);
@@ -159,7 +159,7 @@ test("Team guide explains named teams, current-state joining and separate local-
     "Existing local changes are preserved",
     "Git repository access is a separate connection",
     "approve your own coding tool in Workers",
-    "confirms its story claim before starting",
+    "confirms its task claim before starting",
     "5 MiB",
     "Use Git to exchange code",
     "team updates never start a worker automatically",

@@ -19,15 +19,26 @@ import type {
 import { git, within, now, exec, childEnv } from "./local";
 
 type FileState = { hash?: string; bytes: number; binary: boolean };
-type Snapshot = Map<string, FileState>;
-type Reservation = {
+/** A file as it was last recorded, kept so the next change can be compared against it. */
+type Baseline = FileState & { content?: Buffer };
+type Following = {
   root: string;
   branch: string;
   runId: string;
-  at: string;
-  files: Snapshot;
+  since: string;
+  /** Files named as the worker went along, beyond the task's planned scope. */
+  named: Set<string>;
+  paths: Set<string>;
 };
-const missing: FileState = { bytes: 0, binary: false };
+const missing: Baseline = { bytes: 0, binary: false };
+const scopeLimit = 200;
+
+export interface CheckpointOptions {
+  /** Other tasks editing this file right now: their unrecorded edits may be in this record. */
+  sharedWith?: (path: string) => string[];
+  /** Files to leave for a worker that is still editing them. */
+  skip?: (path: string) => boolean;
+}
 function directory(task: WorkItem) {
   if (!task.run.workspace)
     throw Error("This work item has no shared workspace.");
@@ -39,9 +50,7 @@ function exactScope(task: WorkItem) {
       ...(task.scope ?? []),
       ...(task.evidence?.symbols ?? []).map((s) => s.file),
     ]),
-  ]
-    .map((p) => p.replaceAll("\\", "/"))
-    .filter(Boolean);
+  ];
 }
 function decode(bytes: Buffer) {
   try {
@@ -50,79 +59,139 @@ function decode(bytes: Buffer) {
     return undefined;
   }
 }
-/** Snapshots are taken at ownership grant, not at the epic baseline. */
+function fileState(bytes: Buffer): Baseline {
+  return {
+    hash: createHash("sha256").update(bytes).digest("hex"),
+    bytes: bytes.length,
+    binary: bytes.includes(0) || decode(bytes) === undefined,
+    content: bytes,
+  };
+}
+/**
+ * Which task changed what. Every file being edited in a checkout has one moving baseline:
+ * the next worker to record takes everything since it, and the baseline moves on. So each
+ * change is recorded exactly once, and workers never take turns to keep the record straight.
+ */
 export class WorkerChangeJournal {
-  private reservations = new Map<string, Reservation>();
-  async begin(project: Project, task: WorkItem) {
-    if (this.reservations.has(task.id)) return;
+  private following = new Map<string, Following>();
+  private baselines = new Map<string, Map<string, Baseline>>();
+  /** Starts following the task's planned files, plus `files`, from how they are now. */
+  async begin(project: Project, task: WorkItem, files: string[] = []) {
+    const joined = this.following.get(task.id);
+    const following = joined ?? (await this.join(project, task));
+    const paths = await this.resolve(following.root, task, files);
+    if (!joined) this.following.set(task.id, following);
+    for (const file of files) following.named.add(file);
+    const baseline = this.baselineOf(following.root);
+    for (const path of paths) {
+      following.paths.add(path);
+      if (!baseline.has(path))
+        baseline.set(path, await this.read(following.root, path));
+    }
+  }
+  private async join(project: Project, task: WorkItem): Promise<Following> {
     const root = await realpath(task.run.workspace ?? project.path!);
     const branch = (await git(root, ["branch", "--show-current"])).trim();
     if (task.run.branch && branch !== task.run.branch)
-      throw Error("The epic branch changed before source attribution.");
+      throw Error("The goal branch changed before source attribution.");
     task.run.changeRunId ??= randomUUID();
-    this.reservations.set(task.id, {
+    return {
       root,
       branch,
       runId: task.run.changeRunId,
-      at: now(),
-      files: await this.snapshot(root, task),
-    });
+      since: now(),
+      named: new Set(),
+      paths: new Set(),
+    };
   }
-  async checkpoint(project: Project, task: WorkItem) {
-    const reservation = this.reservations.get(task.id);
-    if (!reservation) return;
+  private baselineOf(root: string) {
+    let baseline = this.baselines.get(root);
+    if (!baseline) this.baselines.set(root, (baseline = new Map()));
+    return baseline;
+  }
+  /** Records what changed in the task's files since they were last recorded; true when something was. */
+  async checkpoint(
+    project: Project,
+    task: WorkItem,
+    options: CheckpointOptions = {},
+  ): Promise<boolean> {
+    const following = this.following.get(task.id);
+    if (!following) return false;
     if (
-      (await git(reservation.root, ["branch", "--show-current"])).trim() !==
-      reservation.branch
+      (await git(following.root, ["branch", "--show-current"])).trim() !==
+      following.branch
     )
       throw Error(
-        "The epic branch changed. Source changes were not assigned to this worker.",
+        "The goal branch changed. Source changes were not assigned to this worker.",
       );
-    const current = await this.snapshot(reservation.root, task);
+    const baseline = this.baselineOf(following.root);
     const files: ChangeFile[] = [];
-    for (const path of new Set([
-      ...reservation.files.keys(),
-      ...current.keys(),
-    ])) {
-      const before = reservation.files.get(path) ?? missing,
-        after = current.get(path) ?? missing;
+    const coEditors = new Set<string>();
+    // A file created since the task began, inside a folder it follows, is its own too.
+    for (const path of await this.resolve(following.root, task, [...following.named]))
+      following.paths.add(path);
+    for (const path of following.paths) {
+      if (options.skip?.(path)) continue;
+      const before = baseline.get(path) ?? missing,
+        after = await this.read(following.root, path);
       if (before.hash === after.hash) continue;
       files.push(await this.diff(task, path, before, after));
+      for (const other of options.sharedWith?.(path) ?? []) coEditors.add(other);
+      baseline.set(path, after);
     }
     if (files.length) {
       const entry: ChangeCheckpoint = {
         id: randomUUID(),
-        runId: reservation.runId,
+        runId: following.runId,
         taskId: task.id,
         agentId: "memcode:" + task.id,
         harness: task.harness,
-        branch: reservation.branch,
-        startedAt: reservation.at,
+        branch: following.branch,
+        startedAt: following.since,
         at: now(),
         basis: "fleet-reservation",
         files,
+        ...(coEditors.size ? { sharedWith: [...coEditors] } : {}),
       };
       await this.append(task, entry);
     }
-    reservation.files = current;
-    reservation.at = now();
+    following.since = now();
+    return files.length > 0;
   }
-  async release(project: Project, task: WorkItem) {
+  /** Records what is left, then stops following; a file nobody follows any more loses its baseline. */
+  async release(
+    project: Project,
+    task: WorkItem,
+    options: CheckpointOptions = {},
+  ) {
+    const following = this.following.get(task.id);
     try {
-      await this.checkpoint(project, task);
+      await this.checkpoint(project, task, options);
     } finally {
-      this.reservations.delete(task.id);
+      this.following.delete(task.id);
+      if (following) this.forgetUnfollowed(following);
     }
+  }
+  private forgetUnfollowed(left: Following) {
+    const baseline = this.baselineOf(left.root);
+    const stillFollowed = new Set(
+      [...this.following.values()]
+        .filter((other) => other.root === left.root)
+        .flatMap((other) => [...other.paths]),
+    );
+    for (const path of left.paths)
+      if (!stillFollowed.has(path)) baseline.delete(path);
+    if (!baseline.size) this.baselines.delete(left.root);
   }
   async importScopedBaseline(project: Project, task: WorkItem) {
     if (!task.run.baseline || !task.run.workspace || task.run.changeRunId)
       return;
     const root = await realpath(task.run.workspace),
-      current = await this.snapshot(root, task),
       files: ChangeFile[] = [];
-    await mkdir(join(directory(task), "blobs"), { recursive: true });
-    for (const [path, after] of current) {
-      let before: FileState = missing;
+    for (const path of await this.resolve(root, task, [])) {
+      const after = await this.read(root, path);
+      if (!after.hash) continue;
+      let before: Baseline = missing;
       try {
         const { stdout: bytes } = await exec(
           "git",
@@ -134,14 +203,7 @@ export class WorkerChangeJournal {
             env: childEnv(),
           },
         );
-        const hash = createHash("sha256").update(bytes).digest("hex");
-        await writeFile(join(directory(task), "blobs", hash), bytes, {
-          flag: "wx",
-          mode: 0o600,
-        }).catch((e) => {
-          if (e.code !== "EEXIST") throw e;
-        });
-        before = { hash, bytes: bytes.length, binary: bytes.includes(0) };
+        before = fileState(bytes);
       } catch (error) {
         if (
           !String(error).includes("does not exist") &&
@@ -167,9 +229,16 @@ export class WorkerChangeJournal {
         files,
       });
   }
-  private async snapshot(root: string, task: WorkItem): Promise<Snapshot> {
-    const declared = exactScope(task);
-    if (!declared.length) return new Map();
+  /** The files a task is following: its planned scope and `files`, with folders expanded. */
+  private async resolve(
+    root: string,
+    task: WorkItem,
+    files: string[],
+  ): Promise<string[]> {
+    const declared = [...new Set([...exactScope(task), ...files])]
+      .map((path) => path.replaceAll("\\", "/"))
+      .filter(Boolean);
+    if (!declared.length) return [];
     const checkout = resolve(task.run.workspace ?? root);
     if (checkout !== root && (await realpath(checkout)) !== root)
       throw Error("The worker checkout moved during change capture.");
@@ -194,64 +263,60 @@ export class WorkerChangeJournal {
     )
       .split("\0")
       .filter(Boolean);
-    const paths = new Set([
-      ...tracked,
-      ...scope.filter((p) => /\.[a-z0-9]+$/i.test(p)),
-    ]);
-    if (paths.size > 200)
+    const paths = [
+      ...new Set([...tracked, ...scope.filter((p) => /\.[a-z0-9]+$/i.test(p))]),
+    ].filter(
+      (path) =>
+        within(root, resolve(root, path)) &&
+        !/(^|\/)(\.git|\.memcode|node_modules)(\/|$)/.test(path),
+    );
+    if (paths.length > scopeLimit)
       throw Error(
-        "Narrow the source scope to at most 200 files for a coordinated edit.",
+        `Narrow the source scope to at most ${scopeLimit} files for a coordinated edit.`,
       );
-    const result: Snapshot = new Map();
-    for (const path of paths) {
-      const candidate = resolve(root, path);
-      if (
-        !within(root, candidate) ||
-        /(^|\/)(\.git|\.memcode|node_modules)(\/|$)/.test(path)
-      )
-        continue;
-      try {
-        const actual = await realpath(candidate);
-        if (!within(root, actual))
-          throw Error("Change scope resolves outside the project.");
-        const info = await stat(actual);
-        if (!info.isFile()) continue;
-        if (info.size > 2_000_000)
-          throw Error(
-            "Source file exceeds the 2 MB change capture limit: " + path,
-          );
-        const bytes = await readFile(actual),
-          after = await stat(actual);
-        if (info.mtimeMs !== after.mtimeMs || info.size !== after.size)
-          throw Error("Source changed during capture. Inspect Fleet again.");
-        const hash = createHash("sha256").update(bytes).digest("hex"),
-          blobs = join(directory(task), "blobs");
-        await mkdir(blobs, { recursive: true });
-        await writeFile(join(blobs, hash), bytes, {
-          flag: "wx",
-          mode: 0o600,
-        }).catch((e) => {
-          if (e.code !== "EEXIST") throw e;
-        });
-        result.set(relative(root, actual).replaceAll("\\", "/"), {
-          hash,
-          bytes: bytes.length,
-          binary: bytes.includes(0) || decode(bytes) === undefined,
-        });
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ENOENT")
-          result.set(path, missing);
-        else throw error;
-      }
+    return paths;
+  }
+  private async read(root: string, path: string): Promise<Baseline> {
+    try {
+      const actual = await realpath(resolve(root, path));
+      if (!within(root, actual))
+        throw Error("Change scope resolves outside the project.");
+      const info = await stat(actual);
+      if (!info.isFile()) return missing;
+      if (info.size > 2_000_000)
+        throw Error(
+          "Source file exceeds the 2 MB change capture limit: " + path,
+        );
+      const bytes = await readFile(actual),
+        after = await stat(actual);
+      if (info.mtimeMs !== after.mtimeMs || info.size !== after.size)
+        throw Error("Source changed during capture. Record this edit again.");
+      return fileState(bytes);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return missing;
+      throw error;
     }
-    return result;
+  }
+  /** Code review reads a change's before and after text from the task's own folder. */
+  private async keep(task: WorkItem, state: Baseline) {
+    if (!state.hash || !state.content) return;
+    const blobs = join(directory(task), "blobs");
+    await mkdir(blobs, { recursive: true });
+    await writeFile(join(blobs, state.hash), state.content, {
+      flag: "wx",
+      mode: 0o600,
+    }).catch((e) => {
+      if (e.code !== "EEXIST") throw e;
+    });
   }
   private async diff(
     task: WorkItem,
     path: string,
-    before: FileState,
-    after: FileState,
+    before: Baseline,
+    after: Baseline,
   ): Promise<ChangeFile> {
+    await this.keep(task, before);
+    await this.keep(task, after);
     const binary = before.binary || after.binary;
     const file: ChangeFile = {
       path,
@@ -264,19 +329,11 @@ export class WorkerChangeJournal {
       afterHash: after.hash,
     };
     if (binary) return file;
-    const blob = async (state: FileState) =>
-      state.hash
-        ? decode(await readFile(join(directory(task), "blobs", state.hash)))!
-        : "";
-    const patch = structuredPatch(
-      path,
-      path,
-      await blob(before),
-      await blob(after),
-      "",
-      "",
-      { context: 3 },
-    );
+    const text = (state: Baseline) =>
+      state.content ? decode(state.content)! : "";
+    const patch = structuredPatch(path, path, text(before), text(after), "", "", {
+      context: 3,
+    });
     for (const hunk of patch.hunks) {
       let oldLine = hunk.oldStart,
         newLine = hunk.newStart;

@@ -102,7 +102,7 @@ test("analysis follows the actual primary branch after restart without switching
     assert.equal(item.analysis, "idle");
     assert.equal(item.repoId, "existing");
     assert.match(await readFile(join(f.path, "source.ts"), "utf8"), /keep this edit/);
-    await assert.rejects(ensureProjectRepository({ ...item, branch: "epic/foreign", analysisCurrentSource: true }), /epic checkout changed branch/);
+    await assert.rejects(ensureProjectRepository({ ...item, branch: "epic/foreign", analysisCurrentSource: true }), /goal checkout changed branch/);
     assert.equal(await git(f.path, ["branch", "--show-current"]), "epic/current");
   } finally { await rm(f.directory, { recursive: true, force: true }); }
 });

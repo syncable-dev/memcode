@@ -284,9 +284,9 @@ function currentSession(
       claim.deviceId === session.owner.deviceId
     )
   )
-    reject("SESSION_CHANGED", "Another worker now owns this story.");
+    reject("SESSION_CHANGED", "Another worker now owns this task.");
   if (!board.stories.some((s) => s.id === session.storyId))
-    reject("SESSION_STORY", "This story was removed.", 404);
+    reject("SESSION_STORY", "This task was removed.", 404);
   return session;
 }
 export function publishSession(
@@ -309,7 +309,7 @@ export function publishSession(
     )
       reject(
         "SESSION_OWNER",
-        "A confirmed story claim is required to publish its worker session.",
+        "A confirmed task claim is required to publish its worker session.",
         403,
       );
   } else {

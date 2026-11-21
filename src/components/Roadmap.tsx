@@ -70,7 +70,7 @@ export function Roadmap({
       const base = epic.baseBranch ?? "dev";
       notify(
         result.conflicts?.length
-          ? `Updating “${epic.title}” would conflict in ${result.conflicts.join(", ")}. Its work is saved on its branch; resolve it there or ask an agent.`
+          ? `Updating “${epic.title}” would conflict in ${result.conflicts.join(", ")}. Its work is safe. Resolve the conflict or ask an agent.`
           : result.merged
             ? `Updated “${epic.title}” from ${base}. Its code context refreshes in about a minute.`
             : `“${epic.title}” already has the latest ${base}.`,
@@ -110,10 +110,10 @@ export function Roadmap({
             THE BUILD, IN VIEW
           </span>
           <h2>
-            {epics.length} epics. <em>One direction.</em>
+            {epics.length} {epics.length === 1 ? "goal" : "goals"}. <em>One direction.</em>
           </h2>
           <p>
-            {done} of {tasks.length} stories complete<span>·</span>
+            {done} of {tasks.length} tasks complete<span>·</span>
             {tasks.filter((task) => isActive(task)).length} active workers
           </p>
         </div>
@@ -170,14 +170,14 @@ export function Roadmap({
           onClick={() => setNewEpic(true)}
         >
           <Plus size={13} />
-          New epic
+          New goal
         </button>
       </div>
       {!epics.length ? (
         <Empty
           icon={<Route size={29} />}
           title="A place for the bigger picture."
-          description="Group the work into epics, then break it into stories your fleet can pick up."
+          description="Group the work into goals, then break them into tasks your fleet can pick up."
           action={
             <div className="roadmap-empty-actions">
               <button
@@ -185,7 +185,7 @@ export function Roadmap({
                 onClick={() => setNewEpic(true)}
               >
                 <Plus size={14} />
-                Create an epic
+                Create a goal
               </button>
             </div>
           }
@@ -284,17 +284,17 @@ export function Roadmap({
                           </div>
                           <span>
                             {completed}
-                            <small>/ {stories.length} stories</small>
+                            <small>/ {stories.length} tasks</small>
                           </span>
                         </div>
                         <div className="epic-card-actions">
                           <button onClick={() => toggle(epic.id)}>
-                            {unfolded ? "Hide stories" : "View stories"}
+                            {unfolded ? "Hide tasks" : "View tasks"}
                             <ChevronRight size={12} />
                           </button>
                           <button onClick={() => addStory(epic.id)}>
                             <Plus size={12} />
-                            Add story
+                            Add task
                           </button>
                           {epic.updateNeeded && (
                             <button
@@ -355,7 +355,7 @@ export function Roadmap({
                                 {blocked(task) ? (
                                   <span
                                     className="dependency-tag"
-                                    title="Waiting on prerequisite stories"
+                                    title="Waiting on prerequisite tasks"
                                   >
                                     <GitBranch size={10} />
                                     {task.dependsOn?.length}
@@ -372,7 +372,7 @@ export function Roadmap({
                             ))}
                             {!stories.length && (
                               <p className="epic-no-stories">
-                                Give this epic its first focused story.
+                                Give this goal its first focused task.
                               </p>
                             )}
                           </div>
@@ -383,7 +383,7 @@ export function Roadmap({
                 </div>
                 {!group.length && (
                   <div className="phase-empty">
-                    This phase is open. Move an epic here when you’re ready.
+                    This phase is open. Move a goal here when you’re ready.
                   </div>
                 )}
               </section>
@@ -394,7 +394,7 @@ export function Roadmap({
         <div className="roadmap-footnote">
           <GitBranch size={12} />
           <span>
-            Stories carry the brief, runbook, model route and worker result.
+            Tasks carry the brief, runbook, model route and worker result.
             Prerequisites keep the order explicit.
             {shipped > 0 &&
               ` ${shipped} ${shipped === 1 ? "goal has" : "goals have"} shipped.`}
@@ -449,16 +449,16 @@ function NewEpic({
   return (
     <Modal
       title="Give the bigger idea a direction."
-      kicker="NEW EPIC"
-      description="An epic gathers the outcome. Stories make it actionable."
+      kicker="NEW GOAL"
+      description="A goal names the outcome. Tasks make it actionable."
       close={close}
     >
       <form onSubmit={submit}>
         <div className="modal-body">
           <label className="field">
-            <span>Epic name</span>
+            <span>Goal name</span>
             <input
-              aria-label="Epic name"
+              aria-label="Goal name"
               placeholder="What outcome are we working toward?"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
@@ -470,7 +470,7 @@ function NewEpic({
             <span>Why it matters</span>
             <div className="brief-input-wrap">
               <textarea
-                aria-label="Epic description"
+                aria-label="Goal description"
                 placeholder="Describe the outcome and what a successful version looks like…"
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
@@ -499,7 +499,7 @@ function NewEpic({
             className="button primary"
             disabled={!title.trim() || busy}
           >
-            {busy ? <Spinner /> : <Plus size={13} />}Create epic
+            {busy ? <Spinner /> : <Plus size={13} />}Create goal
           </button>
         </footer>
       </form>

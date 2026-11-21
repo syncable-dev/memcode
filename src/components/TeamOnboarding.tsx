@@ -269,7 +269,7 @@ export function TeamOnboarding({
         ))}
         {!value.projects.length && (
           <p className="collab-empty">
-            Share a project to bring its stories and discussions into this team.
+            Share a project to bring its tasks and discussions into this team.
           </p>
         )}
       </div>
@@ -483,7 +483,7 @@ export function TeamOnboarding({
               <span>01</span>A shared board and discussions
             </li>
             <li>
-              <span>02</span>Clear story ownership
+              <span>02</span>Clear task ownership
             </li>
             <li>
               <span>03</span>Results published on your terms
@@ -559,7 +559,7 @@ export function TeamOnboarding({
             <>
               <h3>Share {project.name}</h3>
               <p>
-                The team gets the project’s current stories, epics, cycles and
+                The team gets the project’s current goals, tasks, cycles and
                 discussions.
               </p>
               {directory && directory.teams.length > 1 && (
@@ -584,13 +584,13 @@ export function TeamOnboarding({
                         (item) => item.projectId === project.id,
                       ).length
                     }{" "}
-                    stories ·{" "}
+                    tasks ·{" "}
                     {
                       state.epics.filter(
                         (item) => item.projectId === project.id,
                       ).length
                     }{" "}
-                    epics
+                    goals
                   </small>
                 </div>
               </div>

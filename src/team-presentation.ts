@@ -76,14 +76,14 @@ export function teamStartBlocked(
 ): string | undefined {
   if (!team) return undefined;
   if (team.connection === "offline" || team.connection === "connecting")
-    return "Reconnect Team Sync before starting a shared story. MemCode must confirm its claim first.";
+    return "Reconnect Team Sync before starting a shared task. MemCode must confirm its claim first.";
   const owner = teamClaimForStory(team, storyId);
   if (
     owner &&
     !owner.local &&
     team.workspace.claims.some((c) => c.storyId === storyId)
   )
-    return `${owner.name} holds this story on ${owner.device}. Wait for that claim to be released before starting here.`;
+    return `${owner.name} holds this task on ${owner.device}. Wait for that claim to be released before starting here.`;
   return undefined;
 }
 

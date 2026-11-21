@@ -419,7 +419,7 @@ try {
     exact: true,
   });
   await expect(storyTour).toBeVisible();
-  const tabs = page.getByRole("navigation", { name: "Story tabs" });
+  const tabs = page.getByRole("navigation", { name: "Task tabs" });
   await tabs.getByRole("button", { name: "Code review" }).click();
   await expect(storyTour).toContainText("finding");
   await storyTour
@@ -430,7 +430,7 @@ try {
     .click();
   await expect(guide).toContainText("Review what changed.");
   await guide
-    .getByRole("button", { name: "Show Code review on my story" })
+    .getByRole("button", { name: "Show Code review on my task" })
     .click();
   await expect(
     tabs.getByRole("button", { name: "Code review" }),

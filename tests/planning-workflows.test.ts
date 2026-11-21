@@ -166,11 +166,11 @@ test("hierarchy rejects cycles and parent acceptance requires completed child st
   applyTaskPatch(state, child, { parentId: parent.id });
   assert.throws(
     () => validateHierarchy(state.tasks, parent, child.id),
-    /ancestor/,
+    /under one of its own subtasks/,
   );
   assert.throws(
     () => applyTaskPatch(state, parent, { stage: "done" }),
-    /child stories/,
+    /Complete the subtasks/,
   );
   applyTaskPatch(state, child, { stage: "done" });
   applyTaskPatch(state, parent, { stage: "done" });

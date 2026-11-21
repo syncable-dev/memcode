@@ -189,7 +189,7 @@ export function advancePlanningHistory(history: TeamPlanningHistory, before: Tea
 export function updatePlanningMetadata(history: TeamPlanningHistory, board: TeamSnapshot, metadata: TeamPlanningMetadata, event: TeamEvent, preserveUnchangedTimestamps = true): void {
   for (const value of metadata.stories) {
     const story = board.stories.find((item) => item.id === value.id), meta = history.stories.find((item) => item.id === value.id);
-    if (!story || !meta) throw Error("The shared story no longer exists.");
+    if (!story || !meta) throw Error("The shared task no longer exists.");
     const {createdAt: _createdAt, updatedAt: _updatedAt, ...current} = meta;
     if (preserveUnchangedTimestamps && planningValueHash(current) === planningValueHash(value)) continue;
     const before = observation(story, !!meta.archivedAt);

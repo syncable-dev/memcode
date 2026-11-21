@@ -193,7 +193,7 @@ export function WorkerConnections({
       setApproved(false);
       notify(
         harnessNames[selected.harness] +
-          " connected. Choose a story when you’re ready.",
+          " connected. Choose a task when you’re ready.",
       );
       onConnected?.(selected.harness);
     } catch (error) {
@@ -224,7 +224,7 @@ export function WorkerConnections({
     try {
       await window.memcode.setWorkerPermissionDefault(harness, mode);
       notify(
-        `${harnessNames[harness]} default set to ${permissionLabels[mode]}. Stories without an override inherit it.`,
+        `${harnessNames[harness]} default set to ${permissionLabels[mode]}. Tasks without an override inherit it.`,
       );
     } catch (error) {
       notify((error as Error).message);
@@ -243,7 +243,7 @@ export function WorkerConnections({
           <span className="eyebrow">YOUR INSTALLED TOOLS</span>
           <h2>Connect a worker. Keep your setup.</h2>
           <p>
-            Connect your tools and set their defaults once. Every story can
+            Connect your tools and set their defaults once. Every task can
             override them.
           </p>
         </div>
@@ -373,7 +373,7 @@ export function WorkerConnections({
                     ) : active ? (
                       "Applies across projects on the next worker pass."
                     ) : (
-                      "Across all projects · stories can override"
+                      "Across all projects · tasks can override"
                     )}
                   </small>
                   {installed.id === "cursor" && (
@@ -393,7 +393,7 @@ export function WorkerConnections({
                     <span>
                       {active
                         ? active + " active"
-                        : "Ready for your next story"}
+                        : "Ready for your next task"}
                     </span>
                     {onCreateWork && (
                       <button

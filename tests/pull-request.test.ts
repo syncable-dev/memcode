@@ -254,7 +254,7 @@ test("running stories and open Fleet decisions block Create without touching git
     const running = await f.service.plan("e1");
     assert.equal(
       running.blocker,
-      "Wait for 1 running story to finish, or stop it.",
+      "Wait for 1 running task to finish, or stop it.",
     );
     await assert.rejects(
       f.service.create({
@@ -263,7 +263,7 @@ test("running stories and open Fleet decisions block Create without touching git
         description: "d",
         commitMessage: "m",
       }),
-      /Wait for 1 running story/,
+      /Wait for 1 running task/,
     );
     assert.equal(await git(f.repo, ["log", "-1", "--format=%s"]), "Initial");
 

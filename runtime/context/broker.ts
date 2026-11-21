@@ -49,7 +49,7 @@ export class ContextBroker {
     const source = await sourceRevision(this.binding.project.path!);
     if (source.branch !== this.binding.branch)
       throw new Error(
-        "The bound epic branch changed. The host must stop or rebind this worker.",
+        "The bound goal branch changed. The host must stop or rebind this worker.",
       );
     const coverage: ContextPack["coverage"] = {
       status: "partial",

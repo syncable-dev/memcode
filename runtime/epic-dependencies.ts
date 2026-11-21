@@ -17,7 +17,7 @@ async function contentHash(
   try {
     const actual = await realpath(candidate);
     if (!within(root, actual))
-      throw Error("A prerequisite source resolves outside the epic checkout.");
+      throw Error("A prerequisite source resolves outside the goal checkout.");
     const file = await open(actual, "r");
     try {
       const before = await file.stat();
@@ -57,9 +57,9 @@ export function assertPrerequisitesComplete(state: AppState, task: WorkItem): vo
   const blockers = pending.map(({ story }) =>
     story
       ? `${story.identifier} · ${story.title} (${taskStatus(story, workflow)?.name ?? stageLabel(story.stage)})`
-      : "a story that is no longer available",
+      : "a task that is no longer available",
   );
-  throw Error(`Waiting for ${blockers.join(", ")}. Review this story’s prerequisites before starting.`);
+  throw Error(`Waiting for ${blockers.join(", ")}. Review this task’s prerequisites before starting.`);
 }
 
 /** Done is a planning state. Across epics, verify the actual prerequisite code. */
@@ -80,7 +80,7 @@ export async function assertEpicDependencies(
     const changes = await readWorkerChanges(dependency);
     if (!changes.checkpoints.length)
       throw Error(
-        `${dependency.identifier} is Done, but its source handoff has not been verified. Integrate and review its changes before starting this dependent epic.`,
+        `${dependency.identifier} is Done, but its source handoff has not been verified. Integrate and review its changes before starting this dependent goal.`,
       );
     const expected = new Map<string, string | undefined>();
     for (const checkpoint of changes.checkpoints)
@@ -89,7 +89,7 @@ export async function assertEpicDependencies(
     for (const [path, hash] of expected) {
       if ((await contentHash(root, path)) !== hash)
         throw Error(
-          `${dependency.identifier}'s change to ${path} is not present in this epic. Integrate that prerequisite through Git, then retry. No worker was started.`,
+          `${dependency.identifier}'s change to ${path} is not present in this goal. Integrate that prerequisite through Git, then retry. No worker was started.`,
         );
     }
   }

@@ -45,9 +45,9 @@ export function storyReadiness(
   if (handoffs.length) {
     return {
       state: "handoff",
-      label: "Check epic handoff",
+      label: "Needs work from another goal",
       detail:
-        "At launch MemCode checks that this checkout contains the changes from " +
+        "When it starts, MemCode checks that this goal already has the changes from " +
         handoffs
           .map((source) => `${source.identifier} · ${source.title}`)
           .join(", ") +
@@ -58,6 +58,6 @@ export function storyReadiness(
     state: "ready",
     label: "Ready to start",
     detail:
-      "Story prerequisites are clear. Worker and checkout availability are checked at launch.",
+      "Task prerequisites are clear. The worker and code are checked when it starts.",
   };
 }

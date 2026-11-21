@@ -184,7 +184,7 @@ try {
     .getByRole("navigation", { name: "Guide topics" })
     .getByRole("button", { name: "Code review", exact: true })
     .click();
-  const figure = page.getByRole("figure", { name: "Example story review" });
+  const figure = page.getByRole("figure", { name: "Example task review" });
   await figure.getByRole("button", { name: "Before & after" }).click();
   await expect
     .poll(() => figure.getByRole("img").evaluate((img) => img.naturalWidth))
