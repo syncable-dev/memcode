@@ -30,11 +30,7 @@ import {
   type Board,
   type Collection,
 } from "./document";
-import {
-  newIdentifiers,
-  NOT_IN_THE_LOG,
-  type NumberedTask,
-} from "./identifiers";
+import { newIdentifiers, NOT_IN_THE_LOG } from "./identifiers";
 import {
   BoardStore,
   type BoardToKeep,
@@ -73,8 +69,7 @@ export interface BoardSyncOptions {
 
 type Kept = Omit<KeptBoard, "log">;
 /** `live`: caught up and listening. The window is told `synced`, `sending` or `newer`. */
-type Condition =
-  "starting" | "live" | "offline" | "choose" | "gone" | "stopped";
+type Condition = "starting" | "live" | "offline" | "apart" | "gone" | "stopped";
 /** The documents went back to what was last saved, and the log is read again from there. */
 class StartAgain extends Error {}
 
@@ -111,22 +106,6 @@ const sentenceOf = (problem: unknown) =>
     : undefined;
 const sameBoard = (left: Board, right: Board) =>
   JSON.stringify(left) === JSON.stringify(right);
-/** The tasks of the shared board as the identifier rule needs them. */
-const sharedTasks = (
-  shared: Board,
-  arrived: Record<string, number>,
-): NumberedTask[] =>
-  Object.entries(shared.tasks).flatMap(([id, { fields }]) =>
-    typeof fields.identifier === "string"
-      ? [
-          {
-            id,
-            identifier: fields.identifier,
-            arrived: arrived[id] ?? NOT_IN_THE_LOG,
-          },
-        ]
-      : [],
-  );
 const hasWork = (board: Board) =>
   WORK.some((collection) => Object.keys(board[collection]).length > 0);
 /** The entries of one board whose ids another does not hold. */
@@ -177,7 +156,8 @@ export class BoardSync {
   private notSent?: string;
   /** The service turned a change down by one of its rules. Asking again changes nothing. */
   private refused?: string;
-  private choice?: { shared: number; added: number };
+  /** Both boards have work on them, so they stay two. */
+  private apart = false;
   private tooLarge = 0;
   private lastShown = "";
   private pauses = new Set<() => void>();
@@ -222,16 +202,6 @@ export class BoardSync {
     return this.capturing;
   }
 
-  /** The person said to keep both boards. */
-  async keepBoth(): Promise<void> {
-    await this.inTurn(async () => {
-      if (this.stopped || this.kept.joined || !this.choice) return;
-      await this.join(true);
-      if (this.condition === "choose") this.condition = "live";
-      await this.settle();
-    });
-  }
-
   /** The name of someone on the shared project, when it is known. */
   nameOf(accountId: string): string | undefined {
     return this.names.get(accountId);
@@ -273,7 +243,6 @@ export class BoardSync {
       leftOut: [...leftOut.values()],
       setAside: this.logDoc.store.pendingStructs !== null,
       tooLarge: this.tooLarge,
-      choice: this.condition === "choose" ? this.choice : undefined,
     };
   }
 
@@ -288,14 +257,14 @@ export class BoardSync {
         await this.catchUp();
         if (this.stopped) return;
         await this.inTurn(async () => {
-          if (!this.kept.joined) await this.join(false);
+          if (!this.kept.joined) await this.join();
           // What changed on this computer while sync was not running.
           else if (this.noteOwnChanges())
             await this.store.save(this.toKeep(false));
           await this.settle();
         });
         failures = 0;
-        this.say(this.choice ? "choose" : "live");
+        this.say(this.apart ? "apart" : "live");
         await this.watch();
         // A stream that ends is started again, as the service's own notes say.
         failures = 1;
@@ -580,34 +549,26 @@ export class BoardSync {
   }
 
   /**
-   * Brings the board on this computer and the one in the log together, once.
-   * What only this computer has is added to the log. Where both have an entry,
-   * the log's is taken.
+   * Makes the board on this computer and the board in the log one board, once.
+   * Either this computer shares its project, and its board is written to a log
+   * that has none. Or it joins a project that has a board, and takes that
+   * board as it is. Two boards with work on them are never made into one.
    */
-  private async join(confirmed: boolean): Promise<void> {
+  private async join(): Promise<void> {
     const state = this.options.state(),
       projectId = this.options.projectId;
     // Nothing of this computer's is in the document before this, so it holds what the log holds.
     const shared = readBoard(this.doc);
     const own = onlyIn(boardOf(state, projectId), shared);
-    if (hasWork(shared) && hasWork(own) && !confirmed) {
-      this.choice = {
-        shared: Object.keys(shared.tasks).length,
-        added: Object.keys(own.tasks).length,
-      };
-      return;
-    }
-    this.choice = undefined;
-    if (!this.isNewer()) {
-      // What is added takes numbers the shared board does not use, before it is written.
-      const renamed = this.renumber(sharedTasks(shared, this.kept.arrived));
-      const added = renamed ? onlyIn(boardOf(state, projectId), shared) : own;
+    const joining = hasWork(shared);
+    this.apart = joining && hasWork(own);
+    if (this.apart) return;
+    if (!joining && !this.isNewer())
       this.recording(() => {
         for (const collection of WRITING_ORDER)
-          for (const [id, entry] of Object.entries(added[collection]))
+          for (const [id, entry] of Object.entries(own[collection]))
             this.tooLarge += writeEntryAlone(this.doc, collection, id, entry);
       });
-    }
     const joined = readBoard(this.doc);
     // What was just written is on this computer already. Only the rest is taken.
     const written = onlyIn(joined, shared);
@@ -627,24 +588,21 @@ export class BoardSync {
 
   /**
    * Gives a new identifier to every task of this project that shares one with
-   * a task that reached the log before it. `others` are tasks the workspace
-   * does not hold yet. Says whether anything changed.
+   * a task that reached the log before it. Says whether anything changed.
    */
-  private renumber(others: NumberedTask[] = []): boolean {
+  private renumber(): boolean {
     const tasks = this.options
       .state()
       .tasks.filter(
         (task) => task.projectId === this.options.projectId && !task.example,
       );
-    const here = new Set(tasks.map((task) => task.id));
-    const renamed = newIdentifiers([
-      ...others.filter((task) => !here.has(task.id)),
-      ...tasks.map((task) => ({
+    const renamed = newIdentifiers(
+      tasks.map((task) => ({
         id: task.id,
         identifier: task.identifier,
         arrived: this.kept.arrived[task.id] ?? NOT_IN_THE_LOG,
       })),
-    ]);
+    );
     let changed = false;
     for (const task of tasks) {
       const identifier = renamed.get(task.id);

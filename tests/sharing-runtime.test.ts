@@ -490,14 +490,44 @@ test("a board connected on two computers of one person follows what is done in t
     await pc.request("sharing:disconnect", { projectId: "local-web" });
     assert.deepEqual(pc.state().sharedBoards, []);
     assert.equal(tasksOf(pc).length, 2);
+    // The same board, connected again, is still one board: nothing is added to the log.
+    const logged = mac.service.boards.log(shared).length;
+    await pc.request("sharing:connect", {
+      projectId: "local-web",
+      sharedProjectId: shared,
+    });
+    await until(() => boardOf(pc)?.state === "synced", "the PC to be back");
+    assert.equal(mac.service.boards.log(shared).length, logged);
+    assert.equal(tasksOf(pc).length, 2);
+
+    // A project with tasks of its own is not connected to a board that has work.
+    const other: Project = {
+      id: "local-other",
+      name: "another project",
+      description: "",
+      path: join(pc.root, "another"),
+      branch: "main",
+      analysis: "idle",
+      createdAt: "2026-11-21T12:00:00.000Z",
+    };
+    pc.state().projects.push(other);
+    await pc.request("task:create", {
+      projectId: "local-other",
+      title: "A task of its own",
+      description: "",
+      priority: "medium",
+      harness: pc.state().settings.defaultHarness,
+    });
+    await pc.request("sharing:disconnect", { projectId: "local-web" });
     await assert.rejects(
-      pc.request("sharing:keep-both", { projectId: "local-web" }),
-      /not being shared/,
+      pc.request("sharing:connect", {
+        projectId: "local-other",
+        sharedProjectId: shared,
+      }),
+      /Two boards are never made into one/,
     );
-    await assert.rejects(
-      pc.request("sharing:keep-both", {}),
-      /expected string/,
-    );
+    assert.deepEqual(pc.state().sharedProjectLinks, []);
+    assert.equal(mac.service.boards.log(shared).length, logged);
   } finally {
     await pc.close();
     await mac.close();

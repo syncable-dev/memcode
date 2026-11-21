@@ -43,7 +43,6 @@ interface PanelProps {
   onAccept(invitation: PendingInvitation): void;
   onConnect(shared: SharedProject): void;
   onDisconnect(): void;
-  onKeepBoth(): void;
 }
 
 const boardOf = (state: Workspace, project: Project) =>
@@ -91,7 +90,6 @@ function OpenProject({
   alreadySaid,
   busy,
   onDisconnect,
-  onKeepBoth,
 }: {
   project: Project;
   standing: ProjectSharing;
@@ -100,7 +98,6 @@ function OpenProject({
   alreadySaid?: string;
   busy: string;
   onDisconnect(): void;
-  onKeepBoth(): void;
 }) {
   const name = <strong>{project.name}</strong>;
   const linked =
@@ -169,16 +166,6 @@ function OpenProject({
           </p>
         )}
       </div>
-      {lines?.asksToKeepBoth && (
-        <button
-          className="button primary"
-          disabled={!!busy}
-          onClick={onKeepBoth}
-        >
-          {busy === "keep-both" && <LoaderCircle className="spin" size={13} />}
-          Keep both
-        </button>
-      )}
       {linked && (
         <button
           className="button secondary"
@@ -251,7 +238,6 @@ function Lists({
   onAccept,
   onConnect,
   onDisconnect,
-  onKeepBoth,
 }: PanelProps & { overview: Ready }) {
   const standing = projectSharing(project, state, overview);
   const links = state.sharedProjectLinks ?? [];
@@ -263,7 +249,6 @@ function Lists({
         board={boardOf(state, project)}
         busy={busy}
         onDisconnect={onDisconnect}
-        onKeepBoth={onKeepBoth}
       />
       <div className="sharing-heading">
         <h3>Your shared projects</h3>
@@ -387,7 +372,6 @@ export function SharingPanel(props: PanelProps) {
           }
           busy={busy}
           onDisconnect={props.onDisconnect}
-          onKeepBoth={props.onKeepBoth}
         />
       )}
       {overview?.state === "signed-out" && (
@@ -536,11 +520,6 @@ export function SharedProjects({
           await window.memcode.disconnectSharedProject(project.id);
           notify(`${project.name} is no longer connected`);
         })
-      }
-      onKeepBoth={() =>
-        void perform("keep-both", () =>
-          window.memcode.keepBothSharedBoards(project.id),
-        )
       }
     />
   );

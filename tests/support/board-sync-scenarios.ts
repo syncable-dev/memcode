@@ -293,7 +293,7 @@ export function boardSyncScenarios(
   );
 
   scenario(
-    "two boards that both have work are left as they are until the person says to keep both",
+    "two boards that both have work are never made into one, and a project without work gets the shared board",
     async (world, later) => {
       const people = cast();
       const alex = signedInTo(world, people.alex);
@@ -313,70 +313,69 @@ export function boardSyncScenarios(
       await mac.save();
       mac.connect(shared);
       await mac.synced();
+      const shared_ = structuredClone(mac.board());
 
+      // Dana connects a project that has tasks of its own.
       const laptop = await computer(world, people.dana, "laptop", {
         people: everyone,
       });
       later(() => laptop.close());
       laptop.state.tasks.push(
-        task(laptop.projectId, "dana-1", {
-          identifier: "MC-001",
-          title: "Dana's own task",
-        }),
+        task(laptop.projectId, "dana-1", { title: "Dana's own task" }),
         task(laptop.projectId, "dana-2", { title: "Dana's second" }),
       );
       await laptop.save();
       const mine = structuredClone(laptop.board());
       laptop.connect(shared);
       await until(
-        () => laptop.status().state === "choose",
-        "the question whether to keep both",
+        () => laptop.status().state === "apart",
+        () => `the laptop to say so: ${JSON.stringify(laptop.status())}`,
       );
-      assert.deepEqual(laptop.status().choice, { shared: 2, added: 2 });
       // Nothing was added to either board, and nothing was sent.
       assert.deepEqual(laptop.board(), mine);
       assert.deepEqual(laptop.appends, []);
-
-      // The question is still there after a restart.
+      // Not after a change on either side, and not after a restart.
+      await mac.edit(() => void (find(mac, "task-1").estimate = 2));
+      await laptop.edit(() => void (find(laptop, "dana-1").estimate = 9));
+      await mac.synced();
       await laptop.quit();
       laptop.reopen();
-      await until(
-        () => laptop.status().state === "choose",
-        "the question again",
-      );
-      assert.deepEqual(laptop.board(), mine);
+      await until(() => laptop.status().state === "apart", "the same answer");
+      assert.equal(find(laptop, "task-1"), undefined);
+      assert.equal(find(mac, "dana-1"), undefined);
+      assert.deepEqual(laptop.appends, []);
+      shared_.tasks["task-1"].fields.estimate = 2;
+      assert.deepEqual(mac.board(), shared_);
 
-      await laptop.sync.keepBoth();
-      await agree(mac, laptop);
-      assert.deepEqual(
-        mac.state.tasks
-          .filter((one) => one.projectId === mac.projectId)
-          .map((one) => one.id)
-          .sort(),
-        ["dana-1", "dana-2", "task-1", "task-2"],
-      );
-      assert.equal(find(laptop, "task-1").title, "Export as CSV");
-      // Both boards began at MC-001. The shared board's tasks keep their numbers,
-      // and the ones that were added take the next ones, the same on both computers.
-      for (const on of [mac, laptop])
-        assert.deepEqual(
-          Object.fromEntries(
-            on.state.tasks
-              .filter((one) => one.projectId === on.projectId)
-              .map((one) => [one.id, one.identifier]),
-          ),
-          {
-            "task-1": "MC-001",
-            "task-2": "MC-002",
-            "dana-1": "MC-003",
-            "dana-2": "MC-004",
-          },
-        );
+      // A project of Dana's that has no work gets the shared board as it is.
+      const desk = await computer(world, people.dana, "desk", {
+        people: everyone,
+      });
+      later(() => desk.close());
+      desk.state.customFields.push({
+        id: "dana-field",
+        projectId: desk.projectId,
+        name: "Only on Dana's computer",
+        type: "text",
+        options: [],
+      });
+      await desk.save();
+      desk.connect(shared);
+      await agree(mac, desk);
+      assert.deepEqual(desk.board(), shared_);
+      assert.equal(find(desk, "task-1").title, "Export as CSV");
+      // Nothing of the joining computer's own went onto the board, not even a custom field.
+      assert.deepEqual(desk.appends, []);
       // A comment made on the Mac is by the person who is signed in there.
-      assert.equal(
-        laptop.state.storyComments![0].author.name,
-        people.alex.name,
-      );
+      assert.equal(desk.state.storyComments![0].author.name, people.alex.name);
+      // From then on the guest works on the same board.
+      await desk.edit((state) => {
+        state.tasks.push(
+          task(desk.projectId, "task-8", { title: "Added by Dana" }),
+        );
+      });
+      await agree(mac, desk);
+      assert.equal(find(mac, "task-8").title, "Added by Dana");
     },
   );
 

@@ -66,7 +66,8 @@ export interface SharedBoardStatus {
    * `starting`: reading what the shared board holds.
    * `synced`: both hold the same. `sending`: changes made here are on their way.
    * `offline`: the sharing service cannot be reached; changes wait on this computer.
-   * `choose`: both boards have work on them and nobody has said to keep both yet.
+   * `apart`: both boards have work on them. Two boards are never made into one,
+   *   so nothing is exchanged.
    * `newer`: a newer MemCode laid the board out; it is shown here and not changed.
    * `gone`: the shared project is not there for this person any more.
    * `stopped`: sync cannot go on, and `detail` says why.
@@ -76,7 +77,7 @@ export interface SharedBoardStatus {
     | "synced"
     | "sending"
     | "offline"
-    | "choose"
+    | "apart"
     | "newer"
     | "gone"
     | "stopped";
@@ -90,8 +91,6 @@ export interface SharedBoardStatus {
   setAside: boolean;
   /** Values too large for the sharing service. They stay on this computer. */
   tooLarge: number;
-  /** For `choose`: how many tasks each board has that the other lacks. */
-  choice?: { shared: number; added: number };
 }
 
 export type SharingOverview =

@@ -8,6 +8,7 @@ import type {
   SharedProjectLink,
   SharingOverview,
 } from "../../src/sharing";
+import { twoBoards } from "../../src/sharing-board";
 import type { StoryAuthor } from "../../src/story-comments";
 import type { BetaSessionProof } from "../beta";
 import { SharingAccess } from "./access";
@@ -65,6 +66,8 @@ interface RunningBoard {
   sync: BoardSync;
 }
 
+/** How long connecting waits for board sync to say how the two boards stand. */
+const FIRST_WORD_MS = 8000;
 const NOT_SET_UP =
   "Sharing is not set up. Enter the sharing addresses in Settings first.";
 
@@ -164,7 +167,7 @@ export class Sharing {
     sharedProjectId: string;
   }): Promise<SharedProjectLink> {
     const service = this.requiredService();
-    this.assertFree(input, service);
+    const local = this.assertFree(input, service);
     const [{ accountId }, shared] = await Promise.all([
       service.access.current(),
       service.projects.getProject(input.sharedProjectId),
@@ -184,7 +187,25 @@ export class Sharing {
     (this.options.state().sharedProjectLinks ??= []).push(link);
     await this.options.changed();
     await this.syncBoards();
+    // Both boards have work on them: they stay two, and the project is not connected.
+    if ((await this.firstWordOn(link.projectId)) === "apart") {
+      await this.disconnect(link.projectId);
+      throw new Error(twoBoards({ local: local.name, shared: shared.name }));
+    }
     return link;
+  }
+
+  /**
+   * How a board that just started stands once it has read the log, or
+   * `starting` when the service takes longer than a person should wait.
+   */
+  private async firstWordOn(projectId: string) {
+    const patience = Date.now() + FIRST_WORD_MS;
+    for (;;) {
+      const state = this.boards.get(projectId)?.sync.status().state;
+      if (state !== "starting" || Date.now() > patience) return state;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
   }
 
   /** Forgets the link on this computer. The person stays on the shared project. */
@@ -232,13 +253,6 @@ export class Sharing {
           : undefined,
       ),
     );
-  }
-
-  /** The person said to keep both boards: theirs is added to the shared one. */
-  async keepBoth(projectId: string): Promise<void> {
-    const running = this.boards.get(projectId);
-    if (!running) throw new Error("This project's board is not being shared.");
-    await running.sync.keepBoth();
   }
 
   /** Who a comment written in a connected project is by: the person signed in to Memtrace. */
@@ -363,6 +377,7 @@ export class Sharing {
       throw new Error(
         `“${taken.sharedProjectName}” is already connected to “${takenBy.name}” on this computer.`,
       );
+    return local;
   }
 
   private requiredService(): Service {

@@ -52,11 +52,6 @@ export function registerSharing(
     z.object({ projectId: id }).strict(),
     ({ projectId }) => sharing.disconnect(projectId),
   );
-  register(
-    "sharing:keep-both",
-    z.object({ projectId: id }).strict(),
-    ({ projectId }) => sharing.keepBoth(projectId),
-  );
   // Starting, renaming and deleting a project and inviting people happen at memtrace.io.
   register("sharing:manage", z.undefined(), () =>
     host.call("open_memcode_projects", {}),
