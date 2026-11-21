@@ -8,6 +8,11 @@ import {
   SharingUnavailable,
 } from "../runtime/sharing/problems";
 import { refusalRules, refusalSentences } from "../src/sharing-refusals";
+import { projectsContract } from "../runtime/sharing/memsync/projects-contract";
+import {
+  encodeMessage,
+  type WireMessage,
+} from "../runtime/sharing/memsync/wire";
 import { startStandInMemsync } from "./support/memsync-stand-in";
 import {
   cast,
@@ -234,6 +239,65 @@ test("a reply that lacks what it always holds is not passed on half read", async
   } finally {
     await f.close();
   }
+});
+
+test("a project or invitation that is missing a part every one has is refused whole", async (context) => {
+  const owner = { account_id: "acct-1", name: "Alex Holm" };
+  const moment = { seconds: 1795300000 };
+  const invitation = {
+    id: "invitation-1",
+    project_id: "project-1",
+    project_name: "Launch plan",
+    email: "bo@example.com",
+    invited_by: owner,
+    sent_at: moment,
+    expires_at: moment,
+  };
+  const whole = { id: "project-1", name: "Launch plan", owner, guest_limit: 2 };
+  const answering = (message: string, value: WireMessage) =>
+    new MemsyncProjects(
+      {
+        unary: async () => encodeMessage(projectsContract, message, value),
+        close() {},
+      },
+      {
+        current: async () => ({ token: "t", accountId: "acct-1" }),
+        forget() {},
+      },
+    );
+  assert.equal(
+    (await answering("Project", whole).getProject("project-1")).owner.accountId,
+    "acct-1",
+  );
+  const incomplete: WireMessage[] = [
+    { ...whole, id: "" },
+    { ...whole, owner: undefined },
+    { ...whole, owner: { name: "Nobody in particular" } },
+    { ...whole, guests: [{ name: "A guest with no account" }] },
+    { ...whole, open_invitations: [{ ...invitation, id: "" }] },
+    { ...whole, open_invitations: [{ ...invitation, project_id: "" }] },
+    { ...whole, open_invitations: [{ ...invitation, expires_at: undefined }] },
+    { ...whole, open_invitations: [{ ...invitation, sent_at: undefined }] },
+    {
+      ...whole,
+      open_invitations: [{ ...invitation, invited_by: { name: "No account" } }],
+    },
+  ];
+  context.mock.method(console, "error", () => {});
+  for (const reply of incomplete)
+    await assert.rejects(
+      answering("Project", reply).getProject("project-1"),
+      unavailable(/could not read/),
+      JSON.stringify(reply),
+    );
+  // Someone who has left the project since inviting is simply not named.
+  const [open] = (
+    await answering("Project", {
+      ...whole,
+      open_invitations: [{ ...invitation, invited_by: undefined }],
+    }).getProject("project-1")
+  ).openInvitations;
+  assert.equal(open.invitedBy, undefined);
 });
 
 test("having no sign-in, or no way to get a token, stops the call before it is made", async () => {

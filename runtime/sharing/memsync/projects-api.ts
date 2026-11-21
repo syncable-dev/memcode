@@ -160,42 +160,43 @@ export class MemsyncProjects implements ProjectsApi {
     private readonly timeoutMs?: number,
   ) {}
 
-  async listProjects() {
-    const reply = await this.call("ListProjects", {});
-    return messages(reply.projects).map(project);
-  }
-  async listInvitations() {
-    const reply = await this.call("ListInvitations", {});
-    return messages(reply.invitations).map(invitation);
-  }
-  async getProject(projectId: string) {
-    return project(await this.call("GetProject", { project_id: projectId }));
-  }
-  async acceptInvitation(projectId: string, invitationId: string) {
-    return project(
-      await this.call("AcceptInvitation", {
-        project_id: projectId,
-        invitation_id: invitationId,
-      }),
+  listProjects() {
+    return this.call("ListProjects", {}, (reply) =>
+      messages(reply.projects).map(project),
     );
   }
+  listInvitations() {
+    return this.call("ListInvitations", {}, (reply) =>
+      messages(reply.invitations).map(invitation),
+    );
+  }
+  getProject(projectId: string) {
+    return this.call("GetProject", { project_id: projectId }, project);
+  }
+  acceptInvitation(projectId: string, invitationId: string) {
+    const request = { project_id: projectId, invitation_id: invitationId };
+    return this.call("AcceptInvitation", request, project);
+  }
 
-  private async call(
+  private async call<Answer>(
     name: ProjectsCall,
     request: WireMessage,
-  ): Promise<WireMessage> {
+    read: (reply: WireMessage) => Answer,
+  ): Promise<Answer> {
     // A token the service refuses is replaced once: its keys or the token may have just changed.
-    const first = await this.attempt(name, request);
-    if ("reply" in first) return first.reply;
-    const second = await this.attempt(name, request);
-    if ("reply" in second) return second.reply;
+    const first = await this.attempt(name, request, read);
+    if ("answer" in first) return first.answer;
+    const second = await this.attempt(name, request, read);
+    if ("answer" in second) return second.answer;
     throw problemWith(name, second.signInRefused);
   }
 
-  private async attempt(
+  /** One try, from the token to the reply as MemCode's own record. */
+  private async attempt<Answer>(
     name: ProjectsCall,
     request: WireMessage,
-  ): Promise<{ reply: WireMessage } | { signInRefused: GrpcFailure }> {
+    read: (reply: WireMessage) => Answer,
+  ): Promise<{ answer: Answer } | { signInRefused: GrpcFailure }> {
     const { token } = await this.access.current();
     const shapes = projectsCalls[name];
     try {
@@ -205,7 +206,9 @@ export class MemsyncProjects implements ProjectsApi {
         metadata: { authorization: `Bearer ${token}` },
         timeoutMs: this.timeoutMs,
       });
-      return { reply: decodeMessage(projectsContract, shapes.reply, sent) };
+      return {
+        answer: read(decodeMessage(projectsContract, shapes.reply, sent)),
+      };
     } catch (failure) {
       if (signInWasRefused(failure)) {
         this.access.forget(token);
