@@ -519,3 +519,26 @@ test("ending sync does not wait for a call the service never answers", async (co
   await pc.quit();
   assert.ok(Date.now() - started < 1000);
 });
+
+test("bytes that are not what their id says are left out, even when they would apply as a real change", async (context) => {
+  const { service, shared, mac, pc } = await standIn(context);
+  mac.connect(shared);
+  await mac.synced();
+  await mac.edit(() => void (find(mac, "task-2").title = "Written by the Mac"));
+  await mac.synced();
+
+  // In storage, the last entry's bytes become another update that reads perfectly well.
+  const log = service.boards.log(shared);
+  const { doc } = logAsDocument(log.slice(0, -1));
+  let forged: Uint8Array | undefined;
+  doc.on("update", (update: Uint8Array) => void (forged = update));
+  (doc.getMap("tasks").get("task-2") as Y.Map<unknown>).set("title", "Forged");
+  assert.ok(forged);
+  assert.equal(whyNotApplied(idOf(forged), forged), undefined);
+  service.boards.damage(shared, log.length, forged);
+
+  pc.connect(shared);
+  await pc.synced();
+  assert.equal(find(pc, "task-2").title, "Export as PDF");
+  assert.equal(pc.status().leftOut[0].count, 1);
+});
