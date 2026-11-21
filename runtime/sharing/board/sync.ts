@@ -438,7 +438,9 @@ export class BoardSync {
     const before = this.kept.joined ? readBoard(this.doc) : undefined;
     if (before) this.stamps.clear();
     const logChanged = this.applyAll(next);
-    // Until the boards are brought together the workspace follows nothing.
+    // Until the boards are brought together the workspace follows nothing, and
+    // nothing is kept: the log is read from its start again on the next run,
+    // which also gives every entry its author and its time.
     if (!before) return;
     const follows = this.follow(before, next[next.length - 1].loggedAt);
     await this.keep(logChanged, follows);
@@ -756,9 +758,6 @@ export class BoardSync {
    * crash the two are either both as before or both as now.
    */
   private async keep(log: boolean, workspace: boolean): Promise<void> {
-    // Until the boards have been brought together nothing is kept: the log is
-    // read from its start again, which also gives every entry its author and time.
-    if (!this.kept.joined) return;
     const link = this.link();
     if (!workspace || !link) return this.store.save(this.toKeep(log));
     link.applied = this.kept.applied = this.kept.applied + 1;
