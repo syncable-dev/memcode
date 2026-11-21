@@ -159,11 +159,12 @@ async function preparingFixture() {
       (state.fleetDeclarations ?? []).filter((item) => !item.recordedAt).length,
     async cleanup() {
       await manager.close();
+      await running;
       assert.ok(
         within(tmpdir(), root) &&
           basename(root).startsWith("memcode-preparation-test-"),
       );
-      await rm(root, { recursive: true, force: true });
+      await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     },
   };
 }
