@@ -338,6 +338,8 @@ export interface Project {
   example?: boolean;
 }
 export interface Settings {
+  /** Where projects are shared. Not set: sharing through the sharing service is absent. */
+  sharing?: import("./sharing").SharingSettings;
   automaticUpdateDownloads?: boolean;
   workerPermissionDefaults?: Partial<
     Record<Harness, import("./permissions").PermissionMode>
@@ -413,6 +415,8 @@ export interface TeamInvite {
   expiresAt: string;
 }
 export interface AppState {
+  /** Which shared project each local project's board belongs to, on this computer. */
+  sharedProjectLinks?: import("./sharing").SharedProjectLink[];
   reviewWorkflows?: Record<
     string,
     import("./code-review").ReviewWorkflowBinding

@@ -26,6 +26,13 @@ export interface BetaCredentials extends BetaBinding {
   signedOut?: boolean;
   reauthRequired?: boolean;
 }
+/** What memtrace.io checks a session by. It is a credential: show it to memtrace.io only. */
+export interface BetaSessionProof {
+  refreshToken: string;
+  deviceId: string;
+  sessionId: string;
+  accountId: string;
+}
 export interface BetaStoredState {
   configured: boolean;
   signedOut?: boolean;
@@ -616,6 +623,32 @@ export class MemCodeBeta {
         createHash("sha256").update(record.account.id).digest("hex"),
       ),
       MEMTRACE_ENGINEER: record.account.id,
+    };
+  }
+  /**
+   * The session as memtrace.io's other endpoints check it, once a rotation in
+   * flight has been saved. Null when there is no session to show.
+   */
+  async sessionProof(): Promise<BetaSessionProof | null> {
+    await this.initialize();
+    // Rotation spends the refresh token, so the old one is refused from then on.
+    await this.refreshing?.catch(() => {});
+    const record = this.record;
+    if (
+      this.changing ||
+      this.closing ||
+      this.signedOut ||
+      !record ||
+      record.signedOut ||
+      record.reauthRequired ||
+      Date.parse(record.refreshExpiresAt) <= this.clock()
+    )
+      return null;
+    return {
+      refreshToken: record.refreshToken,
+      deviceId: record.deviceId,
+      sessionId: record.sessionId,
+      accountId: record.account.id,
     };
   }
   clearTelemetryAuthorization() {
