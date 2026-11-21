@@ -4,6 +4,7 @@ import { grpcChannel } from "../runtime/sharing/memsync/grpc";
 import { SharingUnavailable } from "../runtime/sharing/problems";
 import { refusalRules } from "../src/sharing-refusals";
 import { actingAs } from "./support/memsync-owner";
+import { boardSyncScenarios } from "./support/board-sync-scenarios";
 import { boardsApiScenarios } from "./support/boards-api-scenarios";
 import {
   cast,
@@ -38,6 +39,9 @@ projectsApiScenarios(
   },
 );
 boardsApiScenarios("real memsync-server", async () => worldOn(await server()), {
+  skip: realMemsyncMissing,
+});
+boardSyncScenarios("real memsync-server", async () => worldOn(await server()), {
   skip: realMemsyncMissing,
 });
 
