@@ -490,3 +490,51 @@ test("a lane a person made by hand in an older way stays on this computer and of
     "Doing",
   );
 });
+
+test("what a comment points at is taken only when it is what MemCode would have written", () => {
+  const withReference = (reference: unknown) => {
+    const board = boardOf(mac(), "mac-project");
+    board.comments["comment-1"].fields.reference = reference as never;
+    const pc = workspace("pc-project");
+    applyBoard(pc, "pc-project", emptyBoard(), board, { at });
+    assert.equal(pc.storyComments!.length, 1);
+    assert.equal(pc.storyComments![0].text, "Looks right to me.");
+    return pc.storyComments![0].reference;
+  };
+  const real = {
+    kind: "file",
+    name: "export.ts",
+    quote: "const rows = [];",
+    path: "src/export/export.ts",
+    line: 12,
+    endLine: 14,
+  };
+  assert.deepEqual(withReference(real), real);
+  assert.deepEqual(
+    withReference({ kind: "changes", name: "The diff", quote: "" }),
+    {
+      kind: "changes",
+      name: "The diff",
+      quote: "",
+    },
+  );
+  // Anything else leaves the comment without a reference, never with a wrong one.
+  for (const wrong of [
+    "a string",
+    42,
+    [real],
+    { ...real, kind: "website" },
+    { ...real, name: 7 },
+    { ...real, name: "" },
+    { ...real, quote: "q".repeat(20001) },
+    { ...real, path: "/etc/passwd" },
+    { ...real, path: "../outside.ts" },
+    { ...real, path: "C:\\Users\\someone\\secret.ts" },
+    { ...real, line: -1 },
+    { ...real, line: 1.5 },
+    { ...real, selector: "s".repeat(1001) },
+    { ...real, extra: "something MemCode does not write" },
+    { kind: "file", quote: "no name" },
+  ])
+    assert.equal(withReference(wrong), undefined, JSON.stringify(wrong));
+});
