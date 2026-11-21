@@ -535,6 +535,19 @@ export interface MemCodeAPI extends CodeReviewAPI {
   localAnalysisDiagnostics(
     projectId: string,
   ): Promise<import("./local-analysis").LocalAnalysisDiagnostics>;
+  /** The signed-in person's shared projects and invitations, or why they cannot be shown. */
+  sharingOverview(): Promise<import("./sharing").SharingOverview>;
+  acceptSharedInvitation(input: {
+    projectId: string;
+    invitationId: string;
+  }): Promise<import("./sharing").SharingOverview>;
+  connectSharedProject(input: {
+    projectId: string;
+    sharedProjectId: string;
+  }): Promise<import("./sharing").SharedProjectLink>;
+  disconnectSharedProject(projectId: string): Promise<void>;
+  /** Opens the page at memtrace.io where projects are started and people invited. */
+  openSharedProjectsPage(): Promise<void>;
   teamsList(): Promise<import("./team-space").TeamDirectory>;
   createTeamWorkspace(input: {
     name: string;

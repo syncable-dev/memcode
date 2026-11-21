@@ -65,3 +65,63 @@ export type SharingOverview =
       projects: SharedProject[];
       invitations: PendingInvitation[];
     };
+
+type Workspace = Pick<
+  import("./shared").AppState,
+  "projects" | "team" | "sharedProjectLinks"
+>;
+type LocalProject = import("./shared").Project;
+type Ready = Extract<SharingOverview, { state: "ready" }>;
+
+/** How one local project stands with sharing, for the person signed in now. */
+export type ProjectSharing =
+  | { kind: "free" }
+  | { kind: "example" }
+  | { kind: "team" }
+  | { kind: "connected"; shared: SharedProject }
+  /** Connected, but the shared project is not among the person's projects any more. */
+  | { kind: "gone"; name: string }
+  /** Connected under another Memtrace account, or on another sharing service. */
+  | { kind: "elsewhere"; name: string }
+  /** Connected as far as this computer knows. The sharing service could not be asked. */
+  | { kind: "remembered"; name: string };
+
+export function projectSharing(
+  project: LocalProject,
+  workspace: Workspace,
+  overview: Ready,
+): ProjectSharing {
+  const link = workspace.sharedProjectLinks?.find(
+    (candidate) => candidate.projectId === project.id,
+  );
+  if (!link) {
+    if (project.example) return { kind: "example" };
+    const inTeam = workspace.team?.some(
+      (room) => room.projectId === project.id,
+    );
+    return inTeam ? { kind: "team" } : { kind: "free" };
+  }
+  const madeHere =
+    link.accountId === overview.accountId && link.service === overview.service;
+  if (!madeHere) return { kind: "elsewhere", name: link.sharedProjectName };
+  const shared = overview.projects.find(
+    (candidate) => candidate.id === link.sharedProjectId,
+  );
+  return shared
+    ? { kind: "connected", shared }
+    : { kind: "gone", name: link.sharedProjectName };
+}
+
+/** The local project a shared project is connected to on this computer, if any. */
+export function localProjectOf(
+  shared: SharedProject,
+  links: SharedProjectLink[],
+  projects: LocalProject[],
+  service: string,
+): LocalProject | undefined {
+  const link = links.find(
+    (candidate) =>
+      candidate.sharedProjectId === shared.id && candidate.service === service,
+  );
+  return link && projects.find((project) => project.id === link.projectId);
+}
