@@ -1,13 +1,13 @@
 import test, { after } from "node:test";
 import assert from "node:assert/strict";
 import { grpcChannel } from "../runtime/sharing/memsync/grpc";
-import { MemsyncProjects } from "../runtime/sharing/memsync/projects-api";
 import { SharingUnavailable } from "../runtime/sharing/problems";
 import { refusalRules } from "../src/sharing-refusals";
 import { actingAs } from "./support/memsync-owner";
 import {
   cast,
   projectsApiScenarios,
+  projectsOver,
   signedInTo,
 } from "./support/projects-api-scenarios";
 import {
@@ -62,7 +62,7 @@ test(
       const channel = grpcChannel(real.address);
       const forgotten: string[] = [];
       const token = real.tokenFor(alex, changes);
-      const projects = new MemsyncProjects(channel, {
+      const projects = projectsOver(channel, {
         current: async () => ({ token, accountId: alex.accountId }),
         forget: (refused) => forgotten.push(refused),
       });
