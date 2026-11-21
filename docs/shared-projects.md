@@ -290,12 +290,19 @@ pass, and `the_owner_cannot_leave` nowhere, because MemCode never asks to leave.
 Board sync has eight scenarios with two computers that run against both: a board written
 out and taken by a second computer, changes in both directions, offline and a restart,
 changes made while sync was not running, keeping both boards, two tasks numbered alike,
-and a guest who is taken off the project. Thirteen more run against the stand-in only,
+and a guest who is taken off the project. Sixteen more run against the stand-in only,
 most because they need a service that can be made to misbehave: an answer that is lost,
-an update damaged in the log, one that reads and cannot be applied, a newer layout,
-MemCode stopped before and after the workspace file was written, a full disk and a
-stream that is cut. `tests/sharing-runtime.test.ts` runs two whole runtimes against the
+an update damaged in the log, bytes that are not what their id says, an update that reads
+and cannot be applied, a newer layout, a change the service refuses, a call it never
+answers, MemCode stopped before and after the workspace file was written, a full disk and
+a stream that is cut. `tests/sharing-runtime.test.ts` runs two whole runtimes against the
 stand-in, through the same requests the window makes.
+
+42 deliberate breakages of board sync were run against these tests. 40 make a test fail.
+One removed a check that turned out to be dead code. One is not caught: the line in
+`runtime/app.ts` that hands board sync the workspace save. What that line relies on, that
+`LocalStore.save` reads the workspace at the call and writes it after the step it is
+given, is covered in `tests/sharing-workspace-save.test.ts`.
 
 ## Trying it on one computer
 
