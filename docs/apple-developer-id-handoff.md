@@ -1,11 +1,16 @@
 # Developer ID signing handoff for the physical Mac
 
-Status on 20 November 2026: the Account Holder completed the Apple Developer
-Program membership purchase. The Apple Developer account still displayed
-`Syncable ApS (Pending)` and said processing may take up to 48 hours. The order
-confirmation establishes the purchase, not certificate access or notarization.
-Do not buy the membership again. Resume certificate setup when the account is
-active and Certificates, Identifiers & Profiles is available.
+Status verified in the signed-in Apple Developer account on 21 November 2026:
+membership is active for **Syncable ApS**, Team ID **ZHYSCJZ6R5**, with renewal
+on **21 November 2027**. The Account Holder role and accepted Program License
+Agreement are visible. Certificates, Identifiers & Profiles opens successfully;
+the Certificates page currently shows the initial setup screen with no issued
+certificates listed. Enrollment processing is no longer blocking this work.
+
+The next action is to create the CSR/private key on the physical Mac and issue
+the Developer ID Application certificate for this team. Do not purchase another
+membership. No Developer ID certificate, signed app or notarization result has
+been established by this account-status check.
 
 The starting application source is the shipped beta.18 `main` commit
 `2e426b0a848c6bb8dad089135a485e3d1612a44d`. It pins Memtrace 1.2.22. Use an
@@ -18,8 +23,9 @@ while preparing this separate private candidate.
 
 1. Check `security find-identity -v -p codesigning` for an existing usable
    `Developer ID Application: Syncable ApS (TEAMID)` identity and matching private
-   key. Record the actual public identity and Team ID; do not invent them from
-   the organization name.
+   key. Require the confirmed team `ZHYSCJZ6R5` and record the actual public
+   signing identity from the Mac; do not infer the certificate name from the
+   organization name.
 2. If none exists, have the Account Holder authorize creation of one Developer
    ID Application certificate. Create its CSR/private key on this Mac using
    Keychain Access or Xcode, submit the CSR through the Apple Developer account,
