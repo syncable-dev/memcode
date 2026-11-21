@@ -271,13 +271,17 @@ export function boardSyncScenarios(
         find(pc, "task-1").estimate = 8;
         state.tasks.push(task(pc.projectId, "task-9", { title: "While away" }));
       });
+      pc.reopen();
+      // Nothing prompts it: starting is enough for the PC to find what changed.
+      await until(
+        () => find(mac, "task-9")?.title === "While away",
+        "the Mac to get what was made while the PC was not syncing",
+      );
       await mac.edit(
         () => void (find(mac, "task-1").title = "Renamed on the Mac"),
       );
-      pc.reopen();
       await agree(mac, pc);
       assert.equal(find(mac, "task-1").estimate, 8);
-      assert.equal(find(mac, "task-9").title, "While away");
       assert.equal(find(pc, "task-1").title, "Renamed on the Mac");
     },
   );
