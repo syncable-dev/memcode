@@ -212,17 +212,19 @@ export async function createRuntime(
   let dispatchQueued = () => {};
   let closed = false;
   let team: TeamSyncClient | undefined;
+  let sharing: Sharing | undefined;
   let persistenceFailed = false;
-  const changed = () => {
+  /** Tells the window once the workspace is written, and says so when it could not be. */
+  const saved = (write: () => Promise<void>, then?: () => Promise<void>) => {
     const pending = (async () => {
-      await team?.capture();
-      await store.save();
+      await write();
       emit("workspace:state", store.state);
       dispatchQueued();
       if (persistenceFailed) {
         persistenceFailed = false;
         emit("workspace:save-status", { state: "saved" });
       }
+      await then?.();
     })();
     return observePersistence(pending, (error) => {
       persistenceFailed = true;
@@ -237,6 +239,15 @@ export async function createRuntime(
       });
     });
   };
+  const changed = () =>
+    saved(
+      async () => {
+        await team?.capture();
+        await store.save();
+      },
+      // A board shared through the sharing service looks at what was just saved.
+      async () => sharing?.workspaceSaved(),
+    );
   let reconcilingArtifacts: Promise<void> | undefined;
   let artifactsCheckedAt = 0;
   const reconcileCatalog = () => {
@@ -723,6 +734,8 @@ export async function createRuntime(
     },
     changed: (status) => {
       emit("beta:status", status);
+      // Signing in or out decides which connected boards are synchronized.
+      if (!closed) void sharing?.syncBoards();
       if (!status.loginPending && !closed) {
         if (
           betaNeedsAnalysis &&
@@ -754,10 +767,14 @@ export async function createRuntime(
     },
   });
   // Sharing shows memtrace.io the same session, and holds no credential of its own.
-  const sharing = new Sharing({
+  sharing = new Sharing({
     state,
     changed,
     session: () => beta!.sessionProof(),
+    boardsFolder: join(store.dir, "shared-boards"),
+    // The workspace is read at this very call, so a board change is saved whole or not at all.
+    saveWorkspace: (first) => saved(() => store.save(first)),
+    shown: () => emit("workspace:state", store.state),
   });
   registerSharing(register, sharing, host);
   register("beta:status", z.undefined(), () => beta!.status());
@@ -1422,6 +1439,8 @@ export async function createRuntime(
         handoffAttribution: state().settings.handoffAttribution,
       };
       await changed();
+      // New sharing addresses: boards on the old service stop, boards on the new one start.
+      void sharing?.syncBoards();
       return dshProfileChanged ? revalidateDshOverrides() : store.runtime();
     },
   );
@@ -1487,6 +1506,7 @@ export async function createRuntime(
       : state().activeProjectId;
     return (
       (projectId ? team?.identity(projectId) : undefined) ??
+      (projectId ? sharing?.author(projectId) : undefined) ??
       connections.account.current.principal
     );
   });
@@ -1966,6 +1986,8 @@ export async function createRuntime(
     if (!team.status(parent.id))
       initializeCodeReviewWorkflow(state(), parent.id);
   await changed();
+  // Boards connected on an earlier run take up where they stopped.
+  void sharing.syncBoards();
   const artifactMaintenance = setInterval(() => {
     void reconcileCatalog().catch((error) =>
       console.error("Artifact catalog check failed:", error),
@@ -2066,7 +2088,7 @@ export async function createRuntime(
       teamIdentity.cancel();
       await repositories.close();
       await team?.close();
-      sharing.close();
+      await sharing?.close();
       await speech.close();
       await retrieval.close();
       await connections.close();
