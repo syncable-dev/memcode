@@ -97,6 +97,13 @@ const CANNOT_SEND =
 const CANNOT_SAVE =
   "The workspace could not be saved, so changes from the shared board are waiting. Free disk space, and they are taken up again.";
 
+/** What a problem with the service says to the person, or nothing for a fault of MemCode's own. */
+const sentenceOf = (problem: unknown) =>
+  problem instanceof SharingUnavailable ||
+  problem instanceof SharingRefused ||
+  problem instanceof SharingSignedOut
+    ? problem.message
+    : undefined;
 const sameBoard = (left: Board, right: Board) =>
   JSON.stringify(left) === JSON.stringify(right);
 /** The tasks of the shared board as the identifier rule needs them. */
@@ -163,6 +170,8 @@ export class BoardSync {
   private detail?: string;
   /** Why the last call to send did not get through, while something is still waiting. */
   private notSent?: string;
+  /** The service turned a change down by one of its rules. Asking again changes nothing. */
+  private refused?: string;
   private choice?: { shared: number; added: number };
   private tooLarge = 0;
   private lastShown = "";
@@ -182,8 +191,8 @@ export class BoardSync {
     this.stopped = true;
     this.watching?.cancel();
     for (const end of [...this.pauses]) end();
-    await this.running;
-    await this.sending;
+    // Whatever is being written is finished. A call the service has not
+    // answered is not waited for: what it brings is dropped when it comes.
     await this.turns;
     this.doc.destroy();
     this.logDoc.destroy();
@@ -238,19 +247,23 @@ export class BoardSync {
     }
     const live = this.condition === "live",
       newer = live && this.isNewer(),
-      held = live && !newer && waiting > 0 ? this.notSent : undefined;
+      sending = live && !newer && waiting > 0,
+      refused = sending ? this.refused : undefined,
+      held = sending && !refused ? this.notSent : undefined;
     return {
       projectId: this.options.projectId,
       state: newer
         ? "newer"
         : this.condition !== "live"
           ? this.condition
-          : held
-            ? "offline"
-            : waiting
-              ? "sending"
-              : "synced",
-      detail: newer ? NEWER : (held ?? this.detail),
+          : refused
+            ? "stopped"
+            : held
+              ? "offline"
+              : waiting
+                ? "sending"
+                : "synced",
+      detail: newer ? NEWER : (refused ?? held ?? this.detail),
       waiting,
       leftOut: [...leftOut.values()],
       setAside: this.logDoc.store.pendingStructs !== null,
@@ -654,6 +667,7 @@ export class BoardSync {
   // ── Sending ──────────────────────────────────────────────────────────────
 
   private send(): void {
+    if (this.refused) return;
     this.sending ??= this.sendAll().finally(() => {
       this.sending = undefined;
     });
@@ -676,14 +690,11 @@ export class BoardSync {
       } catch (problem) {
         if (this.stopped || this.isGone(problem)) return;
         if (problem instanceof SharingRefused) {
-          // The service will not take it, now or later. Asking again changes nothing.
-          this.say("stopped", problem.message);
-          return;
+          // The service will not take it, now or later. Reading goes on.
+          this.refused = problem.message;
+          return this.report();
         }
-        this.notSent =
-          problem instanceof Error && problem.name.startsWith("Sharing")
-            ? problem.message
-            : CANNOT_SEND;
+        this.notSent = sentenceOf(problem) ?? CANNOT_SEND;
         this.report();
         await this.pause(this.waitFor(++failures));
       }
@@ -691,6 +702,7 @@ export class BoardSync {
   }
 
   private async sent(receipts: UpdateReceipt[]): Promise<void> {
+    if (this.stopped) return;
     let dropped = false;
     for (const receipt of receipts) {
       const id = receipt.id.toLowerCase();
@@ -802,12 +814,8 @@ export class BoardSync {
 
   private failed(problem: unknown): void {
     if (problem instanceof StartAgain) return this.say("starting");
-    if (
-      problem instanceof SharingUnavailable ||
-      problem instanceof SharingRefused ||
-      problem instanceof SharingSignedOut
-    )
-      return this.say("offline", problem.message);
+    const said = sentenceOf(problem);
+    if (said) return this.say("offline", said);
     // Not something the service said: start again from what was last saved.
     console.error("Board sync failed and starts again:", problem);
     this.mustReopen = true;

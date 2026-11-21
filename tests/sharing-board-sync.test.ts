@@ -443,3 +443,79 @@ test("a project that is taken off this computer is not a board that was emptied"
     true,
   );
 });
+
+test("a task a worker is on here stays here when someone deletes it, and is back for everyone once it changes", async (context) => {
+  const { shared, mac, pc } = await standIn(context);
+  mac.connect(shared);
+  await mac.synced();
+  pc.connect(shared);
+  await agree(mac, pc);
+
+  // A worker is running on the PC's copy of the task when the Mac deletes it.
+  find(pc, "task-2").run = { state: "running" };
+  await mac.edit((state) => {
+    state.tasks = state.tasks.filter((one) => one.id !== "task-2");
+  });
+  await mac.synced();
+  await pc.synced();
+  assert.equal(find(mac, "task-2"), undefined);
+  assert.equal(find(pc, "task-2").title, "Export as PDF");
+
+  // The worker finishes and the task moves on.
+  await pc.edit(() => {
+    const kept = find(pc, "task-2");
+    kept.run = { state: "idle" };
+    kept.stage = "review";
+    kept.statusId = "pc-project:review";
+  });
+  await agree(mac, pc);
+  assert.equal(find(mac, "task-2").stage, "review");
+  assert.equal(find(mac, "task-2").title, "Export as PDF");
+});
+
+test("when the service refuses a change by one of its rules, sending stops with the sentence and reading goes on", async (context) => {
+  const { service, shared, mac, pc } = await standIn(context);
+  mac.connect(shared);
+  await mac.synced();
+  pc.connect(shared);
+  await agree(mac, pc);
+  await until(() => service.boards.watching === 2, "both to be listening");
+
+  // MemCode is written never to meet this. If it does, asking again changes nothing.
+  service.refuseNextCallBy("update_too_large", 3);
+  await mac.edit(
+    () => void (find(mac, "task-1").title = "Refused by the service"),
+  );
+  await until(() => mac.status().state === "stopped", "the Mac to say so");
+  assert.equal(
+    mac.status().detail,
+    "One change to the board was too large to share. Shorten the text you just added and try again.",
+  );
+  assert.equal(mac.status().waiting, 1);
+  const calls = mac.appends.length;
+
+  // What others do still arrives, and the change stays on this computer.
+  await pc.edit(() => void (find(pc, "task-2").title = "Still arriving"));
+  await until(
+    () => find(mac, "task-2").title === "Still arriving",
+    "the Mac to go on reading",
+  );
+  assert.equal(mac.status().state, "stopped");
+  assert.equal(find(mac, "task-1").title, "Refused by the service");
+  assert.equal(find(pc, "task-1").title, "Export as CSV");
+  // It did not keep asking in a loop.
+  assert.ok(mac.appends.length <= calls + 1, String(mac.appends));
+});
+
+test("ending sync does not wait for a call the service never answers", async (context) => {
+  const { shared, pc } = await standIn(context);
+  pc.isSilent = true;
+  pc.connect(shared);
+  await until(
+    () => pc.reads.length === 0 && pc.status().state === "starting",
+    "the PC to be asking",
+  );
+  const started = Date.now();
+  await pc.quit();
+  assert.ok(Date.now() - started < 1000);
+});
