@@ -466,8 +466,6 @@ export interface MemCodeAPI extends CodeReviewAPI {
     sharedProjectId: string;
   }): Promise<import("./sharing").SharedProjectLink>;
   disconnectSharedProject(projectId: string): Promise<void>;
-  /** Both boards have work on them: adds this computer's to the shared one. */
-  keepBothSharedBoards(projectId: string): Promise<void>;
   /** Opens the page at memtrace.io where projects are started and people invited. */
   openSharedProjectsPage(): Promise<void>;
   teamsList(): Promise<import("./team-space").TeamDirectory>;

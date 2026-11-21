@@ -364,13 +364,19 @@ test("connecting records which shared project a local project's board belongs to
     });
     assert.deepEqual(f.state.sharedProjectLinks, [link]);
     assert.equal(f.world.saves, 1);
-    // Connecting asks the service only whether the person is on that project.
+    // Connecting asks the service whether the person is on that project. The
+    // rest is board sync: who is on the project, and the board's log.
+    const asked = f.service.calls
+      .filter((call) => call.method !== "StartProject")
+      .map((call) => call.method);
+    assert.equal(asked[0], "GetProject");
     assert.deepEqual(
-      f.service.calls
-        .filter((call) => call.method !== "StartProject")
-        .map((call) => call.method),
-      ["GetProject"],
+      [...new Set(asked)].sort(),
+      ["GetProject", "ReadUpdates", "WatchUpdates"].filter((method) =>
+        asked.includes(method),
+      ),
     );
+    assert.ok(asked.includes("ReadUpdates"));
   } finally {
     await f.close();
   }
@@ -641,7 +647,6 @@ test("disconnecting ends sync for the board and forgets what was kept for it", a
     f.state.tasks.find((one) => one.id === "task-1")!.title = "Mine alone";
     await f.sharing.workspaceSaved();
     assert.equal(f.service.boards.log(shared).length, logged);
-    await assert.rejects(f.sharing.keepBoth("local-web"), /not being shared/);
   } finally {
     await f.close();
   }
@@ -726,7 +731,7 @@ test("boards connected on an earlier run are synchronized again when MemCode sta
   }
 });
 
-test("when both boards have work, nothing is added until the person says to keep both", async () => {
+test("a project with tasks cannot be connected to a shared project that already has a board, and nothing stays connected", async () => {
   const mac = await fixture();
   const laptop = await fixture(mac);
   const { alex, dana } = mac.people;
@@ -749,27 +754,39 @@ test("when both boards have work, nothing is added until the person says to keep
     laptop.state.tasks.push(
       task("local-app", "dana-1", { title: "Dana's own" }),
     );
-    await laptop.sharing.connect({
-      projectId: "local-app",
-      sharedProjectId: shared,
-    });
-    await boardsSynced(laptop, 1, "choose");
-    assert.deepEqual(laptop.state.sharedBoards![0].choice, {
-      shared: 2,
-      added: 1,
-    });
-    assert.equal(mac.service.boards.log(shared).length, logged);
-
-    await laptop.sharing.keepBoth("local-app");
-    await boardsSynced(laptop, 1);
-    await until(
-      () => mac.state.tasks.some((one) => one.id === "dana-1"),
-      "the Mac to get Dana's task",
+    await assert.rejects(
+      laptop.sharing.connect({
+        projectId: "local-app",
+        sharedProjectId: shared,
+      }),
+      (refusal: Error) => {
+        assert.equal(
+          refusal.message,
+          "app has tasks of its own, and Website already has a board. Two boards are never made into one. To join Website, connect a project that has no tasks yet. To share app, start a new shared project for it at memtrace.io.",
+        );
+        return true;
+      },
     );
+    assert.deepEqual(laptop.state.sharedProjectLinks ?? [], []);
+    assert.equal(laptop.state.sharedBoards?.length, 0);
+    assert.deepEqual(await readdir(laptop.boardsFolder), []);
+    assert.equal(mac.service.boards.log(shared).length, logged);
     assert.equal(
       laptop.state.tasks.filter((one) => one.projectId === "local-app").length,
-      3,
+      1,
     );
+
+    // The project that has no tasks joins, and gets the board.
+    await laptop.sharing.connect({
+      projectId: "local-web",
+      sharedProjectId: shared,
+    });
+    await boardsSynced(laptop, 1);
+    assert.equal(
+      laptop.state.tasks.filter((one) => one.projectId === "local-web").length,
+      2,
+    );
+    assert.equal(mac.service.boards.log(shared).length, logged);
   } finally {
     await laptop.close();
     await mac.close();
