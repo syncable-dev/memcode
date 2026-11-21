@@ -1056,3 +1056,70 @@ test("a rotated refresh is never published to the engine when OS credential pers
     f.manager.close();
   }
 });
+
+test("the session shown to memtrace.io's other endpoints waits for a rotation in flight", async () => {
+  const f = managerFixture();
+  let releaseRefresh!: (value: BetaTokens) => void;
+  try {
+    assert.equal(await f.manager.sessionProof(), null);
+    await f.manager.connect();
+    const connected = f.disk.state.credentials as BetaCredentials;
+    assert.deepEqual(await f.manager.sessionProof(), {
+      refreshToken: connected.refreshToken,
+      deviceId: connected.deviceId,
+      sessionId: connected.sessionId,
+      accountId: account.id,
+    });
+    f.advance(14 * 60000);
+    f.authorization.refresh = async () =>
+      new Promise((resolve) => (releaseRefresh = resolve));
+    const refreshing = f.manager.refresh();
+    await delay();
+    let shown = false;
+    const proof = f.manager.sessionProof().then((value) => {
+      shown = true;
+      return value;
+    });
+    await wait(40);
+    assert.equal(shown, false, "the spent refresh token must not be shown");
+    const rotated = tokens(f.lastBinding!, f.now);
+    releaseRefresh(rotated);
+    await refreshing;
+    assert.equal((await proof)!.refreshToken, rotated.refresh_token);
+    assert.notEqual(rotated.refresh_token, connected.refreshToken);
+  } finally {
+    await f.manager.close();
+  }
+});
+
+test("there is no session to show after sign-out, after revocation or once the refresh has expired", async () => {
+  const signedOut = managerFixture();
+  try {
+    await signedOut.manager.connect();
+    await signedOut.manager.signOut();
+    assert.equal(await signedOut.manager.sessionProof(), null);
+  } finally {
+    await signedOut.manager.close();
+  }
+  const revoked = managerFixture();
+  try {
+    await revoked.manager.connect();
+    revoked.advance(14 * 60000);
+    revoked.authorization.refresh = async () => {
+      throw new BetaRequestError(401);
+    };
+    await revoked.manager.refresh();
+    assert.equal(await revoked.manager.sessionProof(), null);
+  } finally {
+    await revoked.manager.close();
+  }
+  const expired = managerFixture();
+  try {
+    await expired.manager.connect();
+    assert.ok(await expired.manager.sessionProof());
+    expired.advance(31 * 86400000);
+    assert.equal(await expired.manager.sessionProof(), null);
+  } finally {
+    await expired.manager.close();
+  }
+});

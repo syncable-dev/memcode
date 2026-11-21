@@ -65,6 +65,12 @@ import { createMemtraceIdentityProofProvider } from "./team-identity";
 import { discoverOfficialTeamService } from "./team/discovery";
 import { createBetaAuthorization } from "./beta-auth";
 import { MemCodeBeta, nativeBetaStorage } from "./beta";
+import { Sharing } from "./sharing/sharing";
+import {
+  registerSharing,
+  sharingSettingsSchema,
+  sharingSettingsToKeep,
+} from "./sharing/routes";
 import { ManagedMemcodeEngine } from "./managed-engine";
 import { ManagedRetrievalAssistant } from "./context/managed-assistant";
 import { ProductTelemetry, observeTelemetryMutation } from "./telemetry";
@@ -723,6 +729,13 @@ export async function createRuntime(
       }
     },
   });
+  // Sharing shows memtrace.io the same session, and holds no credential of its own.
+  const sharing = new Sharing({
+    state,
+    changed,
+    session: () => beta!.sessionProof(),
+  });
+  registerSharing(register, sharing, host);
   register("beta:status", z.undefined(), () => beta!.status());
   register("beta:connect", z.undefined(), () => beta!.connect());
   register("beta:cancel", z.undefined(), () => beta!.cancel());
@@ -1039,6 +1052,7 @@ export async function createRuntime(
         workerPermissionDefaults: workerPermissionDefaults.optional(),
         handoffAttribution: handoffAttributionSchema.optional(),
         automaticUpdateDownloads: z.boolean().optional(),
+        sharing: sharingSettingsSchema.optional(),
         memtracePath: z.string().max(1000),
         speechEndpoint: z.string().max(1000),
         speech: speechSettingsSchema.optional(),
@@ -1060,6 +1074,10 @@ export async function createRuntime(
       .strict(),
     async (settings) => {
       localURL(settings.speechEndpoint);
+      const sharingSettings = sharingSettingsToKeep(
+        settings.sharing,
+        store.state.settings.sharing,
+      );
       if (settings.contextAssistant?.enabled) {
         const helper = settings.contextAssistant;
         if (!helper.model.trim())
@@ -1118,6 +1136,7 @@ export async function createRuntime(
         ...store.state.settings,
         ...settings,
         speech: settings.speech ?? store.state.settings.speech,
+        sharing: sharingSettings,
         contextAssistant:
           settings.contextAssistant ?? store.state.settings.contextAssistant,
         workerPermissionDefaults: state().settings.workerPermissionDefaults,
@@ -1758,6 +1777,7 @@ export async function createRuntime(
       teamIdentity.cancel();
       await repositories.close();
       await team?.close();
+      sharing.close();
       await speech.close();
       await retrieval.close();
       await connections.close();
