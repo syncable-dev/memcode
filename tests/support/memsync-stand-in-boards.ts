@@ -66,6 +66,7 @@ export function standInBoardLogs(the: {
   const logs = new Map<string, StandInLoggedUpdate[]>();
   const watchers = new Set<Watcher>();
   let loseNextReceipts = false;
+  let damageNextLogged = false;
   const logOf = (project: string) => {
     if (!logs.has(project)) logs.set(project, []);
     return logs.get(project)!;
@@ -112,6 +113,12 @@ export function standInBoardLogs(the: {
           author: caller.accountId,
           payload: update.payload as Uint8Array,
         };
+        if (damageNextLogged) {
+          // What is kept is not what was sent: its last byte is inverted.
+          damageNextLogged = false;
+          entry.payload = Uint8Array.from(entry.payload);
+          entry.payload[entry.payload.length - 1] ^= 0xff;
+        }
         log.push(entry);
       }
       return {
@@ -206,6 +213,10 @@ export function standInBoardLogs(the: {
     },
     loseNextReceipts() {
       loseNextReceipts = true;
+    },
+    /** The next update is damaged on its way into the log, before anyone reads it. */
+    damageNextLogged() {
+      damageNextLogged = true;
     },
     /** Ends every watcher's stream, as a proxy that drops quiet connections does. */
     cutWatchers() {

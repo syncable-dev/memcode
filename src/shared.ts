@@ -417,6 +417,8 @@ export interface TeamInvite {
 export interface AppState {
   /** Which shared project each local project's board belongs to, on this computer. */
   sharedProjectLinks?: import("./sharing").SharedProjectLink[];
+  /** How each connected board stands right now. Worked out again on every start. */
+  sharedBoards?: import("./sharing").SharedBoardStatus[];
   reviewWorkflows?: Record<
     string,
     import("./code-review").ReviewWorkflowBinding
