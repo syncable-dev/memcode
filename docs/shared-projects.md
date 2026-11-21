@@ -22,8 +22,11 @@ beside it.
 - Opens the MemCode tab of the Memtrace account, where projects are started, renamed and
   deleted and people are invited.
 
-What a worker says and does, its changes, review runs, local paths and credentials stay
-on the computer they are on. Source changes travel through Git, as before.
+A card's conversation, its artifacts and its changes are not carried yet. They are meant
+to be: someone on the project who opens a card is to see how it was solved and by whom,
+as it happens, and only running the worker stays on the computer it runs on. MemSync has
+no calls for that yet (its ADR-0005 is accepted and not built). Today a card on another
+computer has its brief, its runbook and its comments. Source changes travel through Git.
 
 A project is the thing people share. There is no team. A person's own computers are never
 invited: signing in to MemCode on each is enough, and each then connects its own local
@@ -118,10 +121,12 @@ sequenceDiagram
 - **Starting.** Sync runs for a project when its link belongs to the account that is
   signed in and to the sharing service in Settings. It starts with MemCode, after
   connecting, and when the sign-in or the addresses change.
-- **The first time.** A computer whose board has work on it writes the board to an empty
-  log, one entry an update. A computer with an empty project takes the board from the log.
-  When both have work, the Sharing view asks first, and **Keep both** adds this computer's
-  entries to the shared board. Nothing is replaced.
+- **The first time.** You either share your own project or join someone else's and get
+  their board. A computer whose board has work on it writes the board to a log that has
+  none, one entry an update. A computer whose project has no work takes the board from the
+  log as it is, lanes, custom fields and saved views included. When both have work,
+  nothing is merged: Connect answers with a sentence that says so, and the project stays
+  unconnected. One board on two computers, with the same ids, is one board.
 - **Changes made here** are found after every save of the workspace, and once when sync
   starts, which is how changes made while signed out are sent later. They wait on disk
   until the log has them.
@@ -154,7 +159,7 @@ The Sharing view says how the open project's board stands:
 | Nothing waits | The board is in sync. |
 | Changes on their way | Sending 3 changes to the shared board… |
 | The service cannot be reached | The reason, and "3 changes made here are kept on this computer and sent when it works again." |
-| Both boards have work | "Website board already has 3 tasks, and website has 2 of its own. Keeping both adds them to Website board. Nothing is replaced." with **Keep both** |
+| Both boards have work | "website has tasks of its own, and Website board already has a board. Two boards are never made into one. To join Website board, connect a project that has no tasks yet. To share website, start a new shared project for it at memtrace.io." Connect answers with it. It is on this line only when the service could not be asked while connecting. |
 | A newer MemCode laid the board out | A newer MemCode laid this board out. Update MemCode to change it from this computer. Until then it is shown here and what you change stays on this computer. |
 | The shared project is gone for this person | This shared project no longer exists, or you are no longer on it. |
 | The workspace cannot be saved | The workspace could not be saved, so changes from the shared board are waiting. Free disk space, and they are taken up again. |
@@ -289,8 +294,8 @@ pass, and `the_owner_cannot_leave` nowhere, because MemCode never asks to leave.
 
 Board sync has eight scenarios with two computers that run against both: a board written
 out and taken by a second computer, changes in both directions, offline and a restart,
-changes made while sync was not running, keeping both boards, two tasks numbered alike,
-and a guest who is taken off the project. Sixteen more run against the stand-in only,
+changes made while sync was not running, two boards that stay two, two tasks numbered
+alike, and a guest who is taken off the project. Sixteen more run against the stand-in only,
 most because they need a service that can be made to misbehave: an answer that is lost,
 an update damaged in the log, bytes that are not what their id says, an update that reads
 and cannot be applied, a newer layout, a change the service refuses, a call it never
@@ -371,20 +376,28 @@ For board sync, beside what the [layout page](shared-board-layout-proposal.md) h
 14. **Sync starts by itself** for every connected project. There is no switch per project
     other than Disconnect.
 15. **Where the board is kept on disk**: `shared-boards/` in the profile.
-16. **When two boards with work meet, the log's entry wins where both have the same id.**
-    That is the case of one board copied to two computers.
-17. **How long MemCode waits before trying again**: 1, 2, 5, 15, 30, then 60 seconds.
-18. **A comment in a connected project is by the Memtrace account**, with the name the
+16. **Where a project and the log hold an entry with the same id, the log's is taken.**
+    That is one board on two computers, or a project that is connected again.
+17. **Connect waits up to eight seconds** for board sync to say how the two boards stand,
+    and takes the link back when both have work. When the service cannot be asked in
+    that time, the link stays and the Sharing view says it later.
+18. **A project that joins takes the board's lanes, custom fields and saved views** in
+    place of its own.
+19. **How long MemCode waits before trying again**: 1, 2, 5, 15, 30, then 60 seconds.
+20. **A comment in a connected project is by the Memtrace account**, with the name the
     sharing service has for it. Before, it was by "You".
-19. **A task that a worker on this computer is on is not taken off the board here** when
+21. **A task that a worker on this computer is on is not taken off the board here** when
     someone else deletes it. It is back for everyone once it changes here.
-20. **Every sentence** in the table of states above.
+22. **Every sentence** in the table of states above.
 
 ## Not built
 
+- **A card's conversation, artifacts and changes on other computers.** This is the largest
+  gap against what sharing is meant to be. It waits for MemSync's conversation logs.
+  Until then the second computer continues a task from its brief, its runbook and its
+  comments, with a worker that starts fresh, not from the first computer's conversation.
 - What the [layout page](shared-board-layout-proposal.md#not-built) lists for the board.
-- Running a worker on someone else's computer, or seeing what a worker there says.
-  MemSync has nothing for it.
+- Running a worker on someone else's computer. MemSync has nothing for it.
 - Leaving a shared project from MemCode.
 - Anything for organization projects. MemSync has none yet.
 - Moving a Team Sync project to a shared project.
