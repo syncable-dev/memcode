@@ -773,3 +773,41 @@ test("when both boards have work, nothing is added until the person says to keep
     await mac.close();
   }
 });
+
+test("a board connected at one sharing service is not synchronized at another", async () => {
+  const f = await fixture();
+  const other = await startStandInMemsync();
+  const { alex } = f.people;
+  try {
+    giveWork(f.state, "local-web");
+    const shared = await f.as(alex).startProject("Website");
+    await f.sharing.connect({
+      projectId: "local-web",
+      sharedProjectId: shared,
+    });
+    await boardsSynced(f, 1);
+
+    // Settings now name another sharing service. The link still names the first.
+    f.world.admitAt = other;
+    f.state.settings.sharing = { memsyncUrl: other.address.href, tokenUrl };
+    await f.sharing.syncBoards();
+    assert.deepEqual(f.state.sharedBoards, []);
+    await until(
+      () => f.service.boards.watching === 0,
+      "the first service to see the stream end",
+    );
+    f.state.tasks.find((one) => one.id === "task-1")!.title =
+      "Not for the other service";
+    await f.sharing.workspaceSaved();
+    assert.equal(ready(await f.sharing.overview()).projects.length, 0);
+    assert.deepEqual(
+      other.calls
+        .map((call) => call.method)
+        .filter((method) => /Updates/.test(method)),
+      [],
+    );
+  } finally {
+    await f.close();
+    await other.close();
+  }
+});
