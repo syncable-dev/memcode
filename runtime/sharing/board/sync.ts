@@ -30,6 +30,11 @@ import {
   type Board,
   type Collection,
 } from "./document";
+import {
+  newIdentifiers,
+  NOT_IN_THE_LOG,
+  type NumberedTask,
+} from "./identifiers";
 import { BoardStore, type BoardToKeep, type KeptBoard } from "./store";
 import {
   holdsMore,
@@ -94,6 +99,22 @@ const CANNOT_SAVE =
 
 const sameBoard = (left: Board, right: Board) =>
   JSON.stringify(left) === JSON.stringify(right);
+/** The tasks of the shared board as the identifier rule needs them. */
+const sharedTasks = (
+  shared: Board,
+  arrived: Record<string, number>,
+): NumberedTask[] =>
+  Object.entries(shared.tasks).flatMap(([id, { fields }]) =>
+    typeof fields.identifier === "string"
+      ? [
+          {
+            id,
+            identifier: fields.identifier,
+            arrived: arrived[id] ?? NOT_IN_THE_LOG,
+          },
+        ]
+      : [],
+  );
 const hasWork = (board: Board) =>
   WORK.some((collection) => Object.keys(board[collection]).length > 0);
 /** The entries of one board whose ids another does not hold. */
@@ -331,6 +352,7 @@ export class BoardSync {
       seen: emptyBoard(),
       unsent: [],
       leftOut: [],
+      arrived: {},
     };
   }
 
@@ -374,6 +396,7 @@ export class BoardSync {
         if (made && event.changes.keys.get(id)?.action === "add") {
           stamp.createdAt = from.loggedAt;
           stamp.createdBy = from.author;
+          if (collection === "tasks") this.kept.arrived[id] ??= from.sequence;
         }
         stamp.changedAt = from.loggedAt;
         this.stamps.set(key, stamp);
@@ -437,8 +460,11 @@ export class BoardSync {
         nameOf: (account) => this.names.get(account),
       });
       // Read-only on a newer layout: `seen` stays, so changes made here are still found later.
-      if (!this.isNewer())
+      if (!this.isNewer()) {
         this.kept.seen = boardOf(state, this.options.projectId);
+        // A task that came with an identifier one here already has.
+        if (this.renumber()) this.noteOwnChanges();
+      }
     }
     await this.keep(logChanged, follows);
   }
@@ -536,12 +562,16 @@ export class BoardSync {
       return;
     }
     this.choice = undefined;
-    if (!this.isNewer())
+    if (!this.isNewer()) {
+      // What is added takes numbers the shared board does not use, before it is written.
+      const renamed = this.renumber(sharedTasks(shared, this.kept.arrived));
+      const added = renamed ? onlyIn(boardOf(state, projectId), shared) : own;
       this.recording(() => {
         for (const collection of WRITING_ORDER)
-          for (const [id, entry] of Object.entries(own[collection]))
+          for (const [id, entry] of Object.entries(added[collection]))
             this.tooLarge += writeEntryAlone(this.doc, collection, id, entry);
       });
+    }
     const joined = readBoard(this.doc);
     // What was just written is on this computer already. Only the rest is taken.
     const written = onlyIn(joined, shared);
@@ -552,8 +582,41 @@ export class BoardSync {
     });
     this.stamps.clear();
     this.kept.joined = true;
-    if (!this.isNewer()) this.kept.seen = boardOf(state, projectId);
+    if (!this.isNewer()) {
+      this.kept.seen = boardOf(state, projectId);
+      if (this.renumber()) this.noteOwnChanges();
+    }
     await this.keep(true, !sameBoard(written, joined));
+  }
+
+  /**
+   * Gives a new identifier to every task of this project that shares one with
+   * a task that reached the log before it. `others` are tasks the workspace
+   * does not hold yet. Says whether anything changed.
+   */
+  private renumber(others: NumberedTask[] = []): boolean {
+    const tasks = this.options
+      .state()
+      .tasks.filter(
+        (task) => task.projectId === this.options.projectId && !task.example,
+      );
+    const here = new Set(tasks.map((task) => task.id));
+    const renamed = newIdentifiers([
+      ...others.filter((task) => !here.has(task.id)),
+      ...tasks.map((task) => ({
+        id: task.id,
+        identifier: task.identifier,
+        arrived: this.kept.arrived[task.id] ?? NOT_IN_THE_LOG,
+      })),
+    ]);
+    let changed = false;
+    for (const task of tasks) {
+      const identifier = renamed.get(task.id);
+      if (!identifier) continue;
+      task.identifier = identifier;
+      changed = true;
+    }
+    return changed;
   }
 
   /** After the log or this computer changed something: repair, send, and tell the window. */

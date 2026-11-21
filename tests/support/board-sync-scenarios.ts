@@ -350,11 +350,75 @@ export function boardSyncScenarios(
         ["dana-1", "dana-2", "task-1", "task-2"],
       );
       assert.equal(find(laptop, "task-1").title, "Export as CSV");
+      // Both boards began at MC-001. The shared board's tasks keep their numbers,
+      // and the ones that were added take the next ones, the same on both computers.
+      for (const on of [mac, laptop])
+        assert.deepEqual(
+          Object.fromEntries(
+            on.state.tasks
+              .filter((one) => one.projectId === on.projectId)
+              .map((one) => [one.id, one.identifier]),
+          ),
+          {
+            "task-1": "MC-001",
+            "task-2": "MC-002",
+            "dana-1": "MC-003",
+            "dana-2": "MC-004",
+          },
+        );
       // A comment made on the Mac is by the person who is signed in there.
       assert.equal(
         laptop.state.storyComments![0].author.name,
         people.alex.name,
       );
+    },
+  );
+
+  scenario(
+    "two computers that both number a new task MC-003 while apart end with one MC-003 and one MC-004",
+    async (world, later) => {
+      const { shared, mac, pc } = await twoComputers(world, later);
+      mac.connect(shared);
+      await mac.synced();
+      pc.connect(shared);
+      await agree(mac, pc);
+
+      pc.goOffline();
+      await until(() => pc.status().state === "offline", "the PC to notice");
+      await pc.edit((state) => {
+        state.tasks.push(
+          task(pc.projectId, "made-on-pc", {
+            identifier: "MC-003",
+            title: "Made on the PC",
+          }),
+        );
+      });
+      await mac.edit((state) => {
+        state.tasks.push(
+          task(mac.projectId, "made-on-mac", {
+            identifier: "MC-003",
+            title: "Made on the Mac",
+          }),
+        );
+      });
+      await mac.synced();
+      pc.comeBack();
+      await agree(mac, pc);
+      // The Mac's reached the log first, so it is the one that keeps the number.
+      for (const on of [mac, pc]) {
+        assert.equal(find(on, "made-on-mac").identifier, "MC-003");
+        assert.equal(find(on, "made-on-pc").identifier, "MC-004");
+        assert.equal(find(on, "task-1").identifier, "MC-001");
+      }
+      // The next task made on either takes the number after those.
+      await mac.edit((state) => {
+        const highest = Math.max(
+          ...state.tasks
+            .filter((one) => one.projectId === mac.projectId)
+            .map((one) => Number(one.identifier.split("-")[1])),
+        );
+        assert.equal(highest, 4);
+      });
     },
   );
 
