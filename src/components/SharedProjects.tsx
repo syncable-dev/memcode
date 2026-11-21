@@ -13,14 +13,19 @@ import {
   projectSharing,
   type PendingInvitation,
   type ProjectSharing,
+  type SharedBoardStatus,
   type SharedProject,
   type SharingOverview,
 } from "../sharing";
+import { boardStanding } from "../sharing-board";
 import { dateLabel } from "../planning/dates";
 import { errorMessage } from "../errors";
 
 const REFRESH_ON_RETURN_MS = 15_000;
-type Workspace = Pick<AppState, "projects" | "team" | "sharedProjectLinks">;
+type Workspace = Pick<
+  AppState,
+  "projects" | "team" | "sharedProjectLinks" | "sharedBoards"
+>;
 type Ready = Extract<SharingOverview, { state: "ready" }>;
 
 interface PanelProps {
@@ -38,7 +43,11 @@ interface PanelProps {
   onAccept(invitation: PendingInvitation): void;
   onConnect(shared: SharedProject): void;
   onDisconnect(): void;
+  onKeepBoth(): void;
 }
+
+const boardOf = (state: Workspace, project: Project) =>
+  state.sharedBoards?.find((board) => board.projectId === project.id);
 
 const people = (shared: SharedProject) => {
   const others = [shared.owner, ...shared.guests]
@@ -53,17 +62,34 @@ const people = (shared: SharedProject) => {
   ].join(" · ");
 };
 
+/** How the open project's board stands with the shared one. */
+function BoardLines({ board }: { board: ReturnType<typeof boardStanding> }) {
+  return (
+    <>
+      <small className={`sharing-board ${board.tone}`}>{board.line}</small>
+      {board.notes.map((note) => (
+        <small key={note}>{note}</small>
+      ))}
+    </>
+  );
+}
+
 /** What the open project's own line says, and whether it can be disconnected. */
 function OpenProject({
   project,
   standing,
+  board,
   busy,
   onDisconnect,
+  onKeepBoth,
 }: {
   project: Project;
   standing: ProjectSharing;
+  /** How board sync stands, when it runs for this project. */
+  board?: SharedBoardStatus;
   busy: string;
   onDisconnect(): void;
+  onKeepBoth(): void;
 }) {
   const name = <strong>{project.name}</strong>;
   const linked =
@@ -71,6 +97,17 @@ function OpenProject({
     standing.kind === "gone" ||
     standing.kind === "elsewhere" ||
     standing.kind === "remembered";
+  const shared =
+    standing.kind === "connected"
+      ? standing.shared.name
+      : standing.kind === "remembered"
+        ? standing.name
+        : undefined;
+  // A project that is connected and has no word from board sync yet is about to get one.
+  const lines =
+    shared !== undefined && (board || standing.kind === "connected")
+      ? boardStanding(board, { local: project.name, shared })
+      : undefined;
   return (
     <section className="sharing-open-project">
       <span className="project-avatar">
@@ -97,16 +134,16 @@ function OpenProject({
             <p>
               {name} is connected to <strong>{standing.shared.name}</strong>.
             </p>
-            <small>
-              Connecting records which shared project this board belongs to. The
-              board does not sync between computers yet.
-            </small>
+            {lines && <BoardLines board={lines} />}
           </>
         )}
         {standing.kind === "remembered" && (
-          <p>
-            {name} is connected to <strong>{standing.name}</strong>.
-          </p>
+          <>
+            <p>
+              {name} is connected to <strong>{standing.name}</strong>.
+            </p>
+            {lines && <BoardLines board={lines} />}
+          </>
         )}
         {standing.kind === "gone" && (
           <p>
@@ -121,6 +158,16 @@ function OpenProject({
           </p>
         )}
       </div>
+      {lines?.asksToKeepBoth && (
+        <button
+          className="button primary"
+          disabled={!!busy}
+          onClick={onKeepBoth}
+        >
+          {busy === "keep-both" && <LoaderCircle className="spin" size={13} />}
+          Keep both
+        </button>
+      )}
       {linked && (
         <button
           className="button secondary"
@@ -193,6 +240,7 @@ function Lists({
   onAccept,
   onConnect,
   onDisconnect,
+  onKeepBoth,
 }: PanelProps & { overview: Ready }) {
   const standing = projectSharing(project, state, overview);
   const links = state.sharedProjectLinks ?? [];
@@ -201,8 +249,10 @@ function Lists({
       <OpenProject
         project={project}
         standing={standing}
+        board={boardOf(state, project)}
         busy={busy}
         onDisconnect={onDisconnect}
+        onKeepBoth={onKeepBoth}
       />
       <div className="sharing-heading">
         <h3>Your shared projects</h3>
@@ -320,8 +370,10 @@ export function SharingPanel(props: PanelProps) {
         <OpenProject
           project={props.project}
           standing={{ kind: "remembered", name: remembered.sharedProjectName }}
+          board={boardOf(props.state, props.project)}
           busy={busy}
           onDisconnect={props.onDisconnect}
+          onKeepBoth={props.onKeepBoth}
         />
       )}
       {overview?.state === "signed-out" && (
@@ -461,6 +513,11 @@ export function SharedProjects({
           await window.memcode.disconnectSharedProject(project.id);
           notify(`${project.name} is no longer connected`);
         })
+      }
+      onKeepBoth={() =>
+        void perform("keep-both", () =>
+          window.memcode.keepBothSharedBoards(project.id),
+        )
       }
     />
   );
