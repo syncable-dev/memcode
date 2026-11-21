@@ -9,16 +9,17 @@ MemSync keeps a board as a log of Yjs updates and never looks inside one
 that layout is, how a board that already exists on a computer becomes the first updates,
 and what MemCode does with an update it cannot apply.
 
-It was written as a proposal and is kept as the record of what was decided. Three things
-turned out differently when it was built. Each is marked **As built** where it stands.
-What is still missing is listed under [Not built](#not-built).
+It was written as a proposal and is kept as the record of what was decided. Where
+building it showed the proposal wrong, or where Alex decided otherwise, the text says so
+under **As built** or **Corrected**. What is still missing is listed under
+[Not built](#not-built).
 
 ## What a board holds today
 
 Team Sync already draws the line between what is shared and what stays on a computer, in
 `runtime/team/projection.ts` and `runtime/team/history.ts`. The proposal keeps that line.
 
-| Shared today | Stays on the computer |
+| On the board | Not on the board |
 | --- | --- |
 | Goals: identifier, title, description, phase, color, order, branch, base revision | Worker conversations and tool output |
 | Cycles: name, goal, dates, time zone, state, capacity, calendar | The worker, model, route and permissions of a task |
@@ -28,6 +29,15 @@ Team Sync already draws the line between what is shared and what stays on a comp
 
 Claims, messages to a worker, conversations and published results are not board data.
 MemSync's ADR-0005 gives them their own calls, and none of them is in this document.
+
+**Corrected.** The right-hand column was first headed "Stays on the computer", as if that
+were the product. It is not. Alex's rule of 21 November 2026: someone on a project who
+opens a card sees its conversation, how it was solved, its artifacts and changes and who
+did it, as it happens. Only running the worker stays on the computer it runs on. None of
+that belongs in the board document, and MemSync does not carry it yet: its ADR-0005, a log
+for each conversation and calls for claims and messages, is accepted and not built. Until
+it is, a card that arrives on another computer has its brief, its runbook and its
+comments, and not its conversation, artifacts or changes.
 
 ## The document
 
@@ -115,9 +125,8 @@ Existing identifiers never change when a board is first shared.
 
 **As built.** A task arrives with the log entry that made it, and MemCode keeps that
 number for every task. A task that is not in the log yet gives way to one that is. Two
-that arrived in the same entry are told apart by id. When two boards are brought
-together, the tasks that are added take their new numbers before they are written, so the
-log never holds the clash. The rule is in `runtime/sharing/board/identifiers.ts`.
+that arrived in the same entry are told apart by id. The rule is in
+`runtime/sharing/board/identifiers.ts`.
 
 ### Who and when
 
@@ -215,15 +224,23 @@ the Sharing view says so. MemCode does not refuse to save it.
 The second computer finds a log that already has a board. If its own local project is
 empty, it takes the board from the log. That is the case of a second computer.
 
-If both have content, everything is kept: the entries of the local board
+If both have content, the proposal is to keep everything: the entries of the local board
 are added to the log as new entries. Ids cannot collide, and identifiers that do are
 renumbered by the rule above. Nothing is lost and nothing is merged by guesswork. The
 person is told how many tasks will be added before it happens.
 
-**As built.** The Sharing view asks: "Website board already has 3 tasks, and website has
-2 of its own. Keeping both adds them to Website board. Nothing is replaced." Until the
-person chooses **Keep both**, nothing is added to either board and nothing is sent. The
-other choice is to disconnect.
+**Corrected: nothing is merged.** Alex decided otherwise on 21 November 2026: you either
+share your own project, or you join someone else's and get their board. So:
+
+- A computer whose project has work writes it only to a log that has no work in it.
+- A computer that joins a project with a board takes that board as it is. It adds nothing
+  of its own, not a lane and not a custom field.
+- When both have work, the project is not connected. Connecting answers: "app has tasks of
+  its own, and Website already has a board. Two boards are never made into one. To join
+  Website, connect a project that has no tasks yet. To share app, start a new shared
+  project for it at memtrace.io."
+
+A first version of the code did keep both, behind a question. It was taken out again.
 
 The same board on two computers of one person, with the same ids, is not two boards: the
 second computer finds its ids in the document and adds only what is missing.
@@ -360,16 +377,18 @@ None of this blocks a first version.
 
 Alex was asked on 21 November 2026 whether he approved the layout on this page so that
 board sync could be built on it, and answered "Yes, build it". The ten points below were
-put to him as one question and were not gone through one by one.
+put to him as one question and were not gone through one by one. Point 3 he decided the
+other way the same evening.
 
 1. **Is this the layout?** Collections at the top, an entry per id, one key per member of
    a set, descriptions as Yjs text, everything else replaced whole.
 2. **Deleting on a shared board marks the entry and keeps it.** Today a deleted task is
    gone. The alternative is to remove it, which loses a simultaneous edit and cannot be
    undone.
-3. **When two boards with content meet, keep everything from both.** The alternatives are
-   to refuse and make the person choose one, or to let the shared board replace the local
-   one.
+3. **When two boards with content meet, keep everything from both.** The alternatives
+   were to refuse and make the person choose one, or to let the shared board replace the
+   local one. **Decided otherwise:** nothing is merged, and the project is not connected.
+   See "Two boards meet".
 4. **Anyone on a project can change anything on its board**, guests included, except
    another person's comment. MemSync lets everyone on a project add updates, so a stricter
    rule would live in MemCode alone and could be worked around.
