@@ -576,3 +576,39 @@ test("Settings shows the two sharing addresses as they are saved, empty when the
     ],
   );
 });
+
+test("when the service cannot be reached the reason is said once, with what waits on this computer", () => {
+  const detail =
+    "The sharing service could not be reached. Check your connection and try again.";
+  const page = text(
+    render(
+      { state: "unavailable", detail },
+      shown({
+        sharedProjectLinks: [link()],
+        sharedBoards: [board({ state: "offline", detail, waiting: 2 })],
+      }),
+    ),
+  );
+  assert.equal(page.split(detail).length - 1, 1, page);
+  assert.match(page, /website is connected to Launch plan/);
+  assert.match(
+    page,
+    /2 changes made here are kept on this computer and sent when it works again/,
+  );
+  // A board that says something else keeps its own line.
+  const stopped = text(
+    render(
+      { state: "unavailable", detail },
+      shown({
+        sharedProjectLinks: [link()],
+        sharedBoards: [
+          board({
+            state: "stopped",
+            detail: "The workspace could not be saved.",
+          }),
+        ],
+      }),
+    ),
+  );
+  assert.match(stopped, /The workspace could not be saved\./);
+});
