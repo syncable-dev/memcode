@@ -1,0 +1,78 @@
+syntax = "proto3";
+
+package memsync.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// A project's board, kept in step between computers.
+//
+// The board is one Yjs document. MemSync keeps its updates in a log: every update gets
+// the next number in its project's log and the time the server logged it, once.
+// Applying a log in order gives every computer the same board and the same dates.
+// MemSync never looks inside an update, so a caller must cope with one it cannot apply.
+//
+// Calls are signed in and turned down as in the Projects service. Anyone on the project
+// can read and add.
+service Boards {
+  // Adds updates to the end of the project's board log. An update whose id is already
+  // in the log is not added again, so a call can be sent again when its answer was lost.
+  rpc AppendUpdates(AppendUpdatesRequest) returns (AppendUpdatesResponse);
+  // Reads the next page of the log after a number, oldest first. An empty page means
+  // there is nothing newer.
+  rpc ReadUpdates(ReadUpdatesRequest) returns (ReadUpdatesResponse);
+  // Sends everything in the log after a number, then every new update as it is logged,
+  // until the caller hangs up or is no longer on the project.
+  rpc WatchUpdates(WatchUpdatesRequest) returns (stream BoardUpdate);
+}
+
+message NewBoardUpdate {
+  // A UUID chosen by the sender. Sending the same id again adds nothing.
+  string id = 1;
+  // One Yjs update in the v1 encoding, at most 1 MiB.
+  bytes payload = 2;
+}
+
+message BoardUpdate {
+  string id = 1;
+  // Its place in the project's log, from 1, with no gaps.
+  uint64 sequence = 2;
+  // When MemSync logged it. Never earlier than the update before it.
+  google.protobuf.Timestamp logged_at = 3;
+  // The `Person.account_id` of whoever sent it.
+  string author_account_id = 4;
+  bytes payload = 5;
+}
+
+message UpdateReceipt {
+  string id = 1;
+  uint64 sequence = 2;
+  google.protobuf.Timestamp logged_at = 3;
+}
+
+message AppendUpdatesRequest {
+  string project_id = 1;
+  // At most 100, and together small enough for one gRPC message: 4 MiB unless the
+  // server is set up otherwise. Send a large first sync in several calls.
+  repeated NewBoardUpdate updates = 2;
+}
+
+message AppendUpdatesResponse {
+  // One for each update sent, in the order sent.
+  repeated UpdateReceipt receipts = 1;
+}
+
+message ReadUpdatesRequest {
+  string project_id = 1;
+  // 0 reads from the start.
+  uint64 after_sequence = 2;
+}
+
+message ReadUpdatesResponse {
+  repeated BoardUpdate updates = 1;
+}
+
+message WatchUpdatesRequest {
+  string project_id = 1;
+  // 0 watches from the start.
+  uint64 after_sequence = 2;
+}
