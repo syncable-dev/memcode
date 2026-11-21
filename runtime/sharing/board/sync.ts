@@ -250,6 +250,9 @@ export class BoardSync {
         if (this.stopped) return;
         await this.inTurn(async () => {
           if (!this.kept.joined) await this.join(false);
+          // What changed on this computer while sync was not running.
+          else if (this.noteOwnChanges())
+            await this.store.save(this.toKeep(false));
           await this.settle();
         });
         failures = 0;
@@ -484,7 +487,11 @@ export class BoardSync {
   /** Writes what changed on this computer into the document. Says whether there was something. */
   private noteOwnChanges(): boolean {
     if (!this.kept.joined || this.isNewer()) return false;
-    const now = boardOf(this.options.state(), this.options.projectId);
+    const state = this.options.state();
+    // A project that is gone from this computer is not a board that was emptied.
+    if (!state.projects.some((one) => one.id === this.options.projectId))
+      return false;
+    const now = boardOf(state, this.options.projectId);
     if (sameBoard(this.kept.seen, now)) return false;
     const made = this.recording(() => {
       this.tooLarge += writeChanges(this.doc, this.kept.seen, now);
