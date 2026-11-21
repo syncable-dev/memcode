@@ -73,6 +73,7 @@ export async function readCodexCatalog(command: Command, env: NodeJS.ProcessEnv,
 export function selectCodexModel(catalog: CodexCatalog, requested: string, automatic: boolean, tier?: ModelTier): string {
   const { models } = catalog;
   if (catalog.allModelsDenied) throw Error("Codex rejected every model advertised for this account. Check your Codex account or select another worker.");
+  if (requested === codexDefaultModel) return "";
   if (requested && requested !== codexDefaultModel && models.some(m => m.id === requested)) return requested;
   if (requested && requested !== codexDefaultModel && !automatic)
     throw Error(`Codex cannot confirm access to ${requested} for this account. Choose Match task complexity or an available model.`);

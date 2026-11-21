@@ -283,8 +283,8 @@ export function Improve(props: IntelligenceProps) {
             <em>a measurable one.</em>
           </h2>
           <p>
-            A checkpoint saves the quality measurements for this branch. After a
-            change, record another to see what improved.
+            A checkpoint saves the code’s quality measurements as they are now.
+            After a change, record another to see what improved.
           </p>
           <button
             className="button primary"
@@ -307,7 +307,7 @@ export function Improve(props: IntelligenceProps) {
           {feedbackLine}
           {!feedback && indexing && (
             <p role="status">
-              {project.analysisNote || "Memtrace is analyzing this checkout."}
+              {project.analysisNote || "Memtrace is analyzing this project’s code."}
             </p>
           )}
         </section>
@@ -329,7 +329,7 @@ export function Improve(props: IntelligenceProps) {
               number: "02",
               title: "Plan the work",
               description:
-                "Turn a finding into a story with source scope and a reviewable outcome.",
+                "Turn a finding into a task with source scope and a reviewable outcome.",
             },
             {
               number: "03",
@@ -383,7 +383,7 @@ export function Improve(props: IntelligenceProps) {
           <MetricTile
             label="Refactoring work"
             value={related.length.toString()}
-            caption="Open scoped improvement stories"
+            caption="Open scoped improvement tasks"
             accent="cyan"
           />
           <MetricTile
@@ -553,7 +553,7 @@ export function Improve(props: IntelligenceProps) {
           <header>
             <div>
               <h3>Improvement work, connected</h3>
-              <p>Focused stories already planned in this project.</p>
+              <p>Focused tasks already planned in this project.</p>
             </div>
             <Target size={17} />
           </header>
@@ -576,7 +576,7 @@ export function Improve(props: IntelligenceProps) {
         {...props}
         snapshot={latest}
         title="Choose the next focused improvement"
-        description="Plan a source-backed story from a hotspot. A worker never starts just because you create the work."
+        description="Plan a source-backed task from a hotspot. A worker never starts just because you create the work."
         findings={latest.hotspots.slice(0, 8)}
       />
     </div>

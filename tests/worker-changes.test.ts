@@ -117,3 +117,77 @@ test("change capture preserves binary hashes and refuses an outside scope", asyn
   task.scope = ["../outside.ts"];
   await assert.rejects(journal.begin(project, task), /outside/);
 });
+
+async function sharedCheckout(t: { after(fn: () => unknown): void }) {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "memcode-shared-edit-")));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await git(root, ["init", "--initial-branch=main"]);
+  const state = initialState(),
+    project = { ...state.projects[0], path: root, example: false };
+  const [first, second] = state.tasks.slice(0, 2).map((task, index) => ({
+    ...task,
+    id: "editor-" + index,
+    scope: [] as string[],
+    run: { state: "running" as const, branch: "main", workspace: root },
+  }));
+  const write = (a: number, b: number) =>
+    writeFile(join(root, "shared.ts"), `export const a = ${a};\nexport const b = ${b};\n`);
+  await write(1, 1);
+  return { project, first, second, write, journal: new WorkerChangeJournal() };
+}
+const added = (changes: Awaited<ReturnType<typeof readWorkerChanges>>) =>
+  changes.checkpoints.flatMap((checkpoint) =>
+    checkpoint.files.flatMap((file) =>
+      file.hunks.flatMap((hunk) =>
+        hunk.lines.filter((line) => line.kind === "add").map((line) => line.text),
+      ),
+    ),
+  );
+
+test("two workers editing one file at once: every change is recorded once, and the record says who else was editing", async (t) => {
+  const f = await sharedCheckout(t);
+  await f.journal.begin(f.project, f.first, ["shared.ts"]);
+  await f.journal.begin(f.project, f.second, ["shared.ts"]);
+  await f.write(2, 1);
+  await f.write(2, 2);
+  await f.journal.checkpoint(f.project, f.first, { sharedWith: () => [f.second.id] });
+  await f.write(2, 3);
+  await f.journal.checkpoint(f.project, f.second);
+  const [first, second] = await Promise.all([f.first, f.second].map(readWorkerChanges));
+  assert.deepEqual(added(first), ["export const a = 2;", "export const b = 2;"]);
+  assert.deepEqual(first.checkpoints[0].sharedWith, [f.second.id]);
+  assert.deepEqual(added(second), ["export const b = 3;"], "nothing the first record already holds");
+  assert.equal(second.checkpoints[0].sharedWith, undefined);
+});
+
+test("a finishing worker does not sweep up a file another worker is still editing", async (t) => {
+  const f = await sharedCheckout(t);
+  await f.journal.begin(f.project, f.first, ["shared.ts"]);
+  await f.journal.begin(f.project, f.second, ["shared.ts"]);
+  await f.write(1, 2);
+  await f.journal.release(f.project, f.first, { skip: (path) => path === "shared.ts" });
+  assert.equal((await readWorkerChanges(f.first)).checkpoints.length, 0);
+  await f.journal.checkpoint(f.project, f.second);
+  assert.deepEqual(added(await readWorkerChanges(f.second)), ["export const b = 2;"]);
+});
+
+test("a file a worker starts on later is followed from that moment", async (t) => {
+  const f = await sharedCheckout(t);
+  await f.journal.begin(f.project, f.first);
+  await f.write(5, 1);
+  await f.journal.begin(f.project, f.first, ["shared.ts"]);
+  await f.write(5, 6);
+  await f.journal.checkpoint(f.project, f.first);
+  assert.deepEqual(added(await readWorkerChanges(f.first)), ["export const b = 6;"]);
+});
+
+test("a new file created in a task's planned folder is recorded as that task's", async (t) => {
+  const f = await sharedCheckout(t);
+  f.first.scope = ["parts/"];
+  await f.journal.begin(f.project, f.first);
+  await mkdir(join(f.project.path!, "parts"));
+  await writeFile(join(f.project.path!, "parts", "helper.ts"), "export const helper = 1;\n");
+  await f.journal.checkpoint(f.project, f.first);
+  const [checkpoint] = (await readWorkerChanges(f.first)).checkpoints;
+  assert.deepEqual(checkpoint.files.map((file) => [file.path, file.status]), [["parts/helper.ts", "added"]]);
+});

@@ -17,6 +17,9 @@ engine binaries. Keep managed engines separate from a user's global CLI setup.
 - Do not invent live workers, successful tests, metric values or confidence.
   The example project must remain visibly labelled as example data.
 - A worker exit creates a review candidate, never an automatically verified change.
+- Every task belongs to a goal (epic). Commit, push, pull-request creation, merge and
+  Update from dev happen only from explicit actions that list each step first.
+  Never deploy.
 
 ## Engineering
 
@@ -27,9 +30,11 @@ engine binaries. Keep managed engines separate from a user's global CLI setup.
 - Isolate browser/artifact content from the app and its preload.
 - Never interpolate prompts into shell commands. Spawn with argument arrays.
 - An epic owns one Git branch. Story workers share the project checkout on that
-  branch and coordinate through Memtrace Fleet. Do not create per-worker branches
-  or worktrees. Preserve shared changes on stop/failure. Pause affected workers
-  and expose unresolved conflicts for a human decision.
+  branch, edit it at the same time and coordinate through Memtrace Fleet: declare,
+  edit, record. Do not create per-worker branches or worktrees, and do not add
+  locks or turn-taking between workers. Preserve shared changes on stop/failure.
+  Only a disagreement the workers involved cannot settle goes to a human, and it
+  holds only the contested code.
 - Prefer small modules and native APIs over extra frameworks.
 - Run `npm run typecheck`, `npm test`, `npm run build` and the Tauri smoke
   check for relevant changes. Inspect the actual desktop UI for visual changes.

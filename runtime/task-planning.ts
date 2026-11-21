@@ -48,7 +48,7 @@ export function applyTaskPatch(
     patch.stage = status.stage;
     if (status.id === backlogStatusId(item.projectId)) {
       if (patch.cycleId)
-        throw Error("Move this story to Planned to assign it to a cycle.");
+        throw Error("Move this task to Planned to assign it to a cycle.");
       patch.cycleId = null;
     }
   }
@@ -67,7 +67,7 @@ export function applyTaskPatch(
       )
     )
       throw new Error(
-        "Resolve the Fleet decision before accepting this story.",
+        "Resolve the Fleet decision before accepting this task.",
       );
     if (
       state.tasks.some(
@@ -78,7 +78,7 @@ export function applyTaskPatch(
       )
     )
       throw new Error(
-        "Complete the child stories before accepting their parent.",
+        "Complete the subtasks before accepting their parent task.",
       );
   }
   if (
@@ -93,7 +93,7 @@ export function applyTaskPatch(
       patch.archivedAt)
   )
     throw new Error(
-      "Stop the active worker before changing its execution scope, epic, cycle or archive state.",
+      "Stop the active worker before changing its execution scope, goal, cycle or archive state.",
     );
   if (patch.dependsOn) validateDependencies(state.tasks, item, patch.dependsOn);
   if (
@@ -102,7 +102,7 @@ export function applyTaskPatch(
       (epic) => epic.id === patch.epicId && epic.projectId === item.projectId,
     )
   )
-    throw new Error("Choose an epic from this project.");
+    throw new Error("Choose a goal from this project.");
   if (patch.cycleId) {
     const cycle = state.cycles.find(
       (cycle) =>
@@ -124,7 +124,7 @@ export function applyTaskPatch(
     const parent = state.tasks.find((task) => task.id === nextParentId);
     if (parent?.stage === "done")
       throw new Error(
-        "Reopen the parent story before adding unfinished child work.",
+        "Reopen the parent task before adding unfinished subtasks.",
       );
   }
   for (const target of [
@@ -138,7 +138,7 @@ export function applyTaskPatch(
       )
     )
       throw new Error(
-        "Issue relationships must reference another story in this project.",
+        "Issue relationships must reference another task in this project.",
       );
   }
   const start =

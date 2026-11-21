@@ -335,7 +335,7 @@ async function launch() {
     .getByRole("button", { name: /^Code review/ })
     .click();
   await expect(
-    page.getByRole("region", { name: "Story code review" }),
+    page.getByRole("region", { name: "Task code review" }),
   ).toBeVisible();
   return page;
 }

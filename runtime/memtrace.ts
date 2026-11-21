@@ -23,6 +23,7 @@ import {
   ManagedMemtraceOwners,
   pendingMemtraceOwner,
   disconnectedMemtraceClient,
+  recordedOwnerState,
 } from "./memtrace-owner";
 import {
   certifiedPublication,
@@ -200,7 +201,7 @@ export class MemtraceEngine {
   ): Promise<void> {
     const retirement = this.retirements.get(project.id);
     if (retirement) {
-      update?.("Finishing the previous epic engine session…");
+      update?.("Finishing the previous goal engine session…");
       await retirement;
     }
     await this.connect(project, update);
@@ -402,14 +403,14 @@ export class MemtraceEngine {
     if (this.closing) throw Error("The Memtrace connection is closing.");
     if (this.retiring.has(project.id))
       throw Error(
-        "This idle epic graph is retiring. Retry after it has closed.",
+        "This idle goal graph is retiring. Retry after it has closed.",
       );
     if (!project.path) throw Error("Choose a local project folder first.");
     const key = pathKey(project.path);
     if (this.options.environment) await this.options.environment();
     if (this.retiring.has(project.id))
       throw Error(
-        "This idle epic graph is retiring. Retry after it has closed.",
+        "This idle goal graph is retiring. Retry after it has closed.",
       );
     if (!project.path || pathKey(project.path) !== key)
       throw Error(
@@ -422,8 +423,15 @@ export class MemtraceEngine {
       return this.connect(project, update);
     }
     const existing = this.clients.get(project.id);
-    if (existing && pathKey(existing.projectPath) === key)
-      return existing.client;
+    if (existing && pathKey(existing.projectPath) === key) {
+      if (!(await this.ownerLost(project.id))) return existing.client;
+      // Reading the owner record yields, so another request may have begun the
+      // reconnect meanwhile. Join that one rather than opening a second session.
+      const reconnecting =
+        this.opening.has(project.id) ||
+        this.clients.get(project.id) !== existing;
+      if (reconnecting) return this.connect(project, update);
+    }
     const oldWatch = existing && this.watching.get(project.id);
     if (oldWatch) {
       // Let its already-issued operation settle before removing the old client,
@@ -484,6 +492,17 @@ export class MemtraceEngine {
         if (!listeners?.size) this.connectionProgress.delete(project.id);
       }
     }
+  }
+  /**
+   * An attached session whose owner process has died would wait out every request on
+   * nobody. Reconnecting starts a proper owner for the store again.
+   */
+  private async ownerLost(projectId: string): Promise<boolean> {
+    const scope = this.scopes.get(projectId);
+    return (
+      !!scope?.attached &&
+      (await recordedOwnerState(scope.dataDirectory)) === "gone"
+    );
   }
   private async releaseBinding(
     projectId: string,
@@ -841,11 +860,13 @@ export class MemtraceEngine {
             mode: "project",
             dataDirectory: local.dataDirectory,
             workspaceFile: local.workspaceFile,
+            ...(useManagedOwner && { attached: true as const }),
           }
         : {
             mode: "workspace",
             dataDirectory:
               env.MEMTRACE_MEMDB_DATA_DIR ?? join(scope.directory, ".memdb"),
+            ...(useManagedOwner && { attached: true as const }),
           },
     );
     const connection = active!;
@@ -871,7 +892,7 @@ export class MemtraceEngine {
         .then((result) => {
           if (generation !== (this.bindingGenerations.get(project.id) ?? 0))
             throw Error(
-              "This epic graph was retired; its earlier query was not adopted.",
+              "This goal graph was retired; its earlier query was not adopted.",
             );
           return unwrap(result);
         });
@@ -882,7 +903,7 @@ export class MemtraceEngine {
       signal?.throwIfAborted();
       if (generation !== (this.bindingGenerations.get(project.id) ?? 0))
         throw Error(
-          "This epic graph was retired; its earlier query was not retried.",
+          "This goal graph was retired; its earlier query was not retried.",
         );
       if (!pendingMemtraceOwner(error) && !disconnectedMemtraceClient(error))
         throw error;

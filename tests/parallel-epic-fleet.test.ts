@@ -14,11 +14,11 @@ import { initialState } from "../src/seed";
 import type { HarnessRuntime, Project, WorkItem } from "../src/shared";
 import type { MemtraceEngine } from "../runtime/memtrace";
 import { FleetCoordinator } from "../runtime/fleet";
-import { touchedIdentities } from "../runtime/coordination";
 import { rereadFleetSource } from "../runtime/fleet-source";
 import { WorkerManager } from "../runtime/workers";
 import { git } from "../runtime/local";
 import { approveFixtureWorker } from "./fixtures/worker-consent";
+import { fleetEngine } from "./support/fleet-engine";
 
 function story(
   project: Project,
@@ -85,7 +85,7 @@ async function sourceFixture() {
   return { root, original, a, b, project };
 }
 
-test("same-epic workers coordinate across graph IDs while independent epic leases remain separate", async () => {
+test("workers in one goal see each other's edits; a goal on another branch never does", async () => {
   const f = await sourceFixture();
   for (const [path, branch] of [
     [f.a, "epic/a"],
@@ -110,78 +110,45 @@ test("same-epic workers coordinate across graph IDs while independent epic lease
     a2 = story(f.project, "a2", "a", f.a),
     b = story(f.project, "b", "b", f.b);
   state.tasks = [a1, a2, b];
-  const calls: Array<{ project: Project; name: string; args: any }> = [],
-    leases = new Map<string, string[]>();
+  const fleetStandIn = fleetEngine();
+  const askedOf: Project[] = [];
   const engine = {
-    call: async (project: Project, name: string, args: any) => {
-      calls.push({ project, name, args });
-      if (name === "fleet_acquire_lease") {
-        if (
-          [...leases.values()].some((scope) =>
-            scope.some((key) => args.scope.includes(key)),
-          )
-        )
-          return { state: "requested" };
-        const lease_id = `lease:${args.agent_id}`;
-        leases.set(lease_id, args.scope);
-        return { state: "granted", lease_id };
-      }
-      if (name === "fleet_renew_lease") {
-        assert.ok(leases.has(args.lease_id));
-        return { state: "granted" };
-      }
-      if (name === "fleet_release_lease") {
-        leases.delete(args.lease_id);
-        return { state: "released" };
-      }
-      if (name === "fleet_record_episode") return { conflict_class: "A" };
-      return {};
+    ...fleetStandIn.engine,
+    call: (project: Project, name: string, args: any) => {
+      askedOf.push(project);
+      return fleetStandIn.engine.call(project, name, args);
     },
   } as unknown as MemtraceEngine;
-  const fleet = new FleetCoordinator(
-    () => state,
-    engine,
-    async () => {},
-    () => {
-      throw Error("Ordinary overlap must not become a human conflict");
-    },
-  );
+  const fleet = new FleetCoordinator(() => state, engine, async () => {});
+  const declare = (task: WorkItem, symbol: string) =>
+    fleet.coordinate(f.project, task, {
+      action: "declare",
+      symbols: [symbol],
+      kind: "change",
+      plan: "Change the shared source.",
+    }) as Promise<any>;
   try {
-    const expectedFile =
-      "file::" +
-      (process.platform === "win32"
-        ? join(f.original, "shared.ts").toLowerCase()
-        : join(f.original, "shared.ts")
-      ).replaceAll("\\", "/");
-    assert.ok(touchedIdentities(a1, f.project).includes(expectedFile));
-    assert.ok(touchedIdentities(a2, f.project).includes(expectedFile));
-    await fleet.before(f.project, a1);
-    await fleet.before(f.project, a2);
-    await fleet.before(f.project, b);
+    for (const task of state.tasks) await fleet.before(f.project, task);
+    await declare(a1, "shared.ts::source");
+    const sameGoal = await declare(a2, join(f.a, "shared.ts") + "::source");
+    const otherGoal = await declare(b, "shared.ts::source");
+    assert.equal(sameGoal.canEdit, true);
     assert.equal(
-      leases.size,
-      2,
-      "Only the first same-epic owner and independent epic own reservations",
+      sameGoal.editingNow[0].task,
+      "MC-a1",
+      "a path written through the checkout names the same symbol",
     );
-    assert.ok(!leases.has("lease:memcode:a2"));
-    const aScope = leases.get("lease:memcode:a1")!,
-      bScope = leases.get("lease:memcode:b")!;
-    assert.equal(
-      aScope.some((key) => bScope.includes(key)),
-      false,
-    );
-    assert.ok(aScope.some((key) => key.includes('branch::"epic/a"::file::')));
-    for (const call of calls.filter((item) =>
-      ["fleet_preflight", "fleet_publish_intent"].includes(item.name),
+    assert.equal(otherGoal.canEdit, true);
+    assert.deepEqual(otherGoal.editingNow, [], "another goal's workers are not peers");
+    for (const call of fleetStandIn.calls.filter(
+      (item) => item.name === "fleet_publish_intent",
     )) {
-      assert.equal(call.project, f.project);
       assert.equal(call.args.repo_id, "canonical-repo");
       assert.ok(["epic/a", "epic/b"].includes(call.args.branch));
-      assert.ok(
-        !call.args.touched.some((key: string) => key.startsWith("branch::")),
-        "Published source identities retain normal branch semantics",
-      );
+      assert.deepEqual(call.args.touched, ["shared.ts::source"]);
     }
+    assert.ok(askedOf.every((project) => project === f.project));
+    assert.equal(fleetStandIn.counts().fleet_acquire_lease, undefined);
     await fleet.heartbeat(f.project, a1);
     assert.equal(state.fleetConflicts.length, 0);
   } finally {
@@ -229,21 +196,25 @@ test("owned epic Fleet uses its certified graph while primary history is unavail
       assert.equal(analysis.repoId, "owned-repo-a");
       if (args.repo_id) assert.equal(args.repo_id, "owned-repo-a");
       calls.push(name);
-      return name === "fleet_acquire_lease"
-        ? { state: "granted", lease_id: "owned-lease" }
-        : name === "fleet_record_episode" ? { conflict_class: "A" } : {};
+      return name === "fleet_record_episode" ? { conflict_class: "A" } : {};
     },
-  } as unknown as MemtraceEngine, async () => {}, () => {});
+  } as unknown as MemtraceEngine, async () => {});
   try {
     await git(f.a, ["init", "--initial-branch=epic/a"]);
     await git(f.a, ["add", "shared.ts"]);
     await git(f.a, ["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "initial"]);
     await fleet.before(f.project, task);
     await fleet.heartbeat(f.project, task);
+    await fleet.coordinate(f.project, task, {
+      action: "declare",
+      symbols: ["shared.ts::source"],
+      kind: "change",
+      plan: "Update the shared source.",
+    });
     await writeFile(join(f.a, "shared.ts"), "export const source = 'updated';\n");
     await fleet.after(f.project, task);
     await fleet.release(f.project, task);
-    for (const name of ["fleet_preflight", "fleet_acquire_lease", "fleet_renew_lease", "fleet_record_episode", "fleet_release_lease", "fleet_list_escalations"])
+    for (const name of ["fleet_branch_context", "fleet_publish_intent", "fleet_record_episode"])
       assert.ok(calls.includes(name), name);
     assert.equal(f.project.analysis, "indexing");
     assert.equal(task.projectId, f.project.id);

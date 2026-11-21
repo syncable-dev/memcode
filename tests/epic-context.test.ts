@@ -112,6 +112,6 @@ test("a canonical ready certificate can never qualify an owned epic's source pac
   );
   assert.match(
     coverage.unknown.join(" "),
-    /epic worktree graph is not certified/,
+    /goal worktree graph is not certified/,
   );
 });

@@ -63,14 +63,14 @@ export function WorkspaceFilters({
           </Select>
         </label>
         <label>
-          <span>Epic</span>
+          <span>Goal</span>
           <Select
-            aria-label="Filter epic"
+            aria-label="Filter goal"
             value={filters.epicId}
             onValueChange={(epicId) => change({ epicId })}
           >
-            <option value="all">All epics</option>
-            <option value="none">Without an epic</option>
+            <option value="all">All goals</option>
+            <option value="none">Without a goal</option>
             {epics.map((epic) => (
               <option key={epic.id} value={epic.id}>
                 {epic.title}

@@ -1,11 +1,11 @@
-import { FolderGit2, GitBranch, Layers, NotebookPen, ScanLine } from "lucide-react";
+import { Bot, FolderGit2, Layers, NotebookPen, ScanLine } from "lucide-react";
 
 const steps = [
   { topic: "projects", title: "Project", detail: "Connect your code", icon: FolderGit2 },
-  { topic: "workers", title: "Worker", detail: "Approve a worker", icon: GitBranch },
-  { topic: "epics", title: "Epic", detail: "Define an outcome", icon: Layers },
-  { topic: "stories", title: "Story", detail: "Give it one task", icon: NotebookPen },
-  { topic: "review", title: "Code review", detail: "Inspect the evidence", icon: ScanLine },
+  { topic: "workers", title: "Worker", detail: "Connect a coding tool", icon: Bot },
+  { topic: "epics", title: "Goal", detail: "Say what you want", icon: Layers },
+  { topic: "stories", title: "Task", detail: "One piece of work", icon: NotebookPen },
+  { topic: "review", title: "Code review", detail: "Check what changed", icon: ScanLine },
 ] as const;
 
 export function GuideFlow({ onTopic }: { onTopic: (topic: string) => void }) {

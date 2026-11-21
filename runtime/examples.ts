@@ -23,7 +23,7 @@ export async function createExampleArtifacts(store: LocalStore): Promise<void> {
   const text = join(root, "workspace-notes.md");
   await writeFile(
     text,
-    "# MemCode workspace notes\n\nThis is an example artifact.\n\n- MemCode is an independent Tauri app.\n- Memtrace supplies code intelligence and Fleet coordination.\n- Story workers share an epic branch with Memtrace Fleet coordination.\n- Conversations, runbooks, changes and artifacts stay together.\n- A finished worker produces a review candidate.\n",
+    "# MemCode workspace notes\n\nThis is an example artifact.\n\n- MemCode is an independent Tauri app.\n- Memtrace supplies code intelligence and Fleet coordination.\n- Task workers share a goal branch with Memtrace Fleet coordination.\n- Conversations, runbooks, changes and artifacts stay together.\n- A finished worker produces a review candidate.\n",
   );
   store.state.artifacts.push({
     id: "example-notes",

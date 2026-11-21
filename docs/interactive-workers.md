@@ -14,16 +14,16 @@ Questions and permissions appear directly above the conversation input with a
 the complete native action is available in expandable details. Offered decisions
 remain harness decisions. Answers go to the waiting
 session immediately. They do not become queued follow-ups. Stale, cancelled,
-wrong-story or wrong-run replies are refused. Secret answers are returned to the
+wrong-task or wrong-run replies are refused. Secret answers are returned to the
 native session but redacted from persisted workspace history and renderer drafts.
 
 ## Permission modes
 
 Set a default once for each connected harness in **Workers → Default permissions**.
-Existing and new stories inherit that harness's current default across projects.
+Existing and new tasks inherit that harness's current default across projects.
 The card's selector shows **Worker default** unless an explicit override was saved;
 select Worker default again to clear an override. Automatic routing applies the
-default of its selected harness, while a story override takes precedence.
+default of its selected harness, while a task override takes precedence.
 
 The resolved mode and worker defaults are captured when a worker pass starts.
 Changes during preparation or execution affect its next pass; they do not silently
@@ -100,8 +100,8 @@ explicit no-image diagnostic.
   exact command, chose Allow once, and observed the same session/run finish.
 - Native browser verification covered hidden/visible animated pages, typing and
   clicking, another card's responsiveness and a forced native-failure/CDP fallback.
-- Story, epic and cycle deletion passed through the actual UI. Source byte hashes
-  were unchanged. Epic/cycle deletion keeps their stories; active workers block
+- Task, goal and cycle deletion passed through the actual UI. Source byte hashes
+  were unchanged. Goal/cycle deletion keeps their tasks; active workers block
   deletion before mutation.
 
 Evidence is saved outside the repository under `../tmp/memcode-interaction-ui/`,

@@ -31,6 +31,8 @@ export interface ChangeCheckpoint {
   at: string;
   basis: "fleet-reservation" | "scoped-baseline" | "native-edit" | "native-receipt";
   files: ChangeFile[];
+  /** Tasks that were editing the same files when this was recorded; some of these edits may be theirs. */
+  sharedWith?: string[];
 }
 export interface WorkerChanges {
   taskId: string;

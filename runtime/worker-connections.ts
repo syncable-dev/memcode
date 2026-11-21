@@ -10,7 +10,10 @@ import {
   type Command,
 } from "./commands";
 import { MemtraceAccountManager, type MemtraceAccountOptions } from "./account";
-import { probeStandardCatalog } from "./agents/standard-acp";
+import {
+  probeStandardCatalog,
+  type StandardHarness,
+} from "./agents/standard-acp";
 import type { NativeHost } from "./host";
 import {
   harnessNames,
@@ -21,6 +24,7 @@ import {
 import {
   hasWorkerApproval,
   workerApprovalMatches,
+  type WorkerConnection,
   type WorkerConnectionStatus,
 } from "../src/connections";
 const execute = promisify(execFile);
@@ -55,6 +59,50 @@ function accountLabel(value: unknown) {
     ? value
     : undefined;
 }
+
+type WorkerReadiness = Pick<
+  WorkerConnectionStatus,
+  "auth" | "accountLabel" | "connectionIssue"
+>;
+
+async function probeStandardConnection(
+  harness: StandardHarness,
+  command: Command,
+): Promise<WorkerReadiness> {
+  try {
+    const models = await probeStandardCatalog(harness, command);
+    // The CLI confirms provider access at the first model call.
+    if (models.length) return { auth: "provider-managed" };
+  } catch (error) {
+    if (
+      harness === "dsh" &&
+      error instanceof Error &&
+      /profile ["']acp["'] does not exist/i.test(clean(error.message))
+    )
+      return { auth: "unknown", connectionIssue: "unsupported-cli" };
+  }
+  return { auth: "unknown", connectionIssue: "unavailable" };
+}
+
+function connectionIssueNote(
+  harness: Harness,
+  issue: NonNullable<WorkerReadiness["connectionIssue"]>,
+) {
+  if (issue === "unsupported-cli")
+    return "Update the DeepSeek Harness CLI to a version with ACP support, then check again.";
+  return `MemCode couldn’t read the model list from ${harnessNames[harness]}. Check the CLI setup and sign-in, then try again.`;
+}
+
+function connectedNote(auth: WorkerConnection["auth"]) {
+  return auth === "provider-managed"
+    ? "Connected. The CLI manages sign-in and confirms model access when work starts."
+    : "Approved for projects you select. No worker starts until you send work.";
+}
+
+function canConnect(auth: WorkerReadiness["auth"]): auth is WorkerConnection["auth"] {
+  return auth === "authenticated" || auth === "local" || auth === "provider-managed";
+}
+
 export function parseWorkerAuth(
   harness: Harness,
   stdout: string,
@@ -183,19 +231,11 @@ export function registerConnections(
           : "Install the standalone CLI, then connect it here.",
         loginCommand: loginCommands[harness],
       };
-    let auth: Pick<WorkerConnectionStatus, "auth" | "accountLabel"> = {
-      auth: "unknown",
-    };
+    let auth: WorkerReadiness;
     if (harness === "codex" && state().settings.localModel)
       auth = { auth: "local", accountLabel: "Configured local model" };
-    else if (harness === "copilot" || harness === "dsh") {
-      // A catalog proves transport availability, not account access. These CLIs
-      // own provider authentication and confirm access at the first model call.
-      const models = await probeStandardCatalog(harness, command).catch(() => []);
-      auth = models.length
-        ? { auth: "provider-managed" }
-        : { auth: "unknown" };
-    }
+    else if (harness === "copilot" || harness === "dsh")
+      auth = await probeStandardConnection(harness, command);
     else {
       const args =
         harness === "codex"
@@ -227,13 +267,13 @@ export function registerConnections(
       }
     }
     const identity = commandIdentity(command);
+    const { auth: authStatus, connectionIssue } = auth;
     const approved = workerApprovalMatches(receipt, {
         id: harness,
         path: command.command,
         runtimeIdentity: identity,
       }),
-      connected =
-        approved && ["authenticated", "local", "provider-managed"].includes(auth.auth);
+      connected = approved && canConnect(authStatus);
     if (
       approved &&
       receipt &&
@@ -253,10 +293,10 @@ export function registerConnections(
       runtimeIdentity: identity,
       ...auth,
       approvedAt: approved ? receipt?.approvedAt : undefined,
-      note: connected
-        ? auth.auth === "provider-managed"
-          ? "Connected. This CLI manages its provider sign-in; model access is confirmed when work starts."
-          : "Approved for projects you select. No worker starts until you send work."
+      note: connectionIssue
+        ? connectionIssueNote(harness, connectionIssue)
+        : connected
+          ? connectedNote(authStatus)
         : approved
           ? auth.auth === "unknown"
             ? "Your worker approval is saved. Sign-in status could not be checked; check again before starting work."
@@ -285,23 +325,31 @@ export function registerConnections(
       const result = await status(input.harness);
       if (!result.installed || !result.runtimePath)
         throw Error("Install the worker CLI before connecting it.");
-      if (!["authenticated", "local", "provider-managed"].includes(result.auth))
+      if (result.connectionIssue) throw Error(result.note);
+      if (!canConnect(result.auth))
         throw Error(
           result.auth === "not-authenticated"
             ? `Sign in to ${harnessNames[result.harness]} before approving the connection.`
             : `MemCode couldn’t verify your ${harnessNames[result.harness]} sign-in.`,
         );
-      (state().workerConnections ??= {})[input.harness as Harness] = {
+      const approvedAt = new Date().toISOString();
+      (state().workerConnections ??= {})[result.harness] = {
         harness: input.harness,
-        approvedAt: new Date().toISOString(),
+        approvedAt,
         runtimePath: result.runtimePath,
         runtimeIdentity: result.runtimeIdentity ?? result.runtimePath,
-        auth: result.auth as "authenticated" | "local" | "provider-managed",
+        auth: result.auth,
         accountLabel: result.accountLabel,
         scopeVersion: 1,
       };
       await changed();
-      return status(input.harness);
+      return {
+        ...result,
+        connected: true,
+        approvalSaved: true,
+        approvedAt,
+        note: connectedNote(result.auth),
+      };
     },
   );
   register(

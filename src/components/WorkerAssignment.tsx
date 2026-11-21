@@ -86,7 +86,7 @@ export function WorkerAssignment({
         <div className="team-claim-notice" role="status">
           <span>
             <ShieldCheck size={12} />
-            Shared story
+            Shared task
           </span>
           <strong>
             {owner
@@ -98,7 +98,7 @@ export function WorkerAssignment({
           <small>
             {owner
               ? owner.device
-              : "Starting a worker reserves this story on this device."}
+              : "Starting a worker reserves this task on this device."}
           </small>
           {claimBlock && <p>{claimBlock}</p>}
         </div>
@@ -205,8 +205,8 @@ export function WorkerAssignment({
           <p>
             {automatic
               ? task.route
-                ? `${harnessNames[task.route.harness]} / ${task.route.modelLabel || task.route.model} is named for this story. Connect it in Workers before starting. The assignment does not start the work.`
-                : "Memtrace names a harness and model from the measured story. Connect a worker in Workers before starting."
+                ? `${harnessNames[task.route.harness]} / ${task.route.modelLabel || task.route.model} is named for this task. Connect it in Workers before starting. The assignment does not start the work.`
+                : "Memtrace names a harness and model from the measured task. Connect a worker in Workers before starting."
               : readiness.runtimeKnown
                 ? `${harnessNames[task.harness]} is installed. Approve its connection before starting work.`
                 : readiness.selectedInstalled
@@ -269,7 +269,7 @@ export function WorkerPrerequisites({
                 <ArrowUpRight size={13} aria-hidden="true" />
               </button>
             ) : (
-              <span>Story unavailable in this project</span>
+              <span>Task unavailable in this project</span>
             )}
           </li>
         ))}
@@ -307,20 +307,20 @@ export function StoryMetadata({
     <section className="inspector-section story-metadata">
       <details>
         <summary className="inspector-label">
-          STORY DETAILS
+          TASK DETAILS
           <Layers3 size={12} />
         </summary>
         <label className="metadata-field">
-          <span>Epic</span>
+          <span>Goal</span>
           <Select
-            aria-label="Work item epic"
+            aria-label="Work item goal"
             value={task.epicId ?? "none"}
             disabled={disabled}
             onValueChange={(value) =>
               update({ epicId: value === "none" ? null : value })
             }
           >
-            <option value="none">Project work · default epic</option>
+            <option value="none">Project work · default goal</option>
             {epics.map((epic) => (
               <option value={epic.id} key={epic.id}>
                 {epic.title}
@@ -369,15 +369,15 @@ export function StoryMetadata({
           className="metadata-field"
           ref={prerequisitesRef}
           tabIndex={-1}
-          aria-label="Edit story prerequisites"
+          aria-label="Edit task prerequisites"
           role="group"
         >
           <span>
             Prerequisites <small>Optional</small>
           </span>
           <p className="prerequisites-hint">
-            Link a story when this work needs its result. Remove the link here
-            if the two stories can run independently.
+            Link a task when this work needs its result. Remove the link here
+            if the two tasks can run independently.
           </p>
           {prerequisites.map((item) => (
             <div
@@ -409,8 +409,8 @@ export function StoryMetadata({
               <GitBranch size={11} />
               <span>
                 {missingCount === 1
-                  ? "1 unavailable story"
-                  : `${missingCount} unavailable stories`}
+                  ? "1 unavailable task"
+                  : `${missingCount} unavailable tasks`}
               </span>
               <button
                 type="button"

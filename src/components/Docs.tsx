@@ -35,7 +35,8 @@ export function Docs({
   const article =
       guideArticles.find((item) => item.id === selected) ?? guideArticles[0],
     filtered = guideArticles.filter((item) =>
-      (item.title + " " + item.summary + " " + item.steps.join(" "))
+      [item.title, item.summary, ...item.steps, ...(item.details ?? [])]
+        .join(" ")
         .toLowerCase()
         .includes(search.toLowerCase()),
     ),
@@ -82,7 +83,7 @@ export function Docs({
           ))}
           {!filtered.length && (
             <p className="docs-no-results">
-              No matching topic. Try “queue”, “worker” or “cycle”.
+              No matching topic. Try “goal”, “worker” or “review”.
             </p>
           )}
         </nav>
@@ -130,6 +131,14 @@ export function Docs({
             <p>{article.note}</p>
           </aside>
         )}
+        {article.details?.length ? (
+          <section className="docs-details" aria-labelledby="docs-details-heading">
+            <h3 id="docs-details-heading">In more detail</h3>
+            {article.details.map((detail, index) => (
+              <p key={index}>{detail}</p>
+            ))}
+          </section>
+        ) : null}
         <footer className="docs-article-footer">
           {article.destination && (
             <button

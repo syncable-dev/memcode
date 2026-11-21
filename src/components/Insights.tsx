@@ -103,7 +103,7 @@ export function Insights({ state, project, open }: Props) {
       <div className="insight-metric-grid">
         <Metric
           icon={<Layers3 size={15} />}
-          label="Open stories"
+          label="Open tasks"
           value={unfinished.length}
           note="Current project scope"
         />
@@ -121,7 +121,7 @@ export function Insights({ state, project, open }: Props) {
         />
         <Metric
           icon={<Flag size={15} />}
-          label="Unestimated stories"
+          label="Unestimated tasks"
           value={unestimated}
           note="Open work without a point estimate"
         />
@@ -141,7 +141,7 @@ export function Insights({ state, project, open }: Props) {
           <ThroughputChart data={deliveries} unit={unit} />
           <p className="planning-chart-note">
             Only recorded transitions into Done count here. Earlier baseline
-            completions are excluded; reopened stories can produce another
+            completions are excluded; reopened tasks can produce another
             transition.
           </p>
         </section>
@@ -158,7 +158,7 @@ export function Insights({ state, project, open }: Props) {
           <div className="insight-status-total">
             <strong>{tasks.length}</strong>
             <span>
-              {tasks.length === 1 ? "story" : "stories"} in the project
+              {tasks.length === 1 ? "task" : "tasks"} in the project
             </span>
           </div>
           <div
@@ -225,7 +225,7 @@ export function Insights({ state, project, open }: Props) {
           </h3>
           <p>
             {forecast
-              ? `${unfinished.length} open stories at ${countLabel(forecast.pace)} recorded Done transitions per calendar day. Scope and future pace may change.`
+              ? `${unfinished.length} open ${unfinished.length === 1 ? "task" : "tasks"} at ${countLabel(forecast.pace)} recorded Done transitions per calendar day. Scope and future pace may change.`
               : "It appears after at least 7 observed days and 5 Done transitions spread across 3 days. New history builds the evidence; existing completed work is not backdated."}
           </p>
         </div>
@@ -258,7 +258,7 @@ export function Insights({ state, project, open }: Props) {
           <p>
             {current
               ? "The same recorded scope and progress available in the cycle view."
-              : "Create a cycle and assign stories to start observing scope and progress."}
+              : "Create a cycle and assign tasks to start observing scope and progress."}
           </p>
         </div>
         {cycles.length > 0 && (
@@ -297,7 +297,7 @@ export function Insights({ state, project, open }: Props) {
       <div className="planning-estimate-note">
         <GitBranch size={13} />
         <span>
-          Story points are manual estimates for planning. Memtrace’s measured
+          Points are manual estimates for planning. Memtrace’s measured
           source complexity and blast radius guide model routing in each work
           item.
         </span>
@@ -356,7 +356,7 @@ function EpicBreakdown({
     <section className="insight-breakdown-card">
       <header>
         <Flag size={16} />
-        <h3>Epic progress</h3>
+        <h3>Goal progress</h3>
         <span>{groups.length}</span>
       </header>
       {groups.length ? (
@@ -390,13 +390,13 @@ function EpicBreakdown({
                       </button>
                     ))}
                   {items.every((task) => task.stage === "done") && (
-                    <p>All current stories are complete.</p>
+                    <p>All current tasks are complete.</p>
                   )}
                   {items.filter((task) => task.stage !== "done").length > 5 && (
                     <p>
                       Plus{" "}
                       {items.filter((task) => task.stage !== "done").length - 5}{" "}
-                      open stories in this epic.
+                      open tasks in this goal.
                     </p>
                   )}
                 </div>
@@ -407,7 +407,7 @@ function EpicBreakdown({
       ) : (
         <div className="insight-breakdown-empty">
           <Flag size={23} />
-          <p>Group stories into epics to see their progress here.</p>
+          <p>Group tasks into goals to see their progress here.</p>
         </div>
       )}
     </section>
@@ -448,12 +448,12 @@ function LabelBreakdown({ tasks }: { tasks: WorkItem[] }) {
               <small>{item.open} open</small>
             </div>
           ))}
-          <p>A story can have more than one label.</p>
+          <p>A task can have more than one label.</p>
         </div>
       ) : (
         <div className="insight-breakdown-empty">
           <Tag size={23} />
-          <p>Add labels to your stories to see how the work is distributed.</p>
+          <p>Add labels to your tasks to see how the work is distributed.</p>
         </div>
       )}
     </section>
@@ -508,7 +508,7 @@ function AssignmentBreakdown({ tasks }: { tasks: WorkItem[] }) {
         ))}
       </div>
       <p className="planning-chart-note">
-        Assigned or routed open stories. This is workload, not a provider
+        Assigned or routed open tasks. This is workload, not a provider
         performance ranking.
       </p>
     </section>

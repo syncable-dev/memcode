@@ -105,7 +105,7 @@ test("legacy epic rejection explains engine support and preserves the active che
   const f = await fixture();
   f.a.run.state = "running";
   const before = await git(f.root, ["branch", "--show-current"]);
-  await assert.rejects(f.workspaces.activate(f.b, f.project), /connected Memtrace engine does not support parallel epic checkouts/);
+  await assert.rejects(f.workspaces.activate(f.b, f.project), /connected Memtrace engine does not support parallel goal checkouts/);
   assert.equal(await git(f.root, ["branch", "--show-current"]), before);
   assert.equal(f.a.run.state, "running");
 });
@@ -215,7 +215,7 @@ test("a Done prerequisite in another epic must actually be present before a depe
   f.b.dependsOn = [f.a.id];
   await assert.rejects(
     assertEpicDependencies(f.state, f.b, f.b.run.workspace!),
-    /not present in this epic/,
+    /not present in this goal/,
   );
   await writeFile(join(f.b.run.workspace!, "source.ts"), "export const n=1;\n");
   await assertEpicDependencies(f.state, f.b, f.b.run.workspace!);

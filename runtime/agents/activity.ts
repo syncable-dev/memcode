@@ -27,7 +27,7 @@ export function trackTurnActivity() {
       : event.type === "message" && event.role === "assistant"
       ? { phase: "working", label: "Worker is responding" } as const
       : event.type === "activity" || event.type === "session"
-      ? { phase: "working", label: "Waiting for a harness update" } as const
+      ? { phase: "working", label: "Working" } as const
       : undefined;
     if (!change) return previous;
     return { ...change, lastTool, at: previous?.label === change.label && previous.phase === change.phase ? previous.at : at };

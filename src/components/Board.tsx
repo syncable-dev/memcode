@@ -1,4 +1,4 @@
-import { memo, useCallback, useRef, useState } from "react";
+import { memo, useCallback, useRef, useState, useSyncExternalStore } from "react";
 import {
   ArrowUpRight,
   Check,
@@ -16,6 +16,7 @@ import type { Cycle, Stage, WorkItem } from "../shared";
 import type { StoryComment } from "../story-comments";
 import { harnessNames, stages } from "../shared";
 import { isActive, stageLabel } from "../domain";
+import { cardActivityFeed } from "../card-activity";
 import { dateLabel, dayAt } from "../planning/dates";
 import type { StoryReadiness } from "../planning/readiness";
 import { PriorityMark, StageIcon, WorkerMark } from "./UI";
@@ -212,8 +213,8 @@ function BoardContent({
     const count = commentCounts.get(task.id) ?? 0;
     return count > 0 ? (
       <span
-        title={`${count} story comment${count === 1 ? "" : "s"}`}
-        aria-label={`${count} story comment${count === 1 ? "" : "s"}`}
+        title={`${count} task comment${count === 1 ? "" : "s"}`}
+        aria-label={`${count} task comment${count === 1 ? "" : "s"}`}
       >
         <MessageSquare size={11} />
         {count}
@@ -347,8 +348,7 @@ function BoardContent({
         ))}
         {!tasks.length && (
           <div className="filtered-empty">
-            No stories match this view. Adjust the filters or create a work
-            item.
+            No tasks match this view. Adjust the filters or create one.
           </div>
         )}
       </div>
@@ -388,7 +388,7 @@ function BoardContent({
               type="button"
               className="backlog-rail"
               data-work-group={group.id}
-              aria-label={`Expand Backlog, ${group.tasks.length} stories`}
+              aria-label={`Expand Backlog, ${group.tasks.length} ${group.tasks.length === 1 ? "task" : "tasks"}`}
               title={`Expand Backlog (${group.tasks.length})`}
               aria-expanded={false}
               onClick={changeBacklogVisibility}
@@ -533,6 +533,7 @@ function BoardContent({
                         Waiting for you
                       </span>
                     )}
+                    {isActive(task) && <CardActivityLine id={task.id} />}
                     <p className="card-description">{task.description}</p>
                     {readiness?.has(task.id) && (
                       <ReadinessNote
@@ -573,7 +574,7 @@ function BoardContent({
                           </span>
                         )}
                         {task.parentId && (
-                          <span className="sub-story-tag">Child story</span>
+                          <span className="sub-story-tag">Subtask</span>
                         )}
                       </div>
                     )}
@@ -643,6 +644,23 @@ function ReadinessNote({ id, value }: { id: string; value: StoryReadiness }) {
       <Icon size={12} aria-hidden="true" />
       <span>{value.label}</span>
       <span className="sr-only">{value.detail}</span>
+    </span>
+  );
+}
+
+/**
+ * What a running worker is doing, read from its own feed so the board never re-renders for it.
+ * The feed throttles each card, so twenty busy workers still mean a few quiet updates a second.
+ */
+function CardActivityLine({ id }: { id: string }) {
+  const activity = useSyncExternalStore(
+    (listener) => cardActivityFeed.subscribe(id, listener),
+    () => cardActivityFeed.get(id),
+  );
+  if (!activity) return null;
+  return (
+    <span className="card-activity" title={activity.label} key={activity.label}>
+      {activity.label}
     </span>
   );
 }

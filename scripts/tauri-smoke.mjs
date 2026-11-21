@@ -140,6 +140,14 @@ try {
   );
   assert.ok(Array.isArray(result.state.projects));
   await expect(page.locator(".app-shell")).toBeVisible({ timeout: 20000 });
+  if (process.env.MEMCODE_TEST_BUNDLED_RUNTIME === "1") {
+    const explore = page.getByRole("button", {
+      name: "Explore without signing in for now",
+      exact: true,
+    });
+    await expect(explore).toBeVisible();
+    await explore.click();
+  }
   if (
     !result.state.onboarding ||
     (result.state.onboarding.step === "welcome" &&
@@ -182,9 +190,9 @@ try {
   await productTour.getByRole("button", { name: "Back to Docs" }).click();
   await page
     .getByRole("navigation", { name: "Guide topics" })
-    .getByRole("button", { name: "Code review", exact: true })
+    .getByRole("button", { name: "Review the work", exact: true })
     .click();
-  const figure = page.getByRole("figure", { name: "Example story review" });
+  const figure = page.getByRole("figure", { name: "Example task review" });
   await figure.getByRole("button", { name: "Before & after" }).click();
   await expect
     .poll(() => figure.getByRole("img").evaluate((img) => img.naturalWidth))

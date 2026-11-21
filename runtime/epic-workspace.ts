@@ -1,38 +1,61 @@
 import type { AppState, Epic, Project, WorkItem } from "../src/shared";
-import { isActive } from "../src/domain";
+import { randomUUID } from "node:crypto";
+import {
+  acceptsQuickChanges,
+  isActive,
+  isQuickChanges,
+  quickChangesSource,
+} from "../src/domain";
+import {
+  availableBranch,
+  detectBranchStrategy,
+  goalBranchName,
+  integrationCommit,
+  quickChangesBranchName,
+  type BranchStrategy,
+} from "./branch-strategy";
 import { git, now } from "./local";
 import { ensureLocalRuntimeIgnored } from "./project-repository";
 import { enterEpicCheckout } from "./epic-checkout";
 import { realpath } from "node:fs/promises";
 
+/** Every task lives in a goal: its chosen goal, its parent's, or the open Quick changes batch. */
 export function ensureTaskEpic(state: AppState, task: WorkItem): Epic {
   const assigned = state.epics.find(
     (epic) => epic.id === task.epicId && epic.projectId === task.projectId,
   );
   if (assigned) return assigned;
-  let epic = state.epics.find(
-    (epic) =>
-      epic.projectId === task.projectId && epic.sourceKey === "project-work",
+  const parent = state.tasks.find((item) => item.id === task.parentId);
+  const inherited = state.epics.find(
+    (epic) => epic.id === parent?.epicId && !epic.closedAt,
   );
-  if (!epic) {
-    const count =
-      state.epics.filter((epic) => epic.projectId === task.projectId).length +
-      1;
-    epic = {
-      id: `${task.projectId}-project-work`,
-      projectId: task.projectId,
-      identifier: `EP-${String(count).padStart(2, "0")}`,
-      title: "Project work",
-      description: "Focused stories for this project.",
-      phase: "now",
-      color: "mint",
-      order: count,
-      sourceKey: "project-work",
-    };
-    state.epics.push(epic);
-  }
+  const epic = inherited ?? quickChangesBatch(state, task.projectId);
   task.epicId = epic.id;
   return epic;
+}
+
+function quickChangesBatch(state: AppState, projectId: string): Epic {
+  const open = state.epics.find(
+    (epic) =>
+      epic.projectId === projectId &&
+      isQuickChanges(epic) &&
+      acceptsQuickChanges(epic),
+  );
+  if (open) return open;
+  const count = state.epics.filter((epic) => epic.projectId === projectId).length + 1;
+  const batch: Epic = {
+    id: `${projectId}-quick-${randomUUID().slice(0, 8)}`,
+    projectId,
+    identifier: `EP-${String(count).padStart(2, "0")}`,
+    title: "Quick changes",
+    description: "Small changes that ship together in one pull request.",
+    phase: "now",
+    color: "mint",
+    order: count,
+    sourceKey: quickChangesSource,
+  };
+  state.epics.push(batch);
+  return batch;
 }
 
 export function epicBranch(epic: Epic): string {
@@ -45,13 +68,22 @@ export function epicBranch(epic: Epic): string {
   );
 }
 
+const strategyLifetimeMs = 10 * 60_000;
+
 // Supported engines give every epic its own checkout. Only the compatibility
 // path below switches a single shared checkout and requires a quiet fleet.
 export class EpicWorkspace {
   private locks = new Map<string, Promise<unknown>>();
+  private strategies = new Map<
+    string,
+    { at: number; strategy: Promise<BranchStrategy> }
+  >();
   constructor(
     private state: () => AppState,
     private dataDir?: string,
+    private detectStrategy: (
+      cwd: string,
+    ) => Promise<BranchStrategy> = detectBranchStrategy,
   ) {}
   async activate(
     task: WorkItem,
@@ -77,10 +109,11 @@ export class EpicWorkspace {
     if (!project.path) throw new Error("Choose a local project folder first.");
     if (task.run.worktree && !task.run.workspace)
       throw new Error(
-        "A result from the earlier execution mode is preserved in its previous folder. Review it before starting a new shared-branch story.",
+        "A result from the earlier execution mode is preserved in its previous folder. Review it before starting a new shared-branch task.",
       );
-    const epic = ensureTaskEpic(this.state(), task),
-      branch = epicBranch(epic);
+    const epic = ensureTaskEpic(this.state(), task);
+    await this.prepareBranch(epic, project.path);
+    const branch = epicBranch(epic);
     if (options.ownedCheckout && this.dataDir) {
       const checkout = await enterEpicCheckout(
         this.dataDir,
@@ -114,7 +147,7 @@ export class EpicWorkspace {
     );
     if (peers.some((peer) => peer.epicId !== epic.id))
       throw new Error(
-        "The connected Memtrace engine does not support parallel epic checkouts. Reconnect the bundled Memtrace engine in Settings, then retry. Your running workers and their changes have been preserved.",
+        "The connected Memtrace engine does not support parallel goal checkouts. Reconnect the bundled Memtrace engine in Settings, then retry. Your running workers and their changes have been preserved.",
       );
     // Local runtime stores are not source changes. Install these exclusions
     // before checking whether it is safe to switch an otherwise clean project.
@@ -122,7 +155,7 @@ export class EpicWorkspace {
     const actual = await git(project.path, ["branch", "--show-current"]);
     if (!actual)
       throw new Error(
-        "Choose a named project branch before activating an epic.",
+        "Choose a named project branch before activating a goal.",
       );
     const changedBranch = actual !== branch;
     if (changedBranch) {
@@ -132,7 +165,7 @@ export class EpicWorkspace {
         );
       if (await git(project.path, ["status", "--porcelain"]))
         throw new Error(
-          "Commit or finish the existing project changes before activating a different epic branch. No files were changed.",
+          "Commit or finish the existing project changes before activating a different goal branch. No files were changed.",
         );
       const head = await git(project.path, ["rev-parse", "HEAD"]);
       let exists = true;
@@ -147,7 +180,9 @@ export class EpicWorkspace {
       }
       await git(
         project.path,
-        exists ? ["switch", branch] : ["switch", "-c", branch],
+        exists
+          ? ["switch", branch]
+          : ["switch", "-c", branch, epic.baseRevision ?? head],
       );
       epic.baseRevision ??= head;
     }
@@ -159,5 +194,30 @@ export class EpicWorkspace {
     task.run.baseline = epic.baseRevision;
     task.updatedAt = now();
     return { epic, changedBranch };
+  }
+
+  /** New work starts from the team's integration branch, named the team's way. */
+  private async prepareBranch(epic: Epic, path: string) {
+    if (epic.branch) return;
+    const strategy = await this.strategyFor(path);
+    epic.branch = await availableBranch(
+      path,
+      isQuickChanges(epic)
+        ? quickChangesBranchName(strategy, new Date())
+        : goalBranchName(strategy, epic.title),
+      strategy.remote,
+    );
+    epic.baseBranch ??= strategy.base;
+    epic.baseRevision ??= await integrationCommit(path, strategy);
+  }
+
+  private strategyFor(path: string): Promise<BranchStrategy> {
+    const cached = this.strategies.get(path);
+    if (cached && Date.now() - cached.at < strategyLifetimeMs)
+      return cached.strategy;
+    const strategy = this.detectStrategy(path);
+    this.strategies.set(path, { at: Date.now(), strategy });
+    strategy.catch(() => this.strategies.delete(path));
+    return strategy;
   }
 }

@@ -151,7 +151,7 @@ export class TerminalManager {
           task.run.branch
       )
         throw Error(
-          "The epic branch changed. Reconcile Fleet before launching a process.",
+          "The goal branch changed. Reconcile Fleet before launching a process.",
         );
       if (request.shellId && request.program)
         throw Error("Choose a shell or an executable.");

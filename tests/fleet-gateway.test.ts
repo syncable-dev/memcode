@@ -7,9 +7,10 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { startContextSession } from "../runtime/context/host";
 
-test("real worker MCP exposes the bounded Fleet handshake and rejects forged identity or branch", async () => {
+test("the worker's Fleet tool takes a declaration and rejects a forged identity or branch", async () => {
   const root = await mkdtemp(join(tmpdir(), "memcode-fleet-mcp-"));
   let calls = 0;
+  const waitingNews = [{ type: "peer_changed", message: "MC-1 just recorded fixing src/cart.js::cartTotal." }];
   const session = await startContextSession(
     { call: async () => ({}) },
     {
@@ -36,8 +37,12 @@ test("real worker MCP exposes the bounded Fleet handshake and rejects forged ide
           branch: "epic/one",
           directive: "proceed",
           plan: input.plan,
+          symbols: input.symbols,
+          kind: input.kind,
         };
       },
+      runbook: async () => "1. [ ] Add the endpoint",
+      news: () => waitingNews.splice(0),
     },
   );
   const client = new Client({ name: "fleet-test", version: "1" });
@@ -55,20 +60,35 @@ test("real worker MCP exposes the bounded Fleet handshake and rejects forged ide
     await client.connect(transport);
     assert.deepEqual(
       (await client.listTools()).tools.map((tool) => tool.name).sort(),
-      ["assess", "coordinate", "find", "understand"],
+      ["assess", "coordinate", "find", "runbook", "understand"],
     );
     const response = await client.callTool({
       name: "coordinate",
       arguments: {
-        action: "inspect",
-        plan: "Preserve the earlier contract and implement the assigned feature.",
+        action: "declare",
+        symbols: ["src/cart.js::cartTotal"],
+        kind: "fix",
+        plan: "Round half up.",
       },
     });
     assert.notEqual(response.isError, true);
     const result = JSON.parse((response.content as any)[0].text);
     assert.equal(result.workerId, "bound-worker");
     assert.equal(result.branch, "epic/one");
+    assert.deepEqual(result.symbols, ["src/cart.js::cartTotal"]);
+    assert.equal(result.kind, "fix");
+    assert.equal(result.fleetNews, undefined, "Fleet's own replies carry their news themselves");
     assert.equal(calls, 1);
+    for (const old of ["inspect", "adopt", "checkpoint"]) {
+      const refused = await client
+        .callTool({ name: "coordinate", arguments: { action: old } })
+        .catch(() => ({ isError: true }));
+      assert.equal(refused.isError, true, `${old} belonged to taking turns`);
+    }
+    const other = await client.callTool({ name: "runbook", arguments: {} });
+    const carried = JSON.parse((other.content as any)[0].text);
+    assert.equal(carried.reply, "1. [ ] Add the endpoint");
+    assert.match(carried.fleetNews[0].message, /MC-1 just recorded/, "whatever the worker asks next carries what peers did");
     for (const forged of [
       { workerId: "other" },
       { branch: "other" },
@@ -82,7 +102,7 @@ test("real worker MCP exposes the bounded Fleet handshake and rejects forged ide
         },
         body: JSON.stringify({
           capability: "coordinate",
-          action: "inspect",
+          action: "sync",
           ...forged,
         }),
       });

@@ -7,14 +7,14 @@ MemCode implements its own domain model and UI; no itsaplan source is incorporat
 
 | Reference workflow | MemCode implementation |
 | --- | --- |
-| Kanban, table, timeline, calendar | Four views over the same local stories; each board lane scrolls independently |
+| Kanban, table, timeline, calendar | Four views over the same local tasks; each board lane scrolls independently |
 | Saved views and filters | Named views with mode, grouping, sorting and filters |
-| Cycles and carryover | Planned/active/completed cycles, scope, points, capacity and explicit carryover |
+| Cycles and carryover | Planned/active/completed cycles with a short Focus line, scope, points, capacity and explicit carryover; one cycle can hold work from many goals |
 | Custom states and fields | Named lanes bound to execution stages; advisory WIP limits; text, number and choice fields |
-| Labels and relationships | Labels, parent/child hierarchy, existing prerequisites, related stories and duplicate links |
+| Labels and relationships | Labels, parent/child hierarchy, existing prerequisites, related tasks and duplicate links |
 | Bulk organization | Atomic changes and archive/restore, honoring active worker constraints |
 | Delivery dashboards | Burndown, burnup, recorded Done transitions, scope/state breakdowns and conditional pace projections |
-| Initiative direction | Existing Now/Next/Later epic roadmap, epic branches and dogfood backlog |
+| Initiative direction | Now/Next/Later roadmap of goals, one branch per goal and the dogfood backlog |
 
 Account management, SSO, team permissions, general document canvases, and broad
 import/template systems remain separate product decisions for this local prototype.
@@ -23,16 +23,16 @@ import/template systems remain separate product decisions for this local prototy
 
 The inspected reference delivery curve is a burnup. MemCode provides burnup and
 the requested burndown, using recorded cycle snapshots. An accessible daily table
-exposes chart values. Estimates are manual story points, not Memtrace complexity
+exposes chart values. Estimates are manual points, not Memtrace complexity
 or time predictions.
 
-On upgrade, existing stories become a present-day baseline. Earlier chart dates
+On upgrade, existing tasks become a present-day baseline. Earlier chart dates
 are unknown. Each transition into Done counts as recorded delivery; reopening and
 accepting again produces another transition. The chart is labelled **Done
-transitions**, not unique delivered stories. Future actuals remain unknown.
+transitions**, not unique delivered tasks. Future actuals remain unknown.
 
 A baseline is captured when a cycle starts. Closing captures final scope before
-moving unfinished stories. Closing metrics remain frozen even when carried stories
+moving unfinished tasks. Closing metrics remain frozen even when carried tasks
 change later. Developers explicitly retain unfinished work, move it to backlog, or
 carry it to an unfinished cycle. Active workers must finish or stop first.
 

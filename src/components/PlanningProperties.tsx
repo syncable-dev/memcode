@@ -58,7 +58,7 @@ export function PlanningProperties({
       <label className="metadata-field">
         <span>Cycle</span>
         <Select
-          aria-label="Story cycle"
+          aria-label="Task cycle"
           disabled={disabled}
           value={task.cycleId ?? "none"}
           onValueChange={(value) =>
@@ -76,10 +76,10 @@ export function PlanningProperties({
       </label>
       <label className="metadata-field">
         <span>
-          Estimate <small>Manual story points</small>
+          Estimate <small>Manual points</small>
         </span>
         <Select
-          aria-label="Story estimate"
+          aria-label="Task estimate"
           value={task.estimate ?? "none"}
           onValueChange={(value) =>
             update({ estimate: value === "none" ? null : Number(value) })
@@ -102,7 +102,7 @@ export function PlanningProperties({
         <label className="metadata-field">
           <span>Start</span>
           <input
-            aria-label="Story start date"
+            aria-label="Task start date"
             type="date"
             value={task.startDate ?? ""}
             onChange={(event) =>
@@ -113,7 +113,7 @@ export function PlanningProperties({
         <label className="metadata-field">
           <span>Due</span>
           <input
-            aria-label="Story due date"
+            aria-label="Task due date"
             type="date"
             value={task.dueDate ?? ""}
             onChange={(event) =>
@@ -125,7 +125,7 @@ export function PlanningProperties({
       <label className="metadata-field">
         <span>Labels</span>
         <input
-          aria-label="Story labels"
+          aria-label="Task labels"
           placeholder="interface, orchestration…"
           value={labels}
           onChange={(event) => setLabels(event.target.value)}
@@ -154,15 +154,15 @@ export function PlanningProperties({
           Relationships & fields <GitFork size={12} />
         </summary>
         <label className="metadata-field">
-          <span>Parent story</span>
+          <span>Parent task</span>
           <Select
-            aria-label="Parent story"
+            aria-label="Parent task"
             value={task.parentId ?? "none"}
             onValueChange={(value) =>
               update({ parentId: value === "none" ? null : value })
             }
           >
-            <option value="none">No parent story</option>
+            <option value="none">No parent task</option>
             {others.map((other) => (
               <option key={other.id} value={other.id}>
                 {other.identifier} · {other.title}
@@ -173,7 +173,7 @@ export function PlanningProperties({
         <label className="metadata-field">
           <span>Duplicate of</span>
           <Select
-            aria-label="Duplicate story"
+            aria-label="Duplicate task"
             value={task.duplicateOf ?? "none"}
             onValueChange={(value) =>
               update({ duplicateOf: value === "none" ? null : value })
@@ -188,7 +188,7 @@ export function PlanningProperties({
           </Select>
         </label>
         <div className="metadata-field">
-          <span>Related stories</span>
+          <span>Related tasks</span>
           {others
             .filter((other) => task.relatedIds?.includes(other.id))
             .map((other) => (
@@ -211,14 +211,14 @@ export function PlanningProperties({
               </div>
             ))}
           <Select
-            aria-label="Add related story"
+            aria-label="Add related task"
             value="none"
             onValueChange={(value) => {
               if (value !== "none")
                 update({ relatedIds: [...(task.relatedIds ?? []), value] });
             }}
           >
-            <option value="none">Link a story…</option>
+            <option value="none">Link a task…</option>
             {others
               .filter((other) => !task.relatedIds?.includes(other.id))
               .map((other) => (
@@ -290,18 +290,18 @@ export function PlanningProperties({
       <div className="child-stories">
         <div>
           <span>
-            Child stories{" "}
+            Subtasks{" "}
             <small>
               {children.filter((child) => child.stage === "done").length}/
               {children.length}
             </small>
           </span>
           <button
-            aria-label="Add child story"
+            aria-label="Add subtask"
             title={
               task.stage === "done"
-                ? "Reopen this story to add unfinished child work"
-                : "Add child story"
+                ? "Reopen this task to add a subtask"
+                : "Add subtask"
             }
             disabled={task.stage === "done"}
             onClick={createChild}
@@ -327,7 +327,7 @@ export function PlanningProperties({
         }
       >
         <Archive size={12} />
-        {task.archivedAt ? "Restore story" : "Archive story"}
+        {task.archivedAt ? "Restore task" : "Archive task"}
       </button>
     </section>
   );

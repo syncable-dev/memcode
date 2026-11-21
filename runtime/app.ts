@@ -1,15 +1,25 @@
 import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
-import { basename, join, resolve, isAbsolute, extname } from "node:path";
+import {
+  basename,
+  join,
+  resolve,
+  isAbsolute,
+  extname,
+  relative as relativePath,
+} from "node:path";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import { newRunbook } from "../src/runbook";
+import { repoRelativePath } from "./context/source";
 import type { AppState, Project, WorkItem } from "../src/shared";
+import { maxWorkerSlots } from "../src/worker-slots";
 import { isActive } from "../src/domain";
 import { LocalStore, exists, findCommand, git, now, within } from "./local";
 import { observePersistence } from "./persistence";
 import { MemtraceEngine } from "./memtrace";
 import { ensureProjectRepository } from "./project-repository";
 import { workerResponseSchema } from "./worker-input";
-import { permissionModes } from "../src/permissions";
+import { permissionModes, supportsPermissionMode } from "../src/permissions";
 import { registerDeletion } from "./deletion";
 import { readArtifactThumbnail } from "./artifact-thumbnail";
 import { reconcileArtifacts } from "./artifact-catalog";
@@ -17,7 +27,8 @@ import { WorkerManager } from "./workers";
 import { PreviewManager } from "./preview";
 import { localURL } from "./urls";
 import { discoverHarnesses } from "./catalog";
-import { planDefinedStory } from "./story-route";
+import { planDefinedStory, readRoutingCalibration, readRoutingLanguage } from "./story-route";
+import { qualificationRequestFingerprint } from "./qualification";
 import { registerPlanning } from "./planning";
 import { registerPlanningControls } from "./planning-controls";
 import { ensureTaskEpic } from "./epic-workspace";
@@ -36,6 +47,15 @@ import { registerReview } from "./review";
 import { registerOnboarding } from "./onboarding";
 import { activateProjectGuide, beginProjectGuide } from "../src/onboarding";
 import { registerCardComments } from "./card-comments";
+import { handoffAttributionSchema, registerHandoff } from "./handoff";
+import {
+  createPullRequestService,
+  registerPullRequests,
+} from "./pull-request";
+import { GoalUpdates, registerGoalUpdates } from "./goal-updates";
+import { GoalPlacement, registerGoalPlacement } from "./goal-placement";
+import { GoalPlanner, registerGoalPlanner } from "./goal-planner";
+import { readWorkerChanges as readGoalChanges } from "./changes";
 import { registerConnections } from "./worker-connections";
 import { TeamSyncClient } from "./team/client";
 import { registerRepositoryRoutes } from "./repository-routes";
@@ -103,11 +123,14 @@ const taskPatch = z
   })
   .strict();
 type Handler = { schema: z.ZodType; handle: (input: any) => unknown };
+const acpPermissionMode = z.enum(["review", "full-access"]).optional();
 const workerPermissionDefaults = z
   .object({
     codex: z.enum(permissionModes).optional(),
     claude: z.enum(permissionModes).optional(),
-    cursor: z.enum(["review", "full-access"]).optional(),
+    cursor: acpPermissionMode,
+    copilot: acpPermissionMode,
+    dsh: acpPermissionMode,
   })
   .strict();
 
@@ -269,7 +292,7 @@ export async function createRuntime(
     handlers = new Map<string, Handler>();
   const task = (id: string) => {
     const item = store.state.tasks.find((task) => task.id === id);
-    if (!item) throw new Error("Story not found.");
+    if (!item) throw new Error("Task not found.");
     return item;
   };
   const project = (id: string) => {
@@ -306,7 +329,7 @@ export async function createRuntime(
         item.updatedAt = command.updatedAt;
         await changed();
       } else if (command.kind === "review-start") {
-        if (!isCodeReviewTask(state(), item)) throw Error("Move this story to Code review before starting its review.");
+        if (!isCodeReviewTask(state(), item)) throw Error("Move this task to Code review before starting its review.");
         await codeReviews.start(item.id);
       } else {
         await codeReviews.discuss(item.id, command.reviewRunId!, command.text, {id: command.id, actor: command.author});
@@ -453,7 +476,7 @@ export async function createRuntime(
     z.object({ projectId: identifier, taskId: identifier }).strict(),
     async ({ projectId, taskId }) => {
       if (task(taskId).projectId !== projectId)
-        throw Error("Choose a story in this project.");
+        throw Error("Choose a task in this project.");
       await team!.acquire(taskId, projectId);
       return team!.status(projectId);
     },
@@ -463,7 +486,7 @@ export async function createRuntime(
     z.object({ projectId: identifier, taskId: identifier }).strict(),
     async ({ projectId, taskId }) => {
       if (task(taskId).projectId !== projectId)
-        throw Error("Choose a story in this project.");
+        throw Error("Choose a task in this project.");
       if (isActive(task(taskId)))
         throw Error("Stop this worker before releasing its team claim.");
       await team!.release(taskId, projectId);
@@ -747,20 +770,33 @@ export async function createRuntime(
     if (parent.analysis !== "ready") await analyze(parent.id);
     const current = task(id);
     if (isActive(current)) throw new Error(activeRouteError);
-    const installed = await discover();
-    current.evidence = await engine.qualify(
-      epicAnalysisProject(project(current.projectId), current),
-      current,
-    );
+    const measurement = { ...current, scope: current.scope?.slice() };
+    const measuredRequest = qualificationRequestFingerprint(measurement);
+    const [installed, evidence, calibration, languageModel] = await Promise.all([
+      discover(),
+      engine.qualify(
+        epicAnalysisProject(project(measurement.projectId), measurement),
+        measurement,
+      ),
+      readRoutingCalibration(store.dir),
+      readRoutingLanguage(store.dir),
+    ]);
     const latest = task(id);
     if (isActive(latest)) throw new Error(activeRouteError);
-    latest.route = planDefinedStory(
+    if (latest.epicId !== measurement.epicId ||
+      qualificationRequestFingerprint(latest) !== measuredRequest)
+      throw Error("The story changed during measurement. Plan the worker again for the new scope.");
+    const route = planDefinedStory(
       latest,
-      latest.evidence,
+      evidence,
       installed,
       store.state,
+      calibration,
+      languageModel,
     );
-    latest.harness = latest.route.harness;
+    latest.evidence = evidence;
+    latest.route = route;
+    latest.harness = route.harness;
     latest.updatedAt = now();
     await changed();
   };
@@ -978,14 +1014,16 @@ export async function createRuntime(
         (item) => item.id === id,
       );
       if (!conflict) throw new Error("Fleet decision not found.");
-      await workers.pause(conflict.taskIds);
-      await workers.fleet.resolve(id, resolution, winnerTaskId);
+      // Running workers hear the decision at their next call; paused ones are brought back with it.
+      await workers.decide(id, resolution, winnerTaskId);
     },
   );
   register(
     "worker:permission-default",
     z.object({ harness, mode: z.enum(permissionModes) }).strict(),
     async ({ harness: id, mode }) => {
+      if (!supportsPermissionMode(id, mode))
+        throw Error("This worker supports Review and Full access.");
       const defaults = workerPermissionDefaults.parse({
         ...state().settings.workerPermissionDefaults,
         [id]: mode,
@@ -999,6 +1037,7 @@ export async function createRuntime(
     z
       .object({
         workerPermissionDefaults: workerPermissionDefaults.optional(),
+        handoffAttribution: handoffAttributionSchema.optional(),
         automaticUpdateDownloads: z.boolean().optional(),
         memtracePath: z.string().max(1000),
         speechEndpoint: z.string().max(1000),
@@ -1006,7 +1045,7 @@ export async function createRuntime(
         defaultHarness: harness,
         model: z.string().max(200),
         localModel: z.boolean(),
-        maxWorkers: z.number().int().min(1).max(8),
+        maxWorkers: z.number().int().min(1).max(maxWorkerSlots),
         contextAssistant: z
           .object({
             enabled: z.boolean(),
@@ -1074,7 +1113,7 @@ export async function createRuntime(
       // reconnect resets the owner lifecycle so the next project can open it.
       if (settings.memtracePath !== store.state.settings.memtracePath)
         await engine.reconnect();
-      // A Settings dialog opened before a worker-default change must not erase it.
+      // A Settings dialog opened before a worker-default or handoff choice must not erase it.
       store.state.settings = {
         ...store.state.settings,
         ...settings,
@@ -1082,6 +1121,7 @@ export async function createRuntime(
         contextAssistant:
           settings.contextAssistant ?? store.state.settings.contextAssistant,
         workerPermissionDefaults: state().settings.workerPermissionDefaults,
+        handoffAttribution: state().settings.handoffAttribution,
       };
       await changed();
       return store.runtime();
@@ -1153,6 +1193,59 @@ export async function createRuntime(
     );
   });
   registerSpeech(register, speech);
+  registerHandoff(register, state, changed);
+  registerPullRequests(
+    register,
+    createPullRequestService({
+      state,
+      changed,
+      openUrl: (url) => host.call<void>("open_github_pull_request", { url }),
+    }),
+  );
+  /** Repo-relative files Memtrace associates with a request, for placement and planning. */
+  const relatedFiles = async (projectId: string, request: string) => {
+    const target = project(projectId);
+    if (target.analysis !== "ready" || !target.path) return [];
+    const result = await engine.call(target, "find_code", {
+      repo_id: target.repoId,
+      branch: target.branch,
+      query: request.slice(0, 1000),
+      limit: 12,
+    });
+    return [
+      ...new Set(
+        ((result?.results ?? []) as Array<{ file_path?: string }>)
+          .map((row) => String(row.file_path ?? ""))
+          .filter(Boolean)
+          .map((file) => repoRelativePath(target, file))
+          .filter((file) => !file.startsWith("..") && !isAbsolute(file)),
+      ),
+    ];
+  };
+  registerGoalPlacement(
+    register,
+    new GoalPlacement({ state, readChanges: readGoalChanges, relatedFiles }),
+  );
+  registerGoalPlanner(
+    register,
+    new GoalPlanner({ dataDir: store.dir, state, relatedFiles }),
+  );
+  registerGoalUpdates(
+    register,
+    new GoalUpdates({
+      state,
+      changed,
+      refreshGraph: async (epicId) => {
+        const task = state().tasks.find(
+          (item) => item.epicId === epicId && item.run.analysisProjectId,
+        );
+        if (!task) return;
+        const analysis = epicAnalysisProject(project(task.projectId), task);
+        await engine.activateEpic(analysis);
+        await engine.analyze(analysis, () => {});
+      },
+    }),
+  );
   register("retrieval:status", z.undefined(), () => retrieval.status());
   register("retrieval:setup", z.undefined(), () => retrieval.install());
   register(
@@ -1248,7 +1341,7 @@ export async function createRuntime(
   const requireReviewLane = (taskId: string) => {
     if (!isCodeReviewTask(state(), task(taskId)))
       throw Error(
-        "Move this story to the Code review lane to run a review or change its outcome.",
+        "Move this task to the Code review lane to run a review or change its outcome.",
       );
   };
   register("code-review:get", reviewTask, ({ taskId }) => {
@@ -1259,7 +1352,7 @@ export async function createRuntime(
     requireReviewLane(taskId);
     const remote = team?.remoteSession(taskId);
     if (remote) {
-      await team!.sendSessionCommand(taskId, "review-start", "Run code review for this story's recorded changes.");
+      await team!.sendSessionCommand(taskId, "review-start", "Run code review for this task's recorded changes.");
       return task(taskId).sharedSession?.review ?? null;
     }
     return codeReviews.start(taskId);
@@ -1361,6 +1454,8 @@ export async function createRuntime(
       permissionMode: z.enum(permissionModes).nullable().optional(),
       epicId: identifier.nullable().optional(),
       kind: kind.optional(),
+      runbook: z.array(z.string().max(2000)).max(100).optional(),
+      scope: z.array(z.string().max(1000)).max(20).optional(),
       ...taskPlanningShape,
     }),
     async (input) => {
@@ -1396,19 +1491,7 @@ export async function createRuntime(
         epicId: input.epicId,
         category: "Work",
         stage: "planned",
-        checklist: [
-          {
-            id: randomUUID(),
-            text: "Understand the relevant source and requirements",
-            done: false,
-          },
-          { id: randomUUID(), text: "Implement a focused change", done: false },
-          {
-            id: randomUUID(),
-            text: "Review the result and checks",
-            done: false,
-          },
-        ],
+        checklist: newRunbook(input.runbook, randomUUID),
         messages: [
           {
             id: randomUUID(),
@@ -1422,7 +1505,7 @@ export async function createRuntime(
         updatedAt: now(),
         ...(parent.example ? { example: true } : {}),
       };
-      const { projectId, ...fields } = input;
+      const { projectId, runbook, ...fields } = input;
       applyTaskPatch(state(), item, taskPatch.parse(fields));
       ensureTaskEpic(state(), item);
       state().tasks.push(item);
@@ -1469,7 +1552,7 @@ export async function createRuntime(
       unique.sort((a, b) => depth(b) - depth(a));
       for (const id of unique) {
         const item = candidate.tasks.find((task) => task.id === id);
-        if (!item) throw new Error("A selected story no longer exists.");
+        if (!item) throw new Error("A selected task no longer exists.");
         applyTaskPatch(candidate, item, patch);
       }
       for (const id of unique)
@@ -1492,7 +1575,7 @@ export async function createRuntime(
   register("worker:open-folder", identifier, async (id) => {
     const item = task(id),
       path = item.run.workspace ?? item.run.worktree;
-    if (!path) throw new Error("This story has no epic workspace yet.");
+    if (!path) throw new Error("This task has no goal workspace yet.");
     await host.call("open_path", { path });
   });
   register(
@@ -1642,7 +1725,7 @@ export async function createRuntime(
           if (item.codeReview)
             await codeReviews.interruptForWorker(
               item.id,
-              "The story or its epic is being removed. The saved review is preserved but no reviewer continues running.",
+              "The task or its goal is being removed. The saved review is preserved but no reviewer continues running.",
             );
         }
         const deletion = await team?.beginDeletion(

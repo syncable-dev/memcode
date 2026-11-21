@@ -1412,17 +1412,44 @@
   background: #94be76;
   transition: width 0.2s;
 }
-.checklist > button {
+.checklist-row {
   display: flex;
   align-items: start;
+  gap: 8px;
+  border-bottom: 1px solid #eef4e5;
+}
+.checklist-row > button:first-child {
+  display: flex;
+  align-items: start;
+  flex: 1;
+  min-width: 0;
   gap: 12px;
   padding: 14px 0;
-  border-bottom: 1px solid #eef4e5;
   font-size: 13px;
   color: #52675a;
   text-align: left;
-  width: 100%;
   line-height: 1.8;
+}
+.checklist-remove {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  margin-top: 15px;
+  border-radius: 6px;
+  color: #93a398;
+  opacity: 0;
+  transition:
+    opacity 0.15s ease,
+    background 0.15s ease;
+}
+.checklist-row:hover .checklist-remove,
+.checklist-remove:focus-visible {
+  opacity: 1;
+}
+.checklist-remove:hover {
+  color: #07110e;
+  background: #e9f0e8;
 }
 .check-box {
   width: 16px;

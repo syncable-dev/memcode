@@ -11,6 +11,8 @@ import type { QualitySnapshot } from "./intelligence";
 import type { ContextAssistantSettings } from "./context-settings";
 import type { CodeReviewAPI } from "./code-review";
 import type { BrowserRequest, BrowserReply } from "./browser";
+import type { RoutingRequestSignals } from "./routing-signals";
+import type { RoutingImpactEvidence, RoutingScopeCoverage } from "./routing-evidence";
 export type { ContextAssistantSettings } from "./context-settings";
 export type { QualitySnapshot, IntelligenceDetail } from "./intelligence";
 export type {
@@ -66,27 +68,44 @@ export interface HarnessRuntime {
   note?: string;
 }
 export interface RouteDecision {
-  policyVersion: "memcode-envelope-v2";
+  policyVersion: "memcode-envelope-v2" | "memcode-evidence-v3" | "memcode-evidence-v4";
   tier: ModelTier;
   harness: Harness;
   model: string;
   /** Account-discovered presentation label; the opaque ID remains the request. */
   modelLabel?: string;
   effort: ReasoningEffort;
+  localModel?: true;
   mode: "automatic" | "manual";
   status: "measured" | "provisional";
   reasons: string[];
   plannedAt: string;
+  /** Decision evidence stays on the device that planned the route. */
+  selection?: {
+    method: "explicit" | "envelope" | "fallback" | "calibration";
+    catalogFingerprint: string;
+    eligibleConfigurations: number;
+    effortBound: boolean;
+    workTier: ModelTier;
+    impactTier: ModelTier | null;
+    calibrationDigest?: string;
+    /** Concrete provider model to verify before sending a calibrated turn. */
+    calibratedModel?: string;
+  };
   inputs: {
     cognitive: number | null;
     cyclomatic: number | null;
     nesting: number | null;
+    maintainability?: { lowest: number; measuredSymbols: number };
     affected: number | null;
     processes: number | null;
     moduleRoots: number;
     incomplete: boolean;
     sourceRevision?: string;
     graphRevision?: string;
+    request?: RoutingRequestSignals;
+    scope?: RoutingScopeCoverage;
+    impact?: RoutingImpactEvidence;
   };
 }
 export type Priority = "high" | "medium" | "low";
@@ -149,11 +168,15 @@ export interface Evidence {
     cognitive?: number;
     cyclomatic?: number;
     nesting?: number;
+    /** Native AST index for this function, on a verified graph publication. */
+    maintainabilityIndex?: number;
     metricSource?: "ast" | "estimated";
   }>;
   affected?: number;
   affectedProcesses?: number;
   affectedFiles?: number;
+  impact?: RoutingImpactEvidence;
+  scopeCoverage?: RoutingScopeCoverage;
   sourceRevision?: string;
   graphRevision?: string;
   incomplete: boolean;
@@ -208,6 +231,8 @@ export interface WorkItem extends TaskPlanningFields {
     measurements?: import("./measurements").WorkerMeasurements;
     checks?: import("./measurements").WorkerCheckResult;
     finishedSourceBinding?: string | null;
+    /** The disagreement this worker stopped to wait on. It carries on when the person decides. */
+    waitingOnDecision?: string;
   };
   evidence?: Evidence;
   diff?: string;
@@ -238,6 +263,7 @@ export interface Settings {
   >;
   speech?: import("./speech").SpeechSettings;
   contextAssistant?: ContextAssistantSettings;
+  handoffAttribution?: import("./handoff").HandoffAttribution;
   memtracePath: string;
   speechEndpoint: string;
   defaultHarness: Harness;
@@ -248,6 +274,12 @@ export interface Settings {
 export interface Epic {
   branch?: string;
   baseRevision?: string;
+  /** The integration branch this work started from and will open its PR into. */
+  baseBranch?: string;
+  /** Set when the goal's pull request merged; a closed goal takes no new tasks. */
+  closedAt?: string;
+  /** Another goal merged code this goal uses, or dev moved under a Quick changes batch. */
+  updateNeeded?: { reason: string; files: string[]; since: string };
   id: string;
   projectId: string;
   identifier: string;
@@ -312,7 +344,11 @@ export interface AppState {
   workerConnections?: Partial<
     Record<Harness, import("./connections").WorkerConnection>
   >;
+  /** Saved by earlier versions, when workers took turns on shared files. No longer written. */
   fleetPlans?: FleetPlan[];
+  /** What each worker is changing right now, and what it changed lately. */
+  fleetDeclarations?: import("./fleet").FleetDeclaration[];
+  pullRequests?: import("./pull-request").EpicPullRequest[];
   fleetProposals?: FleetProposal[];
   qualitySnapshots: QualitySnapshot[];
   cycles: Cycle[];
@@ -371,6 +407,10 @@ export interface CreateTask extends TaskPlanningFields {
   permissionMode?: import("./permissions").PermissionMode | null;
   epicId?: string | null;
   kind?: WorkItem["kind"];
+  /** The task's planned steps; without them it starts with the standard runbook. */
+  runbook?: string[];
+  /** Files the task plans to change. Its edits to them are recorded as its own. */
+  scope?: string[];
 }
 export interface ProjectInput {
   mode: "existing" | "new";
@@ -643,6 +683,33 @@ export interface MemCodeAPI extends CodeReviewAPI {
   startWorker(id: string): Promise<void>;
   stopWorker(id: string): Promise<void>;
   saveSettings(settings: Settings): Promise<RuntimeInfo>;
+  pullRequestPlan(
+    epicId: string,
+  ): Promise<import("./pull-request").PullRequestPlan>;
+  createPullRequest(
+    input: import("./pull-request").CreatePullRequest,
+  ): Promise<import("./pull-request").PullRequestResult>;
+  openPullRequest(epicId: string): Promise<void>;
+  mergePullRequest(
+    epicId: string,
+  ): Promise<import("./pull-request").MergeResult>;
+  placeWork(
+    projectId: string,
+    request: string,
+  ): Promise<import("./goal-plan").Placement>;
+  planGoal(input: {
+    projectId: string;
+    request: string;
+    harness: Harness;
+  }): Promise<import("./goal-plan").WorkPlan>;
+  updateGoalFromBase(epicId: string): Promise<{
+    merged: boolean;
+    savedWork: boolean;
+    conflicts?: string[];
+  }>;
+  setHandoffAttribution(
+    attribution: import("./handoff").HandoffAttribution,
+  ): Promise<void>;
   setWorkerPermissionDefault(
     harness: Harness,
     mode: import("./permissions").PermissionMode,
@@ -685,7 +752,16 @@ export type TaskPatch = Partial<
 >;
 
 export interface FleetConflict {
-  resolutionKind?: "human" | "coordination";
+  /** Who settled it: the person, the workers agreeing, or an earlier version's bookkeeping. */
+  resolutionKind?: "human" | "coordination" | "agents";
+  /** What each task involved wants. */
+  positions?: import("./fleet").FleetPosition[];
+  /** Set once the person is needed: to confirm the workers' recommendation, or to decide. */
+  needs?: "confirm" | "decide";
+  /** Why the workers could not settle it themselves. */
+  needsReason?: string;
+  /** The task the workers recommend should go ahead. */
+  recommendedTaskId?: string;
   id: string;
   projectId: string;
   epicId?: string;

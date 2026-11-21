@@ -82,7 +82,7 @@ export async function ensureProjectRepository(
     if (!branch) throw Error("Choose a named local Git branch before analyzing this project.");
     if (branch !== project.branch) {
       if (project.analysisCheckout || project.analysisCurrentSource)
-        throw Error("This epic checkout changed branch. Its earlier analysis was not adopted.");
+        throw Error("This goal checkout changed branch. Its earlier analysis was not adopted.");
       project.branch = branch;
       if (project.analysis === "ready") project.analysis = "idle";
       project.analysisNote = "Reading the current local branch.";

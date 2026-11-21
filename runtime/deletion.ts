@@ -27,17 +27,17 @@ function deleteStories(
   cascade: boolean,
 ): DeletionResult {
   const task = state.tasks.find((task) => task.id === id);
-  if (!task) throw Error("Story not found.");
+  if (!task) throw Error("Task not found.");
   const ids = new Set([id]);
   for (const owner of ids) {
     const children = state.tasks.filter(
       (task) => task.parentId === owner && !ids.has(task.id),
     );
     if (children.length && !cascade)
-      throw Error("This story has child stories. Move or delete them first.");
+      throw Error("This task has subtasks. Move or delete them first.");
     if (children.some((child) => child.projectId !== task.projectId))
       throw Error(
-        "The story hierarchy crosses project boundaries. Repair it before deleting.",
+        "The task hierarchy crosses project boundaries. Repair it before deleting.",
       );
     for (const child of children) ids.add(child.id);
   }
@@ -119,6 +119,10 @@ function deleteStories(
       if (plan.adoptedFrom && ids.has(plan.adoptedFrom))
         delete plan.adoptedFrom;
   }
+  if (state.fleetDeclarations)
+    state.fleetDeclarations = state.fleetDeclarations.filter(
+      (declaration) => !ids.has(declaration.taskId),
+    );
   if (state.fleetProposals)
     state.fleetProposals = state.fleetProposals.filter(
       (proposal) =>
@@ -140,12 +144,12 @@ function deleteStories(
 
 function deleteEpic(state: AppState, id: string): DeletionResult {
   const epic = state.epics.find((epic) => epic.id === id);
-  if (!epic) throw Error("Epic not found.");
+  if (!epic) throw Error("Goal not found.");
   const stories = state.tasks.filter((task) => task.epicId === id);
   requireStopped(stories);
   if (stories.some((story) => story.projectId !== epic.projectId))
     throw Error(
-      "The epic contains a story from another project. Repair its assignment before deleting.",
+      "The goal contains a task from another project. Repair its assignment before deleting.",
     );
   // Reuse the existing default epic where possible. If the default itself is
   // removed, its replacement receives a new identity rather than resurrecting it.
@@ -178,7 +182,7 @@ function deleteCycle(state: AppState, id: string): DeletionResult {
   requireStopped(stories);
   if (stories.some((story) => story.projectId !== cycle.projectId))
     throw Error(
-      "The cycle contains a story from another project. Repair its assignment before deleting.",
+      "The cycle contains a task from another project. Repair its assignment before deleting.",
     );
   state.cycles = state.cycles.filter((cycle) => cycle.id !== id);
   for (const story of stories) {

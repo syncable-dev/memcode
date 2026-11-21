@@ -1,11 +1,15 @@
 import { test, mock } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, rmdir, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRuntime } from "../runtime/app.ts";
 import { MemtraceEngine } from "../runtime/memtrace.ts";
-import { planDefinedStory } from "../runtime/story-route.ts";
+import { planDefinedStory, readRoutingLanguage } from "../runtime/story-route.ts";
+import {
+  createRoutingLanguageSnapshot,
+  extractRoutingLanguageFeatures,
+} from "../runtime/routing-language-model.ts";
 import { initialState } from "../src/seed.ts";
 import { harnessIds, type Evidence, type HarnessRuntime, type WorkItem } from "../src/shared.ts";
 
@@ -46,6 +50,29 @@ function connectedState(ids = catalog.map(runtime => runtime.id)) {
   }]));
   return state;
 }
+
+test("the optional local wording model is cached, reloaded on change, and discarded when invalid", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "memcode-routing-language-"));
+  const path = join(dir, "routing-language.json");
+  const label = { kind: "test" as const, bias: -1, minFeatures: 1, threshold: 0.9, weights: [[1, 4]] as [number, number][] };
+  try {
+    assert.equal(await readRoutingLanguage(dir), undefined);
+    const first = createRoutingLanguageSnapshot([label]);
+    await writeFile(path, JSON.stringify(first));
+    const [during, same] = await Promise.all([readRoutingLanguage(dir), readRoutingLanguage(dir)]);
+    assert.equal(during?.digest, first.digest);
+    assert.strictEqual(during, same);
+    assert.strictEqual(await readRoutingLanguage(dir), during);
+    const replacement = createRoutingLanguageSnapshot([{ ...label, kind: "rename" }]);
+    await writeFile(path, JSON.stringify(replacement));
+    assert.equal((await readRoutingLanguage(dir))?.digest, replacement.digest);
+    await writeFile(path, "{");
+    assert.equal(await readRoutingLanguage(dir), undefined);
+  } finally {
+    await unlink(path).catch(() => {});
+    await rmdir(dir);
+  }
+});
 
 test("every nonempty connection combination routes only within its approvals, independently of discovery order", () => {
   const all: HarnessRuntime[] = harnessIds.map(id => ({ id, name: id, available: true, path: "fixture", models: [{ id: id + "-default", label: id, source: "acp", isDefault: true, tier: "extreme" }] }));
@@ -150,6 +177,34 @@ test("defining a story records the assignee and leaves the worker idle", async (
     assert.equal(stored.run.state, "idle");
     assert.equal(stored.stage, "planned");
     assert.equal(qualify.mock.callCount(), 1);
+
+    const title = "Coverage for desktop cards";
+    const description = "Regression cases around the planner. Keep behavior unchanged.";
+    const snapshot = createRoutingLanguageSnapshot([{
+      kind: "test",
+      bias: -1,
+      minFeatures: 2,
+      threshold: 0.95,
+      weights: extractRoutingLanguageFeatures(title, description)
+        .slice(0, 4)
+        .map((index) => [index, 4]),
+    }]);
+    await writeFile(join(dir, "routing-language.json"), JSON.stringify(snapshot));
+    const classified = (await runtime.request("task:create", {
+      projectId: project.id, title, description,
+      priority: "medium", harness: "codex", assignment: "auto",
+    })) as WorkItem;
+    const classifiedDeadline = Date.now() + 2000;
+    let classifiedStory = runtime.store.state.tasks.find((item) => item.id === classified.id);
+    while (!classifiedStory?.route && Date.now() < classifiedDeadline) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      classifiedStory = runtime.store.state.tasks.find((item) => item.id === classified.id);
+    }
+    assert.equal(classifiedStory?.route?.inputs.request?.language?.digest, snapshot.digest);
+    assert.deepEqual(classifiedStory?.route?.inputs.request?.kinds, ["test"]);
+    assert.equal(classifiedStory?.route?.harness, "codex");
+    assert.equal(classifiedStory?.run.state, "idle");
+    assert.equal(qualify.mock.callCount(), 2);
   } finally {
     qualify.mock.restore();
     await runtime.close();

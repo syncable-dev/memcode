@@ -43,14 +43,14 @@ export function UnitToggle({
         aria-pressed={unit === "issues"}
         onClick={() => setUnit("issues")}
       >
-        Stories
+        Tasks
       </button>
       <button
         className={unit === "points" ? "active" : ""}
         aria-pressed={unit === "points"}
         onClick={() => setUnit("points")}
       >
-        Story points
+        Points
       </button>
     </div>
   );
@@ -402,7 +402,7 @@ export function CycleCharts({
     ? dayAt(cycle.snapshots[0].at, cycle.timeZone)
     : null;
   const label =
-    unit === "issues" ? "stories" : "manually estimated story points";
+    unit === "issues" ? "tasks" : "manually estimated points";
   const note = !first
     ? "Progress appears when the first snapshot is recorded."
     : `History begins ${dateLabel(first)}. Earlier days and future actuals are unrecorded.`;
@@ -469,7 +469,7 @@ export function CycleCharts({
         />
         <p className="planning-chart-note">
           {unit === "points"
-            ? "Unestimated stories are excluded from point totals. Story points are planning estimates."
+            ? "Unestimated tasks are excluded from point totals. Points are planning estimates."
             : "Scope changes remain visible. A worker exit does not count as accepted completion."}
         </p>
       </section>

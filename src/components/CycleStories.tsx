@@ -41,7 +41,7 @@ export function CycleStories({
       await window.memcode.bulkUpdateTasks(ids, { cycleId: null });
       setSelected(new Set());
       notify(
-        `${ids.length} ${ids.length === 1 ? "story moved" : "stories moved"} to the backlog.`,
+        `${ids.length} ${ids.length === 1 ? "task moved" : "tasks moved"} to the backlog.`,
       );
     } catch (error) {
       notify((error as Error).message);
@@ -72,7 +72,7 @@ export function CycleStories({
       <header>
         <div>
           <h3>
-            Stories in this cycle<span>{tasks.length}</span>
+            Tasks in this cycle<span>{tasks.length}</span>
           </h3>
           <p>
             {cycle.state === "completed"
@@ -83,7 +83,7 @@ export function CycleStories({
         {cycle.state !== "completed" && (
           <button className="button secondary" onClick={add}>
             <Plus size={13} />
-            Add stories
+            Add tasks
           </button>
         )}
       </header>
@@ -96,7 +96,7 @@ export function CycleStories({
                   <th>
                     <input
                       type="checkbox"
-                      aria-label="Select all cycle stories"
+                      aria-label="Select all cycle tasks"
                       checked={
                         tasks.some((task) => !isActive(task)) &&
                         tasks
@@ -117,7 +117,7 @@ export function CycleStories({
                     />
                   </th>
                 )}
-                <th>Story</th>
+                <th>Task</th>
                 <th>Status</th>
                 {cycle.state !== "completed" && <th>Readiness</th>}
                 <th>Estimate</th>
@@ -230,18 +230,18 @@ export function CycleStories({
           <Layers3 size={23} />
           <strong>
             {cycle.state === "completed"
-              ? "No stories remain assigned here."
+              ? "No tasks remain assigned here."
               : "The cycle is ready for its scope."}
           </strong>
           <p>
             {cycle.state === "completed"
               ? "Its closing snapshot still preserves the measured totals."
-              : "Add existing stories from your project. Workers start only when you choose to run them."}
+              : "Add existing tasks from your project. Workers start only when you choose to run them."}
           </p>
           {cycle.state !== "completed" && (
             <button className="text-button" onClick={add}>
               <Plus size={12} />
-              Choose stories
+              Choose tasks
             </button>
           )}
         </div>
@@ -250,7 +250,7 @@ export function CycleStories({
         <p className="cycle-carried-note">
           <ArrowRight size={12} />
           {carried.size} unfinished{" "}
-          {carried.size === 1 ? "story was" : "stories were"} carried out when
+          {carried.size === 1 ? "task was" : "tasks were"} carried out when
           this cycle closed.
         </p>
       )}
@@ -282,7 +282,7 @@ function CycleReadiness({
     <div className="cycle-readiness blocked">
       <span>
         Waiting on{" "}
-        {blockers.length === 1 ? "1 story" : `${blockers.length} stories`}
+        {blockers.length === 1 ? "1 task" : `${blockers.length} tasks`}
       </span>
       {blockers.map(({ id, story }) =>
         story ? (

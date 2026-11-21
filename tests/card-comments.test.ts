@@ -80,7 +80,7 @@ test("comment edits and replies enforce author and card identity without trustin
       parentId: comment.id,
       text: "Wrong story",
     }),
-    /this story/,
+    /this task/,
   );
   h.setIdentity({ id: "memtrace-b", name: "Other", source: "memtrace" });
   await assert.rejects(

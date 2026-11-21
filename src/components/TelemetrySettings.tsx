@@ -85,7 +85,7 @@ export function TelemetrySettings({
         </span>
       </label>
       <p className="muted">
-        Usage reports never include prompts, source code, project or story text,
+        Usage reports never include prompts, source code, project or task text,
         file paths, branches, commands, transcripts, error text or artifact
         contents. Your configured coding provider still receives the context
         needed for its task.

@@ -21,7 +21,7 @@ export function checkoutCapabilities(value: unknown): CheckoutCapabilities {
     (result.owned_worktree_v1 && !result.checkout_modes.includes("owned-worktree-v1"))
   )
     throw new Error(
-      "Memtrace did not provide valid checkout capabilities. Reconnect the bundled Memtrace engine in Settings, then retry. Parallel epic support has not been verified.",
+      "Memtrace did not provide valid checkout capabilities. Reconnect the bundled Memtrace engine in Settings, then retry. Parallel goal support has not been verified.",
     );
   return result as CheckoutCapabilities;
 }
@@ -55,7 +55,7 @@ export async function probeCheckoutCapabilities(
       )
     )
       return null;
-    throw new Error("Memtrace could not verify epic isolation before startup. " + error.message);
+    throw new Error("Memtrace could not verify goal isolation before startup. " + error.message);
   }
   let value: unknown;
   try {

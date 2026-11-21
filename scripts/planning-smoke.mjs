@@ -53,7 +53,7 @@ export async function verifyPlanning(page, call, out) {
   await call("cycle:start", cycle.id);
   await assert.rejects(
     call("task:update", { id: parent.id, patch: { stage: "done" } }),
-    /child stories/,
+    /Complete the subtasks/,
   );
   await call("task:bulk-update", {
     ids: [parent.id, child.id],
@@ -154,7 +154,7 @@ export async function verifyPlanning(page, call, out) {
   await page.getByRole("button", { name: "Close work item" }).click();
   await carryCard.click();
   await blockers.getByRole("button", { name: "Edit prerequisites" }).click();
-  const editor = page.getByRole("group", { name: "Edit story prerequisites" });
+  const editor = page.getByRole("group", { name: "Edit task prerequisites" });
   await expect(editor).toBeFocused();
   await editor
     .getByRole("button", { name: "Remove prerequisite", exact: true })

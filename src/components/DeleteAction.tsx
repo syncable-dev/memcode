@@ -24,7 +24,8 @@ export function DeleteAction({
     [busy, setBusy] = useState(false),
     [cascade, setCascade] = useState(false),
     [error, setError] = useState("");
-  const label = kind === "cycle" ? "cycle" : kind;
+  const label =
+    kind === "story" ? "task" : kind === "epic" ? "goal" : "cycle";
   const remove = async () => {
     setBusy(true);
     setError("");
@@ -73,10 +74,10 @@ export function DeleteAction({
           <div className="modal-body">
             <p className="delete-explanation">
               {kind === "story"
-                ? "This removes the story, its conversation and saved review notes from MemCode. Source files, Git history and output files remain on disk."
+                ? "This removes the task, its conversation and saved review notes from MemCode. Source files, Git history and output files remain on disk."
                 : kind === "epic"
-                  ? "Its stories move to Project work. Their conversations, code and outputs are preserved."
-                  : "Its stories return to the backlog. This cycle and its chart history are removed."}
+                  ? "Its tasks move to Project work. Their conversations, code and outputs are preserved."
+                  : "Its tasks return to the backlog. This cycle and its chart history are removed."}
             </p>
             {withChildren && (
               <label className="delete-children">
@@ -85,7 +86,7 @@ export function DeleteAction({
                   checked={cascade}
                   onChange={(e) => setCascade(e.target.checked)}
                 />{" "}
-                Also delete its child stories
+                Also delete its subtasks
               </label>
             )}
             {error && (

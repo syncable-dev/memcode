@@ -74,12 +74,44 @@ function diagnosticSuffix(owned: OwnedProcess): string {
   return tail ? `\n\n${tail}` : "";
 }
 
+/** What a store's own record says about the engine process that owns it. */
+export type OwnerState = "alive" | "gone" | "unknown";
+
+/**
+ * Reads the store's owner record. An owner that exits can leave its database server
+ * answering: the record, not the answer, says whether anyone still owns the store.
+ * "unknown" means there is no usable record, so nothing may be concluded.
+ */
+export async function recordedOwnerState(dataDirectory: string): Promise<OwnerState> {
+  let pid: unknown;
+  try {
+    pid = JSON.parse(
+      await readFile(join(dataDirectory, "daemon-state.json"), "utf8"),
+    ).pid;
+  } catch {
+    return "unknown";
+  }
+  if (!Number.isSafeInteger(pid) || (pid as number) <= 0) return "unknown";
+  try {
+    process.kill(pid as number, 0);
+    return "alive";
+  } catch (error) {
+    // EPERM: the process exists but belongs to someone else.
+    return (error as NodeJS.ErrnoException).code === "EPERM" ? "alive" : "gone";
+  }
+}
+
 /** A cold stdio session is healthy but cannot query until start publishes an owner. */
 export function pendingMemtraceOwner(error: unknown): boolean {
   const text = error instanceof Error ? error.message : String(error);
   return /no workspace owner is attached yet|this session attaches when memtrace start publishes one/i.test(
     text,
   );
+}
+
+/** The same cold state, seen from the store's record before any query is tried. */
+function awaitingOwner(): Error {
+  return Error("no workspace owner is attached yet");
 }
 
 export function disconnectedMemtraceClient(error: unknown): boolean {
@@ -237,9 +269,14 @@ interface OwnerOptions {
   timeoutMs?: number;
   pollMs?: number;
   stopGraceMs?: number;
+  recordedOwner?: (dataDirectory: string) => Promise<OwnerState>;
 }
 
-/** Only owns children it spawned; an already reachable owner is always borrowed. */
+/**
+ * Only owns children it spawned. A reachable owner that is still running is borrowed.
+ * A store that answers although its owner has died is not: the next engine to start
+ * anywhere shuts that leftover server down, so MemCode starts a proper owner for it.
+ */
 export class ManagedMemtraceOwners {
   private readonly owned = new Map<string, OwnedProcess>();
   private readonly draining = new Map<string, Promise<void>>();
@@ -291,7 +328,8 @@ export class ManagedMemtraceOwners {
       (previous && previous !== this.owned.get(directory))
     )
       return this.ready(scope, command, env, probe, onProgress);
-    if (reachable) return; // Borrow a live owner without taking ownership.
+    // Borrow a live owner without taking ownership.
+    if (reachable && (await this.ownerOf(directory)) !== "gone") return;
     let owned = this.owned.get(scope.dataDirectory);
     if (!owned) {
       const child = (this.options.spawn ?? spawn)(
@@ -387,6 +425,9 @@ export class ManagedMemtraceOwners {
         if (this.draining.has(directory))
           return this.ready(scope, command, env, probe, onProgress);
         try {
+          // Until the new owner has published itself, an answer can only come
+          // from the server its dead predecessor left behind.
+          if ((await this.ownerOf(directory)) === "gone") throw awaitingOwner();
           await probe();
           if (
             this.draining.has(directory) ||
@@ -421,6 +462,10 @@ export class ManagedMemtraceOwners {
         throw Error("The Memtrace connection is closing.");
       throw error;
     }
+  }
+
+  private ownerOf(dataDirectory: string): Promise<OwnerState> {
+    return (this.options.recordedOwner ?? recordedOwnerState)(dataDirectory);
   }
 
   async release(dataDirectory: string): Promise<void> {

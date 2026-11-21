@@ -49,6 +49,8 @@ export interface MemtraceScopeBinding {
   mode: "workspace" | "project";
   dataDirectory: string;
   workspaceFile?: string;
+  /** The session only attaches: its store is served by a separate owner process. */
+  attached?: true;
 }
 
 async function rejectRedirectedGraphPath(path: string): Promise<void> {

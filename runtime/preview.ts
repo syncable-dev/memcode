@@ -90,7 +90,7 @@ export class PreviewManager {
   async show(input: PreviewInput): Promise<void> {
     const generation = ++this.generation;
     const task = this.state().tasks.find((task) => task.id === input.taskId);
-    if (!task) throw new Error("Story not found.");
+    if (!task) throw new Error("Task not found.");
     const artifactRevision =
       this.state().artifacts.find(
         (artifact) => artifact.id === input.artifactId,
@@ -111,7 +111,7 @@ export class PreviewManager {
             artifact.id === input.artifactId && artifact.taskId === task.id,
         );
         if (input.artifactId && !artifact)
-          throw new Error("Artifact not found in this story.");
+          throw new Error("Artifact not found in this task.");
         const file = await resolveFile(
           this.state(),
           this.dataDir,
@@ -267,7 +267,7 @@ export class PreviewManager {
     }
     const task = this.state().tasks.find((task) => task.id === this.owner);
     const generation = this.generation;
-    if (!task) throw new Error("Story not found.");
+    if (!task) throw new Error("Task not found.");
     const result = await this.host.call<{ pngBase64: string }>(
       "preview_capture",
       { bounds: this.bounds },

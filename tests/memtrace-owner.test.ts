@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   ManagedMemtraceOwners,
+  recordedOwnerState,
   pendingMemtraceOwner,
   memtraceOwnerTimeoutMs,
   memtraceOwnerShutdownTimeoutMs,
@@ -29,7 +30,10 @@ const scope = {
   jobDirectory: "C:/temporary/selected-project/.memcode/memtrace/.memtrace",
 };
 const command = { command: "node", prefix: ["installed/memtrace.js"] };
-function fixture(flush?: () => Promise<void>) {
+function fixture(
+  flush?: () => Promise<void>,
+  options: { recordedOwner?: () => Promise<"alive" | "gone" | "unknown"> } = {},
+) {
   const child = Object.assign(new EventEmitter(), {
     pid: 123456,
     exitCode: null as number | null,
@@ -51,6 +55,7 @@ function fixture(flush?: () => Promise<void>) {
       stopped.push(process);
       await flush?.();
     },
+    ...options,
   });
   return { owners, child, spawns, stopped };
 }
@@ -211,6 +216,56 @@ test("a reachable owner is borrowed without a process or shutdown ownership", as
   await f.owners.close();
   assert.equal(f.spawns.length, 0);
   assert.equal(f.stopped.length, 0);
+});
+
+test("a store that still answers after its owner died is not borrowed: MemCode starts its own owner and waits for it to take over", async () => {
+  // A previous MemCode run was killed. Its engine owner exits minutes later but leaves its
+  // database server answering, until the next engine to start anywhere shuts it down.
+  let owner: "alive" | "gone" = "gone";
+  const f = fixture(undefined, { recordedOwner: async () => owner });
+  let probes = 0,
+    settled = false;
+  const ready = f.owners
+    .ready(scope, command, {}, async () => {
+      probes++;
+    })
+    .then(() => {
+      settled = true;
+    });
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  assert.equal(f.spawns.length, 1, "an ownerless store is taken over, not borrowed");
+  assert.equal(settled, false, "not ready while only the dead owner's server answers");
+  owner = "alive";
+  await ready;
+  assert.ok(probes >= 2, "the new owner is probed before the project is used");
+  await f.owners.close();
+  assert.deepEqual(f.stopped, [f.child], "MemCode owns what it started");
+});
+
+test("a reachable store whose owner is running is still borrowed", async () => {
+  const f = fixture(undefined, { recordedOwner: async () => "alive" });
+  await f.owners.ready(scope, command, {}, async () => {});
+  await f.owners.close();
+  assert.equal(f.spawns.length, 0);
+  assert.equal(f.stopped.length, 0);
+});
+
+test("the store's own record says whether its owner process is still running", async () => {
+  const store = await mkdtemp(join(tmpdir(), "memcode-owner-record-"));
+  try {
+    assert.equal(await recordedOwnerState(store), "unknown", "no record: nothing is known");
+    const record = join(store, "daemon-state.json");
+    await writeFile(record, JSON.stringify({ pid: process.pid }));
+    assert.equal(await recordedOwnerState(store), "alive");
+    const finished = spawnProcess(process.execPath, ["-e", ""]);
+    await new Promise((resolve) => finished.once("exit", resolve));
+    await writeFile(record, JSON.stringify({ pid: finished.pid }));
+    assert.equal(await recordedOwnerState(store), "gone");
+    await writeFile(record, "not a record");
+    assert.equal(await recordedOwnerState(store), "unknown");
+  } finally {
+    await rm(store, { recursive: true, force: true });
+  }
 });
 
 test("certificate diagnostics are scoped, bounded and redacted without ordinary process output", async () => {

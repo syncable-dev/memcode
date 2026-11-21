@@ -707,7 +707,7 @@ export class TeamSyncClient implements TeamWorkerClaims {
     const claim = connection.snapshot.claims.find((claim) => taskIds.has(localTeamId(connection, "story", claim.storyId)));
     if (claim) {
       const owner = connection.snapshot.members.find((member) => member.id === claim.memberId)?.name ?? "A teammate";
-      throw Error(`${owner} has an active story claim. Stop or hand off that worker before deleting this planning item.`);
+      throw Error(`${owner} has an active task claim. Stop or hand off that worker before deleting this planning item.`);
     }
   }
   /** Persist just the records a metadata deletion can remove, before it mutates. */
@@ -730,7 +730,7 @@ export class TeamSyncClient implements TeamWorkerClaims {
       cycles: method === "cycle:delete" ? state.cycles.filter((cycle) => cycle.id === id) : [],
     };
     const serialized = JSON.stringify(backup);
-    if (Buffer.byteLength(serialized) > 8 * 1024 * 1024 || Buffer.byteLength(JSON.stringify(connection.deletions ?? [])) + Buffer.byteLength(serialized) > 24 * 1024 * 1024) throw Error("Sync pending deletions first, or archive this large story to preserve its local history.");
+    if (Buffer.byteLength(serialized) > 8 * 1024 * 1024 || Buffer.byteLength(JSON.stringify(connection.deletions ?? [])) + Buffer.byteLength(serialized) > 24 * 1024 * 1024) throw Error("Sync pending deletions first, or archive this large task to preserve its local history.");
     const frozen = JSON.parse(serialized) as DeletionBackup;
     (connection.deletions ??= []).push(frozen);
     connection.preparingDeletionId = frozen.id;
@@ -944,7 +944,7 @@ export class TeamSyncClient implements TeamWorkerClaims {
     if (!project) throw Error("Choose a local project to share.");
     if(this.unavailable.has(project.id))throw Error("Restore this project’s existing private Team credentials, or explicitly disconnect it before sharing it with another Team.");
     if (this.pendingShares.has(project.id)) throw Error("This project is already being shared.");
-    if (this.state().tasks.some((task) => task.projectId === project.id && ["preparing", "running", "stopping"].includes(task.run.state))) throw Error("Stop this project’s active workers before sharing so future workers obtain Team story claims.");
+    if (this.state().tasks.some((task) => task.projectId === project.id && ["preparing", "running", "stopping"].includes(task.run.state))) throw Error("Stop this project’s active workers before sharing so future workers obtain Team task claims.");
     const previous = this.connections.get(project.id);
     if (previous?.teamId) {
       if (previous.teamId !== input.teamId) throw Error("This project already belongs to another Team.");
@@ -1100,7 +1100,7 @@ export class TeamSyncClient implements TeamWorkerClaims {
       if (this.unavailable.has(projectId)) throw Error("This team project’s private credentials are missing. Restore its profile or explicitly disconnect and rejoin before starting a worker.");
       return;
     }
-    if (connection.deletions?.some((backup) => backup.tasks.some((task) => task.id === taskId))) throw Error("Wait for this story’s pending deletion to finish syncing before starting a worker.");
+    if (connection.deletions?.some((backup) => backup.tasks.some((task) => task.id === taskId))) throw Error("Wait for this task’s pending deletion to finish syncing before starting a worker.");
     await this.synchronize(projectId);
     const remoteTaskId = remoteTeamId(connection, "story", taskId);
     const retained = connection.leases.get(taskId);
@@ -1108,12 +1108,12 @@ export class TeamSyncClient implements TeamWorkerClaims {
       const previous = connection.sessions?.sessions.find(session => session.id === retained.attemptId);
       const startedAt = this.state().tasks.find(task => task.id === taskId)?.run.startedAt;
       if (previous?.startedAt && startedAt && previous.startedAt !== startedAt)
-        throw Error("A previous worker pass still owns this story’s claim. Release its claim in Team before starting another pass.");
+        throw Error("A previous worker pass still owns this task’s claim. Release its claim in Team before starting another pass.");
       return;
     }
     const attempts = (connection.claimAttempts ??= {});
     let attempt = attempts[taskId];
-    if (attempt?.state === "owned") throw Error("A previous worker on this device still owns this story’s claim. Verify that it has stopped, then release the claim in Team before starting again.");
+    if (attempt?.state === "owned") throw Error("A previous worker on this device still owns this task’s claim. Verify that it has stopped, then release the claim in Team before starting again.");
     if (!attempt) {
       attempt = { opId: randomUUID(), attemptId: randomUUID(), state: "requesting" };
       attempts[taskId] = attempt;
@@ -1123,7 +1123,7 @@ export class TeamSyncClient implements TeamWorkerClaims {
     try {
       const reply = await this.request<TeamCommandReply>(connection.endpoint, "/v1/commands", connection.credential.capability, { workspaceId: connection.credential.workspaceId, opId, command: { type: "claim.acquire", storyId: remoteTaskId, attemptId } });
       const claim = reply.event.changes.find((item) => item.collection === "claims" && item.id === remoteTaskId)?.value as TeamClaim | undefined;
-      if (!claim || claim.attemptId !== attemptId) throw Error("The relay did not confirm this worker’s story claim.");
+      if (!claim || claim.attemptId !== attemptId) throw Error("The relay did not confirm this worker’s task claim.");
       connection.leases.set(taskId, claim);
       attempt.state = "owned";
       try {
@@ -1138,10 +1138,10 @@ export class TeamSyncClient implements TeamWorkerClaims {
       if (claim) {
         delete attempts[taskId]; await this.persist();
         const owner = connection.snapshot.members.find((member) => member.id === claim.memberId)?.name ?? "A teammate";
-        throw Error(`${owner} already owns this story’s worker claim. Release or hand off that claim before starting another worker.`);
+        throw Error(`${owner} already owns this task’s worker claim. Release or hand off that claim before starting another worker.`);
       }
       await this.fail(connection, error);
-      throw Error(`A team worker requires a confirmed online story claim. ${message(error)}`);
+      throw Error(`A team worker requires a confirmed online task claim. ${message(error)}`);
     }
     // A transient board read cannot undo the relay's confirmed, durably saved grant.
     try {
@@ -1182,7 +1182,7 @@ export class TeamSyncClient implements TeamWorkerClaims {
     if (!task || !artifact) throw Error("Choose a saved output from this team project.");
     const path = await realpath(artifact.path);
     const roots = await canonicalArtifactRoots(this.dataDir, task);
-    if (!roots.some((root) => within(root, path))) throw Error("Only this story’s saved outputs can be published.");
+    if (!roots.some((root) => within(root, path))) throw Error("Only this task’s saved outputs can be published.");
     const info = await stat(path);
     if (!info.isFile() || info.size > 5 * 1024 * 1024) throw Error("The Team preview supports individual saved outputs up to 5 MB.");
     const bytes = await readFile(path);
@@ -1200,13 +1200,13 @@ export class TeamSyncClient implements TeamWorkerClaims {
     const result = connection.snapshot.results.find((item) => item.id === resultId);
     if (!result) throw Error("Shared output not found. Refresh Team first.");
     const taskId = localTeamId(connection, "story", result.storyId);
-    if (!this.state().tasks.some((task) => task.id === taskId && task.projectId === projectId)) throw Error("This output’s story has not synchronized yet.");
+    if (!this.state().tasks.some((task) => task.id === taskId && task.projectId === projectId)) throw Error("This output’s task has not synchronized yet.");
     const bytes = await this.request<Uint8Array>(connection.endpoint, `/v1/blobs/${encodeURIComponent(result.hash)}?workspaceId=${encodeURIComponent(connection.credential.workspaceId)}`, connection.credential.capability, undefined, 0, undefined, undefined, true);
     if (bytes.byteLength !== result.size || bytes.byteLength > 5 * 1024 * 1024 || createHash("sha256").update(bytes).digest("hex") !== result.hash) throw Error("This shared output failed its integrity check.");
     const safeName = basename(result.name).replace(/[<>:"/\\|?*\x00-\x1f]/g, "_").slice(0, 160) || "shared-output";
     const root = resolve(this.dataDir, "captures");
     const directory = resolve(root, taskId);
-    if (!within(root, directory)) throw Error("Invalid shared story location.");
+    if (!within(root, directory)) throw Error("Invalid shared task location.");
     await mkdir(directory, { recursive: true });
     const resultKey = createHash("sha256").update(result.id).digest("hex").slice(0, 20);
     const path = join(directory, `team-${resultKey}-${safeName}`);
@@ -1238,12 +1238,12 @@ export class TeamSyncClient implements TeamWorkerClaims {
   }
   async sendSessionCommand(taskId: string, kind: SessionCommand["kind"], text: string, reviewRunId?: string) {
     const task = this.state().tasks.find(t => t.id === taskId);
-    if (!task) throw Error("Story not found.");
+    if (!task) throw Error("Task not found.");
     return this.sessionSync.enqueue(this.connection(task.projectId), taskId, kind, text, reviewRunId);
   }
   async editSessionCommand(taskId: string, id: string, text?: string, cancel = false) {
     const task = this.state().tasks.find(t => t.id === taskId);
-    if (!task) throw Error("Story not found.");
+    if (!task) throw Error("Task not found.");
     await this.sessionSync.edit(this.connection(task.projectId), id, text, cancel);
   }
   async prepareFollowups(task: WorkItem) {

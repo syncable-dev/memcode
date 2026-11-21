@@ -4,7 +4,6 @@ import {
   Check,
   Folder,
   GitBranch,
-  Layers3,
   LoaderCircle,
   MessageSquare,
   Plug,
@@ -23,27 +22,36 @@ import { InstallWelcome } from "./InstallWelcome";
 import { BetaAccess } from "./BetaAccess";
 import { LocalToolsGuide } from "./LocalToolsGuide";
 import { previousGuideStep } from "../onboarding";
+import { timings, type Timing } from "../new-work";
 import "../styles-onboarding.css";
+
+const firstWork = {
+  number: 5,
+  title: "What do you want to get done?",
+  body: "Say it in your own words. Your worker turns it into a plan you can check, and you decide what happens now and what waits.",
+  button: "Plan your first work",
+  target: "[data-guide=new-story]",
+};
 
 const copy = {
   project: {
     number: 1,
     title: "Give your idea a home.",
-    body: "Open a code folder or start a new project. Your board is a place for the work you want to do.",
+    body: "Open a code folder or start a new project. Everything you want to get done lives here.",
     button: "Create or open a project",
     target: "[data-guide=project-picker]",
   },
   memtrace: {
     number: 2,
     title: "Understand the code first.",
-    body: "Memtrace reads your code locally. Your workers get relevant context, measured complexity and change impact.",
+    body: "Memtrace reads your code on this computer, so every task starts with the right context.",
     button: "Analyze this project",
     target: "[data-guide=project-picker]",
   },
   worker: {
     number: 3,
     title: "Choose a worker you trust.",
-    body: "Connect your coding tool with your approval. Choose its default permissions here, once, for future stories.",
+    body: "Connect the coding tool you already use. Pick its default permissions once; every new task uses them.",
     button: "Choose a worker",
     target: "[data-guide=worker-connections]",
   },
@@ -53,39 +61,64 @@ const copy = {
     body: "Two optional ways to make the workspace yours. Add them now or come back in Settings.",
     button: "Continue to your first work",
   },
-  epic: {
-    number: 5,
-    title: "What would you like to build?",
-    body: "An epic holds a larger goal. Stories are the smaller changes that get you there. Start with either.",
-    button: "Write an epic",
-    target: "[data-guide=new-epic]",
-  },
-  story: {
-    number: 5,
-    title: "One clear request is enough.",
-    body: "Describe what you want and how you’ll know it works. Save the story, then start its worker when you’re ready.",
-    button: "Write a story",
-    target: "[data-guide=new-story]",
-  },
+  /** Saved progress from before goals still says "epic"; it opens the same step. */
+  epic: firstWork,
+  story: firstWork,
   ready: {
     number: 5,
-    title: "Explore your story.",
-    body: "Take a tour inside the card. See where to talk to the worker, inspect its edits and open what it built.",
-    button: "Tour the story tabs",
+    title: "Meet your first task.",
+    body: "Open it to talk to the worker, follow its changes and try what it built.",
+    button: "Tour the task",
   },
   "code-review": {
     number: 6,
     title: "Review what changed.",
-    body: "Move finished work to Code review. Start the review inside the story to compare measurements and inspect findings before accepting the change.",
+    body: "Finished work waits in Code review. Look it over, then accept it or ask the worker for a fix.",
     button: "Open the illustrated guide",
   },
 };
+
+/** How one sentence becomes work: small asks stay one task, bigger ones become a goal. */
+function GoalsAndTasks() {
+  return (
+    <div className="guide-concept" aria-label="How requests become tasks and goals">
+      <div className="guide-concept-row">
+        <q>Fix the broken footer link</q>
+        <ArrowRight size={12} aria-hidden />
+        <span className="guide-concept-result">
+          <strong>Quick change</strong>
+          <small>1 task</small>
+        </span>
+      </div>
+      <div className="guide-concept-row">
+        <q>Let customers export their reports</q>
+        <ArrowRight size={12} aria-hidden />
+        <span className="guide-concept-result goal">
+          <strong>Goal</strong>
+          <small>3 tasks, side by side</small>
+        </span>
+      </div>
+      <p>
+        A <b>task</b> is one piece of work for one worker. A <b>goal</b> is an
+        outcome that takes a few tasks.
+      </p>
+      <div className="guide-concept-when" aria-label="When each goal happens">
+        {(Object.keys(timings) as Timing[]).map((timing) => (
+          <span key={timing}>
+            <strong>{timings[timing].name}</strong>
+            <small>{timings[timing].meaning}</small>
+          </span>
+        ))}
+      </div>
+      <p>Only Now work starts. Next and Later goals wait on the Roadmap.</p>
+    </div>
+  );
+}
 
 export function Onboarding({
   progress,
   state,
   project,
-  epics,
   connected,
   memtraceConnected = false,
   hidden,
@@ -97,7 +130,8 @@ export function Onboarding({
   progress: OnboardingProgress;
   state: AppState;
   project: Project;
-  epics: Epic[];
+  /** Kept for callers; the first-work step no longer asks for a goal up front. */
+  epics?: Epic[];
   connected: boolean;
   memtraceConnected?: boolean;
   hidden: boolean;
@@ -107,7 +141,7 @@ export function Onboarding({
   needsEngine?: boolean;
   notify: (message: string) => void;
 }) {
-  const step = progress.step;
+  const step = progress.step === "epic" ? "story" : progress.step;
   const laneId = state.reviewWorkflows?.[project.id]?.codeReviewStatusId;
   const [bounds, setBounds] = useState<DOMRect>();
   useEffect(() => {
@@ -218,7 +252,7 @@ export function Onboarding({
               {
                 icon: MessageSquare,
                 label: "Build",
-                detail: "One clear story. Your worker takes it from there.",
+                detail: "Say what you want. Your workers do the tasks.",
               },
               {
                 icon: ScanLine,
@@ -241,7 +275,7 @@ export function Onboarding({
               ? "Your team’s current board is already here. Connect a local checkout when you want to work on the code."
               : stories
                 ? "Your existing work stays on the board. This guide only helps connect the essentials for this project."
-                : "Your board starts empty. Setup won’t add stories, epics or cycles for you."}
+                : "Your board starts empty. Setup won’t add goals, tasks or cycles for you."}
           </p>
           <details className="project-guide-options">
             <summary>Setup preferences</summary>
@@ -268,10 +302,7 @@ export function Onboarding({
     );
   }
 
-  const item = copy[step],
-    selectedEpic =
-      epics.find((entry) => entry.id === progress.epicId) ??
-      epics.find((entry) => !entry.sourceKey);
+  const item = copy[step];
   const story = state.tasks.find(
     (entry) => entry.id === progress.storyId && entry.projectId === project.id,
   );
@@ -421,7 +452,7 @@ export function Onboarding({
               <LocalToolsGuide hidden={hidden} onAction={onAction} />
               <button
                 className="button primary"
-                onClick={() => onUpdate({ step: "epic" })}
+                onClick={() => onUpdate({ step: "story" })}
               >
                 {item.button} <ArrowRight size={13} />
               </button>
@@ -452,7 +483,7 @@ export function Onboarding({
                   className="guide-use-existing"
                   onClick={() => onAction("view-review")}
                 >
-                  Show Code review on my story <ArrowRight size={12} />
+                  Show Code review on my task <ArrowRight size={12} />
                 </button>
               )}
             </>
@@ -493,7 +524,7 @@ export function Onboarding({
                 Smart auto handles routine approvals where supported. Standard
                 asks using the tool’s normal rules. Full access bypasses tool
                 approvals and supported sandboxes. Your default is saved for
-                future stories.
+                future tasks.
               </p>
             </details>
           )}
@@ -506,29 +537,7 @@ export function Onboarding({
               Review worker settings
             </button>
           )}
-          {step === "epic" && selectedEpic && (
-            <button
-              className="guide-use-existing"
-              onClick={() =>
-                onUpdate({ step: "story", epicId: selectedEpic.id })
-              }
-            >
-              <Layers3 size={12} />
-              Use {selectedEpic.title}
-            </button>
-          )}
-          {step === "epic" && !selectedEpic && (
-            <button
-              className="guide-use-existing"
-              onClick={() => {
-                onUpdate({ step: "story" });
-                onAction("story");
-              }}
-            >
-              <MessageSquare size={12} />
-              Start with a story instead
-            </button>
-          )}
+          {step === "story" && <GoalsAndTasks />}
           {step === "story" && existingStory && (
             <button
               className="guide-use-existing"
@@ -543,9 +552,7 @@ export function Onboarding({
               <MessageSquare size={12} /> Tour {existingStory.identifier}
             </button>
           )}
-          {(step === "epic" ||
-            step === "story" ||
-            (step === "ready" && story)) && (
+          {(step === "story" || (step === "ready" && story)) && (
             <button
               className="guide-use-existing"
               onClick={() => onUpdate({ step: "code-review" })}
@@ -553,7 +560,7 @@ export function Onboarding({
               Continue to Code review <ArrowRight size={12} />
             </button>
           )}
-          {(step === "epic" || step === "story" || step === "ready") && (
+          {(step === "story" || step === "ready") && (
             <button
               className="guide-use-existing"
               onClick={() => onUpdate({ complete: true })}

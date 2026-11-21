@@ -21,13 +21,13 @@ test("capabilities use a bounded stateless process with exact arguments", async 
 
 test("only an explicit older CLI command permits MCP capability fallback", async () => {
   assert.equal(await probeCheckoutCapabilities(await executable("console.error('Unknown command: capabilities');process.exit(2);")), null);
-  await assert.rejects(probeCheckoutCapabilities(await executable("console.error('store is closing');process.exit(1);")), /could not verify epic isolation/);
+  await assert.rejects(probeCheckoutCapabilities(await executable("console.error('store is closing');process.exit(1);")), /could not verify goal isolation/);
   await assert.rejects(probeCheckoutCapabilities(await executable("console.log('{}');")), /did not provide valid checkout capabilities/);
   await assert.rejects(probeCheckoutCapabilities(await executable("console.log('not JSON');")), /invalid JSON/);
 });
 
 test("a stalled capability process cannot hang worker preparation or select legacy mode", async () => {
-  await assert.rejects(probeCheckoutCapabilities(await executable("setInterval(()=>{},1000);"), 150), /could not verify epic isolation/);
+  await assert.rejects(probeCheckoutCapabilities(await executable("setInterval(()=>{},1000);"), 150), /could not verify goal isolation/);
 });
 
 test("supported epic startup does not connect to a busy primary history graph", async () => {

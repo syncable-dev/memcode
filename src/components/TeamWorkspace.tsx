@@ -156,7 +156,7 @@ export function TeamWorkspace({
       </div>
       <h3>Join a project</h3>
       <p>
-        Paste an invitation to open the project’s current board, epics, comments
+        Paste an invitation to open the project’s current board, goals, comments
         and published results.
       </p>
       <label className="team-field">
@@ -253,7 +253,7 @@ export function TeamWorkspace({
             </span>
             <h3>Share this project</h3>
             <p>
-              Start a private team workspace with this project’s stories, epics
+              Start a private team workspace with this project’s goals, tasks
               and cycles.
             </p>
             <div className="team-setup-context">
@@ -507,7 +507,7 @@ export function TeamWorkspace({
           <div>
             <strong>Your shared project is ready.</strong>
             <p>
-              Plan work, discuss stories and view results now. Connect your
+              Plan work, discuss tasks and view results now. Connect your
               existing local code folder when you want to run workers.
             </p>
           </div>
@@ -532,7 +532,7 @@ export function TeamWorkspace({
             <strong>Your local work is available.</strong>
             <span>
               Shared changes wait here until the relay reconnects. New shared
-              workers need an online story claim.
+              workers need an online task claim.
             </span>
           </div>
           {team.lastSyncedAt && (
@@ -582,7 +582,7 @@ export function TeamWorkspace({
         </span>
         <span>
           <strong>{workspace.stories.length}</strong>{" "}
-          {workspace.stories.length === 1 ? "shared story" : "shared stories"}
+          {workspace.stories.length === 1 ? "shared task" : "shared tasks"}
         </span>
         <span>
           <strong>{workspace.claims.length}</strong>{" "}
@@ -666,7 +666,7 @@ export function TeamWorkspace({
                 <MessageSquare size={21} />
                 <strong>A shared history starts here.</strong>
                 <p>
-                  Story changes, comments, claims and published results appear
+                  Task changes, comments, claims and published results appear
                   as they happen.
                 </p>
               </div>
@@ -694,7 +694,7 @@ export function TeamWorkspace({
                   {artifacts.map((item) => (
                     <option key={item.id} value={item.id}>
                       {tasks.find((entry) => entry.id === item.taskId)
-                        ?.identifier ?? "Story"}{" "}
+                        ?.identifier ?? "Task"}{" "}
                       · {item.name}
                     </option>
                   ))}
@@ -816,7 +816,7 @@ export function TeamWorkspace({
           </section>
           <section className="team-panel">
             <div className="team-panel-heading">
-              <h3>Story claims</h3>
+              <h3>Task claims</h3>
               <ShieldCheck size={17} />
             </div>
             {workspace.claims.length ? (
@@ -834,12 +834,12 @@ export function TeamWorkspace({
                         onClick={() => task && open(task)}
                       >
                         <span className="team-claim-identifier">
-                          {story?.identifier ?? "Story"}
+                          {story?.identifier ?? "Task"}
                           <span>
                             {online ? "Claim held" : "Last known claim"}
                           </span>
                         </span>
-                        <strong>{story?.title ?? "Shared story"}</strong>
+                        <strong>{story?.title ?? "Shared task"}</strong>
                         <small>
                           {owner.name} · {owner.device}
                         </small>
@@ -853,7 +853,7 @@ export function TeamWorkspace({
                           title={
                             task && isActive(task)
                               ? "Stop the worker before releasing its claim"
-                              : "Release this device’s story claim"
+                              : "Release this device’s task claim"
                           }
                           onClick={() =>
                             void perform(`release:${claim.storyId}`, async () =>
@@ -876,13 +876,13 @@ export function TeamWorkspace({
             ) : (
               <div className="team-empty-inline compact">
                 <p>
-                  No story is claimed. Starting a worker reserves that story for
+                  No task is claimed. Starting a worker reserves that task for
                   one device.
                 </p>
               </div>
             )}
             <p className="team-section-caption">
-              A claim protects the story from a second worker start. It does not
+              A claim protects the task from a second worker start. It does not
               imply a worker is currently running.
             </p>
           </section>

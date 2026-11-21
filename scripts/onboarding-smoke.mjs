@@ -255,7 +255,7 @@ try {
     storyDialog.getByRole("button", { name: "Create work item", exact: true }),
   ).toBeInViewport();
   await expect(
-    storyDialog.getByLabel("New story cycle", { exact: true }),
+    storyDialog.getByLabel("New task cycle", { exact: true }),
   ).toBeHidden();
   await snap("story");
   await storyDialog
@@ -292,7 +292,7 @@ try {
   const before = (await load()).tasks.find((task) => task.id === story.id)
     .messages.length;
   await main
-    .getByRole("textbox", { name: "Story comment", exact: true })
+    .getByRole("textbox", { name: "Task comment", exact: true })
     .fill("**Decision:** Keep the first version local and simple.");
   await click(main.getByRole("button", { name: "Post comment", exact: true }));
   await expect(
@@ -308,16 +308,16 @@ try {
       .getByRole("button", { name: "Reply", exact: true }),
   );
   await main
-    .getByRole("textbox", { name: "Story comment", exact: true })
+    .getByRole("textbox", { name: "Task comment", exact: true })
     .fill("Agreed. We can introduce cycles once the first story is working.");
   await click(main.getByRole("button", { name: "Post reply", exact: true }));
   await click(
     main
       .locator(`[data-story-comment-id="${comment.id}"]`)
-      .getByRole("button", { name: "Edit story comment", exact: true }),
+      .getByRole("button", { name: "Edit task comment", exact: true }),
   );
   await main
-    .getByRole("textbox", { name: "Edit story comment text", exact: true })
+    .getByRole("textbox", { name: "Edit task comment text", exact: true })
     .fill("**Decision:** Keep the first version local, clear and simple.");
   await click(
     main
@@ -335,7 +335,7 @@ try {
   await click(
     main
       .locator(`[data-story-comment-id="${reply.id}"]`)
-      .getByRole("button", { name: "Delete story comment", exact: true }),
+      .getByRole("button", { name: "Delete task comment", exact: true }),
   );
   await expect(
     main.locator(`[data-story-comment-id="${reply.id}"]`),

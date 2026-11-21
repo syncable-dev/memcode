@@ -210,14 +210,14 @@ export async function repairReviewPublication(
   const repoId = project.repoId;
   if (!text(repoId))
     throw Error(
-      "Analyze this epic's exact source before repairing its review publication.",
+      "Analyze this goal's exact source before repairing its review publication.",
     );
   const selected: Project = { ...project };
   let sourceRevision = expectedSourceRevision,
     freshReads = 0,
     repairStarted = false;
   const unverifiedAfterRepair =
-    "The epic's graph publication is still unverified after one incremental refresh, or its source changed. Retry review after checking its code context.";
+    "The goal's graph publication is still unverified after one incremental refresh, or its source changed. Retry review after checking its code context.";
   const inspect = async (confirmWorkerEdit = false): Promise<Json> => {
     assertActive();
     const watch = await engine.watch(selected, repoId);
@@ -230,7 +230,7 @@ export async function repairReviewPublication(
       pathKey(watch.path) !== pathKey(selected.path!)
     )
       throw Error(
-        "The epic's local watch could not be verified. Retry review after checking its code context.",
+        "The goal's local watch could not be verified. Retry review after checking its code context.",
       );
     const read = async (): Promise<Json> => {
       assertActive();
@@ -251,7 +251,7 @@ export async function repairReviewPublication(
         throw Error(
           repairStarted
             ? unverifiedAfterRepair
-            : "The epic's source changed before publication recovery. Its result was not adopted.",
+            : "The goal's source changed before publication recovery. Its result was not adopted.",
         );
       if (text(value.source_revision)) sourceRevision ??= value.source_revision;
       return value;
@@ -275,7 +275,7 @@ export async function repairReviewPublication(
           (value.reason !== "branch_publication_incomplete" || !capturedPaths.length)))
     ) {
       update(
-        "Memtrace is verifying this epic's existing graph. Review will continue automatically…",
+        "Memtrace is verifying this goal's existing graph. Review will continue automatically…",
       );
       await new Promise((done) => setTimeout(done, delay));
       delay = Math.min(3000, delay * 2);
@@ -327,7 +327,7 @@ export async function repairReviewPublication(
     before.source_revision !== expectedSourceRevision
   )
     throw Error(
-      "The epic's source changed before publication recovery. Its result was not adopted.",
+      "The goal's source changed before publication recovery. Its result was not adopted.",
     );
   if (ready(before, selected, repoId)) return selected;
   if (
@@ -340,12 +340,12 @@ export async function repairReviewPublication(
     )
   )
     throw Error(
-      "Memtrace could not verify this epic's exact source and graph publication. No automatic repair was attempted; check its code context before reviewing.",
+      "Memtrace could not verify this goal's exact source and graph publication. No automatic repair was attempted; check its code context before reviewing.",
     );
 
   assertActive();
   update(
-    "Completing this epic's graph publication with one incremental refresh…",
+    "Completing this goal's graph publication with one incremental refresh…",
   );
   // This flag bypasses MemCode's cached-current shortcut. MemtraceEngine.index
   // still passes incremental: !!match and never asks to clear the existing store.
