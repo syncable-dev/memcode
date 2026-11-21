@@ -189,6 +189,19 @@ test("numbers keep their value at the edges", () => {
   );
 });
 
+test("fields are written in the order of their numbers, however the shape lists them", () => {
+  const listedBackwards = {
+    Pair: {
+      second: { number: 2, kind: "string" },
+      first: { number: 1, kind: "string" },
+    },
+  } satisfies Contract;
+  assert.equal(
+    hex(encodeMessage(listedBackwards, "Pair", { second: "b", first: "a" })),
+    "0a0161" + "120162",
+  );
+});
+
 /** Reads the messages and calls out of a .proto file that has no nested messages. */
 function parseProto(source: string) {
   const text = source.replace(/\/\/[^\n]*/g, "");
