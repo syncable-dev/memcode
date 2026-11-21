@@ -420,3 +420,26 @@ test("a value too large for the sharing service stays on this computer, and the 
   await mac.synced();
   await pc.synced();
 });
+
+test("a project that is taken off this computer is not a board that was emptied", async (context) => {
+  const { service, shared, mac, pc } = await standIn(context);
+  mac.connect(shared);
+  await mac.synced();
+  pc.connect(shared);
+  await agree(mac, pc);
+  const logged = service.boards.log(shared).length;
+
+  await mac.edit((state) => {
+    state.projects = state.projects.filter((one) => one.id !== mac.projectId);
+    state.tasks = state.tasks.filter((one) => one.projectId !== mac.projectId);
+    state.epics = state.epics.filter((one) => one.projectId !== mac.projectId);
+  });
+  await pc.edit(() => void (find(pc, "task-1").estimate = 13));
+  await pc.synced();
+  assert.equal(service.boards.log(shared).length, logged + 1);
+  assert.equal(find(pc, "task-2").title, "Export as PDF");
+  assert.equal(
+    pc.state.epics.some((one) => one.id === "goal-1"),
+    true,
+  );
+});
