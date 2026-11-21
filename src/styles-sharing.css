@@ -40,6 +40,27 @@
   line-height: 1.6;
   color: var(--muted);
 }
+.sharing-open-project small.sharing-board {
+  position: relative;
+  padding-left: 14px;
+  color: var(--ink);
+}
+.sharing-open-project small.sharing-board::before {
+  content: "";
+  position: absolute;
+  left: 1px;
+  top: 6px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #18c8b5;
+}
+.sharing-open-project small.sharing-board.working::before {
+  background: #7fc8f8;
+}
+.sharing-open-project small.sharing-board.trouble::before {
+  background: #d9a441;
+}
 .sharing-heading {
   display: flex;
   align-items: center;
