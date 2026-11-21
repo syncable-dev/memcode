@@ -293,7 +293,7 @@ export async function findCommand(
         const path = join(dir, candidate + extension);
         if (!((await exists(path)) && (await stat(path)).isFile())) continue;
         // A batch shim cannot be passed to spawn with `shell: false`.
-        if (extension !== ".exe") {
+        if (extension === ".cmd") {
           const normalized =
             name === "dsh" ? await windowsShimCommand(path) : null;
           if (normalized) return normalized;
