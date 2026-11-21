@@ -63,10 +63,19 @@ const people = (shared: SharedProject) => {
 };
 
 /** How the open project's board stands with the shared one. */
-function BoardLines({ board }: { board: ReturnType<typeof boardStanding> }) {
+function BoardLines({
+  board,
+  alreadySaid,
+}: {
+  board: ReturnType<typeof boardStanding>;
+  /** What the page says beside this, so the same sentence is not there twice. */
+  alreadySaid?: string;
+}) {
   return (
     <>
-      <small className={`sharing-board ${board.tone}`}>{board.line}</small>
+      {board.line !== alreadySaid && (
+        <small className={`sharing-board ${board.tone}`}>{board.line}</small>
+      )}
       {board.notes.map((note) => (
         <small key={note}>{note}</small>
       ))}
@@ -79,6 +88,7 @@ function OpenProject({
   project,
   standing,
   board,
+  alreadySaid,
   busy,
   onDisconnect,
   onKeepBoth,
@@ -87,6 +97,7 @@ function OpenProject({
   standing: ProjectSharing;
   /** How board sync stands, when it runs for this project. */
   board?: SharedBoardStatus;
+  alreadySaid?: string;
   busy: string;
   onDisconnect(): void;
   onKeepBoth(): void;
@@ -142,7 +153,7 @@ function OpenProject({
             <p>
               {name} is connected to <strong>{standing.name}</strong>.
             </p>
-            {lines && <BoardLines board={lines} />}
+            {lines && <BoardLines board={lines} alreadySaid={alreadySaid} />}
           </>
         )}
         {standing.kind === "gone" && (
@@ -371,6 +382,9 @@ export function SharingPanel(props: PanelProps) {
           project={props.project}
           standing={{ kind: "remembered", name: remembered.sharedProjectName }}
           board={boardOf(props.state, props.project)}
+          alreadySaid={
+            overview?.state === "unavailable" ? overview.detail : undefined
+          }
           busy={busy}
           onDisconnect={props.onDisconnect}
           onKeepBoth={props.onKeepBoth}
@@ -465,6 +479,15 @@ export function SharedProjects({
     window.addEventListener("focus", lookAgain);
     return () => window.removeEventListener("focus", lookAgain);
   }, [refresh]);
+  // Board sync notices first when the service is back. The lists are asked for again then.
+  const boardState = state.sharedBoards?.find(
+    (board) => board.projectId === project.id,
+  )?.state;
+  const couldNotAsk = overview?.state === "unavailable";
+  useEffect(() => {
+    if (couldNotAsk && (boardState === "synced" || boardState === "sending"))
+      void refresh();
+  }, [boardState, couldNotAsk, refresh]);
   // Signing in, signing out or switching account changes whose projects these are.
   useEffect(() => {
     let signedInAs: string | undefined | null = null;
