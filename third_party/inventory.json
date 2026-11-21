@@ -1,7 +1,7 @@
 {
   "scope": "Resolved production npm dependencies and Cargo lockfile dependencies, including target-specific entries. Some Cargo entries are build-only, not shipped executable code.",
   "inputs": {
-    "packageLockSha256": "842154542303b5a8e0632e2f840da8637e5601874587d5dd9f61f72e5b3c8266",
+    "packageLockSha256": "d62a4df05eaf939e6c81561ae59a236526ec7f67a5a9e4a9bd6ad435eaece19c",
     "cargoLockSha256": "b2fb7fbfa3ab11f34ab8ea68ddc97c3645f5774ddf8840d4eb7fb1618148d79e"
   },
   "packages": [
@@ -11017,6 +11017,19 @@
     },
     {
       "ecosystem": "npm",
+      "name": "isomorphic.js",
+      "version": "0.2.5",
+      "license": "MIT",
+      "source": "https://www.npmjs.com/package/isomorphic.js/v/0.2.5",
+      "notices": [
+        {
+          "file": "licenses/npm/isomorphic.js-0.2.5/LICENSE",
+          "sha256": "dd6488c9c1a4ce2dc978ecee067e5b6a725b52e6057a450b24f1a23bc373b057"
+        }
+      ]
+    },
+    {
+      "ecosystem": "npm",
       "name": "jose",
       "version": "6.2.17",
       "license": "MIT",
@@ -11068,6 +11081,19 @@
         {
           "file": "licenses/npm/jszip-3.10.2/LICENSE.markdown",
           "sha256": "566c953c6090b1218ca6217dd7359d45dde46581968586dc607d59a78af6a9c4"
+        }
+      ]
+    },
+    {
+      "ecosystem": "npm",
+      "name": "lib0",
+      "version": "0.2.120",
+      "license": "MIT",
+      "source": "https://www.npmjs.com/package/lib0/v/0.2.120",
+      "notices": [
+        {
+          "file": "licenses/npm/lib0-0.2.120/LICENSE",
+          "sha256": "5446db1e43fe52faf3faab7e9959fe3762ac11bdc61c0945934c498affd52d73"
         }
       ]
     },
@@ -12869,6 +12895,19 @@
         {
           "file": "licenses/npm/wrappy-1.0.2/LICENSE",
           "sha256": "4ec3d4c66cd87f5c8d8ad911b10f99bf27cb00cdfcff82621956e379186b016b"
+        }
+      ]
+    },
+    {
+      "ecosystem": "npm",
+      "name": "yjs",
+      "version": "13.6.33",
+      "license": "MIT",
+      "source": "https://www.npmjs.com/package/yjs/v/13.6.33",
+      "notices": [
+        {
+          "file": "licenses/npm/yjs-13.6.33/LICENSE",
+          "sha256": "341baa53605ed85d6f95782322854cca56c655ebc7fd4712649b8e7afc6020ff"
         }
       ]
     },
