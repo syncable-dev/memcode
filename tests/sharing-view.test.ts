@@ -9,6 +9,7 @@ import {
   localProjectOf,
   projectSharing,
   sharingIsSet,
+  type SharedBoardStatus,
   type SharedProject,
   type SharedProjectLink,
   type SharingOverview,
@@ -68,7 +69,29 @@ const link = (changes: Partial<SharedProjectLink> = {}): SharedProjectLink => ({
   connectedAt: at,
   ...changes,
 });
-type Shown = Pick<AppState, "projects" | "team" | "sharedProjectLinks">;
+type Shown = Pick<
+  AppState,
+  "projects" | "team" | "sharedProjectLinks" | "sharedBoards"
+>;
+const board = (
+  changes: Partial<SharedBoardStatus> = {},
+): SharedBoardStatus => ({
+  projectId: website.id,
+  state: "synced",
+  waiting: 0,
+  leftOut: [],
+  setAside: false,
+  tooLarge: 0,
+  ...changes,
+});
+/** The page for the open project, connected, with its board standing a certain way. */
+const connected = (changes: Partial<SharedBoardStatus> = {}) =>
+  text(
+    render(
+      ready(),
+      shown({ sharedProjectLinks: [link()], sharedBoards: [board(changes)] }),
+    ),
+  );
 const shown = (changes: Partial<Shown> = {}): Shown => ({
   projects: [example, website, app],
   ...changes,
@@ -182,6 +205,7 @@ const render = (
       busy: extra.busy ?? "",
       error: extra.error ?? "",
       ...actions,
+      onKeepBoth() {},
     }),
   );
 const text = (markup: string) =>
@@ -208,14 +232,162 @@ test("my shared projects are listed with who owns them, who is on them and a way
   assert.doesNotMatch(page, /\bteam\b/i);
 });
 
-test("a connected project says so, says the board does not sync yet, and offers to disconnect", () => {
-  const page = text(render(ready(), shown({ sharedProjectLinks: [link()] })));
+test("a connected project says so, says how its board stands, and offers to disconnect", () => {
+  const page = connected();
   assert.match(page, /website is connected to Launch plan/);
-  assert.match(page, /does not sync between computers yet/);
+  assert.match(page, /The board is in sync/);
   assert.match(page, /Connected to this project/);
   assert.match(page, /Disconnect/);
   // A project that is connected is not offered a second shared project.
   assert.doesNotMatch(page, /Connect website/);
+  assert.doesNotMatch(page, /Keep both/);
+
+  assert.match(connected({ state: "starting" }), /Reading the shared board/);
+  assert.match(
+    connected({ state: "sending", waiting: 1 }),
+    /Sending 1 change to the shared board/,
+  );
+  assert.match(
+    connected({ state: "sending", waiting: 12 }),
+    /Sending 12 changes to the shared board/,
+  );
+  // Just connected: board sync has not said anything yet.
+  assert.match(
+    text(render(ready(), shown({ sharedProjectLinks: [link()] }))),
+    /Getting the board ready to sync/,
+  );
+});
+
+test("while the service cannot be reached, the page says so and how many changes wait here", () => {
+  const offline = connected({
+    state: "offline",
+    detail:
+      "The sharing service could not be reached. Check your connection and try again.",
+    waiting: 3,
+  });
+  assert.match(offline, /The sharing service could not be reached/);
+  assert.match(
+    offline,
+    /3 changes made here are kept on this computer and sent when it works again/,
+  );
+  const nothingWaiting = connected({
+    state: "offline",
+    detail:
+      "The sharing service could not be reached. Check your connection and try again.",
+  });
+  assert.doesNotMatch(nothingWaiting, /kept on this computer/);
+});
+
+test("two boards that both have work ask before anything is added, and say what keeping both does", () => {
+  const page = text(
+    render(
+      ready(),
+      shown({
+        sharedProjectLinks: [link()],
+        sharedBoards: [
+          board({ state: "choose", choice: { shared: 30, added: 12 } }),
+        ],
+      }),
+    ),
+  );
+  assert.match(
+    page,
+    /Launch plan already has 30 tasks, and website has 12 of its own/,
+  );
+  assert.match(
+    page,
+    /Keeping both adds them to Launch plan\. Nothing is replaced/,
+  );
+  assert.match(page, /Keep both/);
+  assert.match(page, /Disconnect/);
+  assert.match(
+    connected({ state: "choose", choice: { shared: 1, added: 1 } }),
+    /already has 1 task, and website has 1 of its own/,
+  );
+  // While something is running, the button waits like every other.
+  const busy = render(
+    ready(),
+    shown({
+      sharedProjectLinks: [link()],
+      sharedBoards: [
+        board({ state: "choose", choice: { shared: 2, added: 2 } }),
+      ],
+    }),
+    website,
+    { busy: "keep-both" },
+  );
+  assert.match(busy, /disabled=""[^>]*>(<svg[^>]*>.*?<\/svg>)?Keep both/s);
+});
+
+test("changes that could not be read are named by person and day, and never stop the rest", () => {
+  const page = connected({
+    leftOut: [
+      { by: "Dana Ek", on: "2026-11-21", count: 2 },
+      { by: "Bo Li", on: "2026-11-22", count: 1 },
+    ],
+    setAside: true,
+  });
+  assert.match(page, /The board is in sync/);
+  assert.match(
+    page,
+    /2 changes from Dana Ek on 21 November could not be read and were left out/,
+  );
+  assert.match(
+    page,
+    /1 change from Bo Li on 22 November could not be read and was left out/,
+  );
+  assert.match(
+    page,
+    /Some changes are set aside until one they build on arrives/,
+  );
+  assert.doesNotMatch(connected(), /left out|set aside|too large/);
+});
+
+test("a value too large to share is said to stay on this computer", () => {
+  assert.match(
+    connected({ tooLarge: 1 }),
+    /1 value is too large for the sharing service and stays on this computer/,
+  );
+  assert.match(
+    connected({ tooLarge: 4 }),
+    /4 values are too large for the sharing service and stay on this computer/,
+  );
+});
+
+test("a board that cannot be changed from here, or cannot go on, shows the sentence it was given", () => {
+  for (const [state, detail] of [
+    [
+      "newer",
+      "A newer MemCode laid this board out. Update MemCode to change it from this computer.",
+    ],
+    [
+      "gone",
+      "That shared project no longer exists, or you are no longer on it.",
+    ],
+    [
+      "stopped",
+      "The workspace could not be saved, so changes from the shared board are waiting.",
+    ],
+  ] as const) {
+    const page = connected({ state, detail });
+    assert.ok(page.includes(detail), page);
+    assert.doesNotMatch(page, /The board is in sync/);
+  }
+});
+
+test("how a board stands is shown for the open project only", () => {
+  const page = text(
+    render(
+      ready(),
+      shown({
+        sharedProjectLinks: [link({ projectId: app.id })],
+        sharedBoards: [
+          board({ projectId: app.id, state: "sending", waiting: 5 }),
+        ],
+      }),
+    ),
+  );
+  assert.doesNotMatch(page, /Sending 5 changes/);
 });
 
 test("a shared project connected to another local project says which, and cannot be taken twice", () => {
