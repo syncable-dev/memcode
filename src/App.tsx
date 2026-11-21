@@ -24,6 +24,7 @@ import {
   Route,
   Search,
   Settings2,
+  Share2,
   ShieldCheck,
   Sparkles,
   Square,
@@ -74,8 +75,11 @@ import {
 import type { GuideDestination } from "./guide-content";
 import { WorkerConnections } from "./components/WorkerConnections";
 import { TeamOnboarding } from "./components/TeamOnboarding";
+import { SharedProjects } from "./components/SharedProjects";
+import { sharingIsSet } from "./sharing";
 import "./styles-team.css";
 import "./styles-collaboration.css";
+import "./styles-sharing.css";
 import { BetaAccess } from "./components/BetaAccess";
 import { AppUpdateAction } from "./components/AppUpdates";
 import { InstallationGuide } from "./components/InstallationGuide";
@@ -107,8 +111,14 @@ type View =
   | "artifacts"
   | "activity"
   | "docs"
-  | "team";
+  | "team"
+  | "sharing";
 const pageCopy: Record<View, [string, string, string]> = {
+  sharing: [
+    "SHARED PROJECTS",
+    "Projects you share.",
+    "Your shared projects and invitations, and the one this project belongs to.",
+  ],
   team: [
     "BUILD WITH YOUR TEAM",
     "Better together. Still local.",
@@ -609,6 +619,10 @@ export function App() {
       count: state.team?.find((item) => item.projectId === project.id)
         ?.unreadCount,
     },
+    // Sharing has no service to talk to until its addresses are set, so it is not offered.
+    ...(sharingIsSet(state.settings.sharing)
+      ? [{ id: "sharing" as const, label: "Sharing", icon: Share2 }]
+      : []),
     { id: "docs", label: "Docs", icon: BookOpen },
   ];
   const projectGroups = new Map<string, typeof state.projects>();
@@ -894,6 +908,17 @@ export function App() {
                     "The result is saved locally. Open its shared task to view it.",
                   );
                 }
+              }}
+            />
+          )}
+          {view === "sharing" && (
+            <SharedProjects
+              state={state}
+              project={project}
+              notify={notify}
+              onAccount={() => {
+                setSettingsSection("account");
+                setDialog("settings");
               }}
             />
           )}
