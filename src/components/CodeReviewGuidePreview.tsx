@@ -36,7 +36,7 @@ export function CodeReviewGuidePreview() {
   return (
     <figure
       className="guide-preview review-guide"
-      aria-label="Example story review"
+      aria-label="Example task review"
     >
       <div className="review-guide-bar">
         <strong>Example review</strong>

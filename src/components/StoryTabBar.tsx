@@ -18,12 +18,12 @@ const tabHelp = {
     "Edit or cancel a waiting follow-up before the worker picks it up. The next worker pass starts automatically when it’s ready.",
   ],
   comments: [
-    "Discuss the story with your team",
+    "Discuss the task with your team",
     "Leave a decision or ask a teammate a question here. To pass a comment to the worker, add it to a follow-up and send it.",
   ],
   runbook: [
-    "Agree on what done means",
-    "Break the outcome into small checks. Tick them off as you verify each part of the story.",
+    "Follow the work step by step",
+    "The runbook lists the steps for this task. The worker ticks each one as it finishes it. Add, tick or remove steps yourself at any time.",
   ],
   changes: [
     "Inspect this worker’s edits",
@@ -31,7 +31,7 @@ const tabHelp = {
   ],
   review: [
     "Check the evidence before accepting",
-    "Move the story into the Code review lane and start a review. Inspect findings, checks and before/after measurements, then request a fix or record a dismissal. Saved reviews stay readable in Acceptance and Done.",
+    "Move the task into the Code review lane and start a review. Inspect findings, checks and before/after measurements, then request a fix or record a dismissal. Saved reviews stay readable in Acceptance and Done.",
   ],
   artifacts: [
     "Open what the worker delivered",
@@ -39,11 +39,11 @@ const tabHelp = {
   ],
   browser: [
     "Try the running app",
-    "Use this story’s live browser to try a change on the same page your worker sees. Capture a screenshot to keep it with the story.",
+    "Use this task’s live browser to try a change on the same page your worker sees. Capture a screenshot to keep it with the task.",
   ],
   terminal: [
     "Follow a running process",
-    "Watch a dev server or open a shell in the story’s workspace. Select output to copy it or include it in a follow-up.",
+    "Watch a dev server or open a shell for this task. Select output to copy it or include it in a follow-up.",
   ],
   file: [
     "Read the linked project file",
@@ -127,7 +127,7 @@ export function StoryTabBar({
       }}
     >
       <div className="story-tab-toolbar">
-        <nav className="detail-tabs" aria-label="Story tabs" ref={rail}>
+        <nav className="detail-tabs" aria-label="Task tabs" ref={rail}>
           {tabs.map((item) => (
             <button
               type="button"
@@ -154,14 +154,14 @@ export function StoryTabBar({
           aria-controls={showing ? panelId : undefined}
           onClick={() => (showing ? closeGuide() : setManuallyOpened(true))}
         >
-          <BookOpen size={14} aria-hidden="true" /> Story guide
+          <BookOpen size={14} aria-hidden="true" /> Task guide
         </button>
       </div>
       {showing && (
         <section
           id={panelId}
           className="story-guide-panel"
-          aria-label="Story guide"
+          aria-label="Task guide"
         >
           <span className="story-guide-symbol" aria-hidden="true">
             <current.icon size={17} />

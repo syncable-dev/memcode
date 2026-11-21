@@ -468,7 +468,7 @@ function reviewFindings(
     const authored = !!path && paths.has(key(path));
     if (!path || (!authored && !relatedCapturedPaths.length)) {
       limitations.add(
-        "A review finding outside this story's captured files had no verified native evidence link to its changes and was excluded.",
+        "A review finding outside this task's captured files had no verified native evidence link to its changes and was excluded.",
       );
       continue;
     }
@@ -647,7 +647,7 @@ async function analyzeStableGroup(
     );
   await progress({
     phase: "review",
-    note: "Running local AST, rule-pack and cross-module checks on this story's patch.",
+    note: "Running local AST, rule-pack and cross-module checks on this task's patch.",
   });
   let findings: CodeReviewFinding[] = [],
     audit: CodeReviewEngineAudit | undefined;
@@ -670,7 +670,7 @@ async function analyzeStableGroup(
 
   await progress({
     phase: "quality",
-    note: "Measuring the functions and methods touched by this story.",
+    note: "Measuring the functions and methods touched by this task.",
   });
   let metrics: CodeReviewMetric[] = [];
   const symbols: Json[] = [];

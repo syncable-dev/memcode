@@ -269,7 +269,7 @@ export function BoardSettings({
           <>
             <div className="workspace-settings-intro">
               <h3>Useful context, close to the work.</h3>
-              <p>Project fields appear in every story’s planning details.</p>
+              <p>Project fields appear in every task’s planning details.</p>
             </div>
             {!fields.length && (
               <div className="workspace-fields-empty">
@@ -355,7 +355,7 @@ export function BoardSettings({
               Add custom field
             </button>
             <p className="planning-help">
-              Removing a field definition preserves its stored story values.
+              Removing a field definition keeps the values tasks already have.
             </p>
           </>
         )}

@@ -55,7 +55,7 @@ export function registerPlanning(
     }),
     async ({ id, patch }) => {
       const epic = state().epics.find((e) => e.id === id);
-      if (!epic) throw new Error("Epic not found.");
+      if (!epic) throw new Error("Goal not found.");
       Object.assign(epic, patch);
       await changed();
     },

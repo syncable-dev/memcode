@@ -24,6 +24,19 @@ export function normalizedPath(value: string): string {
     .replace(/^\.\//, "")
     .replace(/\/$/, "");
 }
+/** Memtrace names a file by absolute path or prefixed with its repo id; callers want it inside the repo. */
+export function repoRelativePath(
+  project: { path?: string | null; repoId?: string | null },
+  raw: string,
+): string {
+  const path = normalizedPath(raw),
+    root = normalizedPath(project.path ?? "");
+  if (root && path.toLowerCase().startsWith(root.toLowerCase() + "/"))
+    return path.slice(root.length + 1);
+  return project.repoId && path.startsWith(project.repoId + "/")
+    ? path.slice(project.repoId.length + 1)
+    : path;
+}
 const blocked =
   /(^|\/)(\.git|\.memcode|\.memdb|\.memtrace|node_modules|target|dist|dist-runtime)(\/|$)/;
 export async function repoFiles(root: string): Promise<string[]> {

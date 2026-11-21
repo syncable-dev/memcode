@@ -81,7 +81,7 @@ export function StoryComments({
           identity.source === comment.author.source && (
             <div className="story-comment-actions">
               <button
-                aria-label="Edit story comment"
+                aria-label="Edit task comment"
                 title="Edit comment"
                 onClick={() => {
                   setEditing(comment.id);
@@ -91,7 +91,7 @@ export function StoryComments({
                 <Pencil size={12} />
               </button>
               <button
-                aria-label="Delete story comment"
+                aria-label="Delete task comment"
                 title="Delete comment"
                 disabled={busy}
                 onClick={() =>
@@ -118,7 +118,7 @@ export function StoryComments({
           }}
         >
           <textarea
-            aria-label="Edit story comment text"
+            aria-label="Edit task comment text"
             value={edit}
             onChange={(event) => setEdit(event.target.value)}
             autoFocus
@@ -150,7 +150,7 @@ export function StoryComments({
                   setReply(comment);
                   document
                     .querySelector<HTMLTextAreaElement>(
-                      'textarea[aria-label="Story comment"]',
+                      'textarea[aria-label="Task comment"]',
                     )
                     ?.focus();
                 }}
@@ -162,7 +162,7 @@ export function StoryComments({
             {onFollowup && <button
               onClick={() =>
                 onFollowup(
-                  "Please consider this story comment from " +
+                  "Please consider this task comment from " +
                     comment.author.name +
                     ":\n\n" +
                     comment.text
@@ -181,15 +181,15 @@ export function StoryComments({
     </article>
   );
   return (
-    <section className="story-comments-view" aria-label="Story discussion">
+    <section className="story-comments-view" aria-label="Task discussion">
       <header>
         <span className="eyebrow">
           <span />
-          DISCUSS THE STORY
+          DISCUSS THE TASK
         </span>
         <h3>A place for the conversation around the work.</h3>
         <p>
-          Comments stay with this story. They do not prompt or start a worker.
+          Comments stay with this task. They do not prompt or start a worker.
         </p>
       </header>
       <div className="story-comments-list">
@@ -197,7 +197,7 @@ export function StoryComments({
           <div className="card-discussion-empty">
             <MessageSquare size={22} />
             <strong>Start the discussion.</strong>
-            <p>Leave a decision, question or update for this story.</p>
+            <p>Leave a decision, question or update for this task.</p>
           </div>
         )}
         {comments
@@ -235,7 +235,7 @@ export function StoryComments({
           </div>
         )}
         <textarea
-          aria-label="Story comment"
+          aria-label="Task comment"
           placeholder="Add a comment, decision or question…"
           value={draft}
           onChange={(event) => setDraft(event.target.value)}

@@ -14,7 +14,7 @@ MemCode shares a team's plan and published results. Each developer chooses a loc
 
 1. Open a personal project. Choose Team, then create a named team once.
 2. Complete the Memtrace browser approval. Membership uses the authenticated person's identity, never an editable display name or a license owner inferred from CLI status.
-3. Share the selected project's current board, epics, cycles, comments and activity. Confirm its sanitized repository metadata when available. Source files, local paths, model credentials, terminals and private outputs remain local.
+3. Share the selected project's current board, goals, tasks, cycles, comments and activity. Confirm its sanitized repository metadata when available. Source files, local paths, model credentials, terminals and private outputs remain local.
 4. Invite a teammate. A normal invitation is a link, identifies the team/project, has an expiry and can be restricted to a verified email. Members and revocation are visible to the owner.
 
 ## Invitee
@@ -24,7 +24,7 @@ MemCode shares a team's plan and published results. Each developer chooses a loc
 3. Open the shared project's existing state immediately. Existing personal projects remain separate, including when record IDs collide.
 4. Plan, comment and review published results without local source.
 5. When ready to code, choose a matching existing checkout or select a parent folder and clone the project's repository. Check existing Git credentials first; offer GitHub sign-in only when needed. Show wrong-account/no-access/offline errors distinctly. Never reset, stash or overwrite an existing folder.
-6. Analyze that checkout with local Memtrace. Connect a coding provider with explicit approval. Then start a worker, which acquires the story claim before doing work.
+6. Analyze that checkout with local Memtrace. Connect a coding provider with explicit approval. Then start a worker, which acquires the task claim before doing work.
 
 ## State and recovery
 
@@ -38,4 +38,4 @@ MemCode shares a team's plan and published results. Each developer chooses a loc
 
 ## Acceptance gates
 
-Test owner creation, current-state invite join, existing-personal-project preservation, multiple projects, authenticated membership, wrong identity/email, expiry/replay, revocation during long poll, offline/outbox recovery, story-claim races, explicit output publication and download. Test existing checkout reuse, wrong repository, dirty checkout preservation, approved clone destination, cancellation and provider access errors. Verify the actual native onboarding UI; report physical macOS/remote acceptance separately from isolated local tests.
+Test owner creation, current-state invite join, existing-personal-project preservation, multiple projects, authenticated membership, wrong identity/email, expiry/replay, revocation during long poll, offline/outbox recovery, task-claim races, explicit output publication and download. Test existing checkout reuse, wrong repository, dirty checkout preservation, approved clone destination, cancellation and provider access errors. Verify the actual native onboarding UI; report physical macOS/remote acceptance separately from isolated local tests.

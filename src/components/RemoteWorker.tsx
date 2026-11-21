@@ -6,14 +6,14 @@ import { HarnessMark } from "./UI";
 
 type Owner = NonNullable<ReturnType<typeof teamClaimForStory>>;
 const phases: Record<TeamWorkerPhase, string> = {
-  preparing: "Preparing the story",
-  joining: "Joining the epic Fleet",
+  preparing: "Preparing the task",
+  joining: "Joining the goal’s Fleet",
   starting: "Starting the harness",
   responding: "Responding",
   reading: "Reading project context",
   editing: "Editing code",
   testing: "Running checks",
-  working: "Working on the story",
+  working: "Working on the task",
   waiting: "Waiting for input or a handoff",
   finishing: "Finishing the worker turn",
   stopping: "Stopping the worker",
@@ -60,7 +60,7 @@ export function RemoteWorker({
       <div className="assigned-worker">
         {harness ? <HarnessMark id={harness} /> : <Laptop size={19} />}
         <div>
-          <strong>{harness ? harnessNames[harness] : "Shared story"}</strong>
+          <strong>{harness ? harnessNames[harness] : "Shared task"}</strong>
           <span>
             {owner.name} · {owner.device}
           </span>

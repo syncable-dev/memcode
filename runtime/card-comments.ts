@@ -47,7 +47,7 @@ export function registerCardComments(
       task(input.taskId);
       const comments = (state().storyComments ??= []);
       if (comments.filter((c) => c.taskId === input.taskId).length >= 1000)
-        throw Error("This story has reached its comment limit.");
+        throw Error("This task has reached its comment limit.");
       if (
         input.parentId &&
         !comments.some(
@@ -55,7 +55,7 @@ export function registerCardComments(
             c.id === input.parentId && c.taskId === input.taskId && !c.parentId,
         )
       )
-        throw Error("Reply to a comment in this story.");
+        throw Error("Reply to a comment in this task.");
       const at = new Date().toISOString(),
         comment: StoryComment = {
           id: randomUUID(),

@@ -92,7 +92,7 @@ test("durable outbox survives offline restart and dropped ACKs without overwriti
 test("atomic claims recover a lost ACK and retain ownership while release is offline", async () => {
   const f = await fixture();
   try {
-    f.loseClaimAck(); await assert.rejects(f.b.acquire("team-story", "local-B"), /confirmed online story claim/);
+    f.loseClaimAck(); await assert.rejects(f.b.acquire("team-story", "local-B"), /confirmed online task claim/);
     await assert.rejects(f.a.acquire("team-story", "local-A"), /Bob already owns/);
     await f.b.acquire("team-story", "local-B");
     assert.equal(f.b.status("local-B")!.workspace.claims.length, 1);

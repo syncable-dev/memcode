@@ -7,16 +7,17 @@ workspace with a separate review conversation. Changes, local review rules, AST
 complexity, graph reach and actual linked checks are shown as distinct phases.
 The **Code review** tab stays between Changes and Artifacts in every lane. Saved
 results and their discussion remain accessible in acceptance and Done. Starting
-or rerunning the review is enabled only while the story is in Code review.
+or rerunning the review is enabled only while the task is in Code review.
 Expand a finding to open its source line or inspect it in Changes. Missing coverage,
 an unverified graph, an intervening worker edit or an older test report prevents a
-ready result. The review never substitutes the epic's combined diff for the story.
+ready result. The review never substitutes the goal's combined diff for the task's
+own changes.
 
 The detector pass uses Memtrace's product code-review workflow: AST detectors,
 bundled YAML rules, graph-backed cross-module checks and its shared ranking policy.
 Live repository checks add convention and invariant-drift findings. A finding shows
 its detector origin and recorded evidence. An affected caller can be highlighted
-outside the story's edited files when graph evidence links it to the change; that
+outside the task's edited files when graph evidence links it to the change; that
 does not attribute the caller's source to this worker.
 
 The quality summary is the mean native maintainability index of the measured
@@ -31,7 +32,7 @@ attributed to the actual reported model and kept separate from deterministic
 measurements. Unsupported read-only capabilities are shown as unavailable; normal
 implementation permissions are not reused. Asking a review question does not start
 an implementation worker. Choose **Request fixes** to queue selected findings for
-that story's existing worker. A new pass makes the old review stale.
+that task's existing worker. A new pass makes the old review stale.
 
 A complete review can move to **Ready for acceptance**. The developer checks the
 result and explicitly marks Done. Older In review cards move to acceptance without
@@ -40,6 +41,24 @@ share an output explicitly when teammates need the saved evidence.
 An incomplete review can proceed to acceptance only with an explicit saved coverage
 note. That decision preserves its incomplete result; it does not mark missing
 checks as passed. Findings and stale or failed reviews still require attention.
+
+## Ship a goal
+
+A goal is one branch, so its tasks ship together in one pull request (see
+[How goals work](goals.md) for the full picture). When every task is in review, the goal card shows **Create pull request** (or **Ship quick
+changes** for the Quick changes batch). The sheet lists each step before it runs:
+commit the goal's files, push its branch, open the PR. The GitHub CLI creates it
+when installed; otherwise GitHub opens with the title and description filled in.
+
+The description is written for reviewers: a summary, each task's change in the
+agent's own report with local paths made repo-relative, decisions a person made,
+and a test plan. The fleet receipt is folded at the end. **Add a MemCode line**
+adds one line inside it and an `Orchestrated-by:` trailer to the commit.
+
+With the GitHub CLI, the sheet also shows the PR's review and checks. **Merge pull
+request** is available when GitHub would merge it, using the repository's merge
+method; otherwise the sheet says why. Merging closes the goal, moves its reviewed
+tasks to Done and marks open goals that use the same files **Needs update**.
 
 ## Save annotations, then send a follow-up
 

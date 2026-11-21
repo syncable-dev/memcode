@@ -62,6 +62,9 @@ export function childEnv(
         /^(MEMCORTEX_STORE_DIR|MEMTRACE_ENGINEER)$/i.test(key))
     )
       delete env[key];
+  // Fleet's referee then settles what the workers involved agree on, and still asks
+  // the person about removals and disagreements. A person's own setting is kept.
+  if (options.engine) env.MEMTRACE_FLEET_MEDIATOR ??= "auto";
   const key =
     Object.keys(env).find((k) => k.toLowerCase() === "path") ?? "PATH";
   const parts = [

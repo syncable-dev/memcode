@@ -32,7 +32,7 @@ try {
   checks.push('Production xterm mounts and the simulated shell accepts input');
   await page.screenshot({ path: `${output}/terminal.png` });
   await page.getByRole('button', { name: 'Close work item', exact: true }).click();
-  await page.getByRole('button', { name: 'New work item', exact: true }).first().click();
+  await page.getByRole('button', { name: 'New work', exact: true }).first().click();
   await page.getByRole('textbox', { name: 'Work item title', exact: true }).fill('Make the welcome page clearer');
   await page.getByRole('textbox', { name: 'Work item brief', exact: true }).fill('Add one clear example and a visible next step. Keep it accessible.');
   await page.getByRole('button', { name: 'Create work item', exact: true }).click();

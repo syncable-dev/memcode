@@ -200,3 +200,76 @@
   white-space: nowrap;
   font-size: 11px;
 }
+
+/* What each worker involved wants, side by side, for the person deciding. */
+.decision-reason {
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 1.7;
+  color: #7a8b74;
+}
+.decision-positions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.decision-position {
+  padding: 14px 16px;
+  border: 1px solid #e1e9dd;
+  border-radius: 8px;
+  background: #fbfdf9;
+}
+.decision-position.recommended {
+  border-color: #9cc5a4;
+  background: #f4faf3;
+}
+.decision-position-who {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.decision-position-who button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #3f5745;
+  text-align: left;
+}
+.decision-position-who button > span,
+.decision-outsider {
+  font: 9px var(--mono);
+  color: #8ca082;
+}
+.decision-pill {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #2f6f43;
+  background: #dff0e0;
+  white-space: nowrap;
+}
+.decision-wants,
+.decision-verdict {
+  font-size: 11px;
+  line-height: 1.75;
+  color: #536c56;
+  overflow-wrap: anywhere;
+}
+.decision-verdict {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed #e1e9dd;
+}
+.decision-verdict em {
+  color: #97a690;
+}

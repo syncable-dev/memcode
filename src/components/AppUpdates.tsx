@@ -382,7 +382,7 @@ export function AppUpdates({
                         ? `Restarting closes ${context.activeTerminals} ${context.activeTerminals === 1 ? "terminal session" : "terminal sessions"} and your open browser sessions.`
                         : "Open browser sessions will close. No terminal sessions are running."
                     : "Check session status before installing."}{" "}
-                Your account, projects, stories and files are kept.
+                Your account, projects, tasks and files are kept.
               </p>
               {contextError && (
                 <p className="app-update-error" role="alert">

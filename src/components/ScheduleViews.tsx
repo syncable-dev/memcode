@@ -172,7 +172,7 @@ export function WorkCalendar({ tasks, open, notify }: Props) {
           <i />
           Due date, or start date when no due date is set
         </span>
-        <span>Drag a story to reschedule · Open a story to edit dates</span>
+        <span>Drag a task to reschedule · Open a task to edit dates</span>
       </div>
       <Unscheduled
         tasks={undated}
@@ -306,7 +306,7 @@ export function WorkTimeline({ tasks, open }: Props) {
               <CalendarDays size={25} />
               <strong>Your schedule starts with a date.</strong>
               <p>
-                Add a start or due date to a story to see it on the timeline.
+                Add a start or due date to a task to see it on the timeline.
               </p>
             </div>
           )}
@@ -317,7 +317,7 @@ export function WorkTimeline({ tasks, open }: Props) {
           <i />
           Planned dates · bars show start through due date
         </span>
-        <span>Open a story to update its schedule</span>
+        <span>Open a task to update its schedule</span>
       </div>
       <Unscheduled tasks={undated} open={open} />
     </div>
@@ -345,8 +345,8 @@ function Unscheduled({
         </span>
         <p>
           {begin
-            ? "Drag a story onto the calendar, or open it to set dates."
-            : "Open a story to add its start and due dates."}
+            ? "Drag a task onto the calendar, or open it to set dates."
+            : "Open a task to add its start and due dates."}
         </p>
       </header>
       {shown.length > 0 ? (
@@ -374,7 +374,7 @@ function Unscheduled({
           )}
         </div>
       ) : (
-        <p className="unscheduled-all-set">Every visible story has a date.</p>
+        <p className="unscheduled-all-set">Every visible task has a date.</p>
       )}
     </section>
   );

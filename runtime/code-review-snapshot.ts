@@ -88,12 +88,12 @@ export async function captureStoryReview(
   runId?: string,
 ): Promise<StoryReviewCapture> {
   if (!task.run.workspace)
-    throw Error("This story has no execution workspace to review.");
+    throw Error("This task has no execution workspace to review.");
   const root = await realpath(task.run.workspace);
   const branch = await git(root, ["branch", "--show-current"]);
   if (!branch || (task.run.branch && branch !== task.run.branch))
     throw Error(
-      "The story workspace changed branch. Restore its epic branch before reviewing.",
+      "The task workspace changed branch. Restore its goal branch before reviewing.",
     );
   const sourceBinding = await checkSourceBinding(root);
   const changes = await readWorkerChanges(task);
@@ -150,7 +150,7 @@ export async function captureStoryReview(
         (file.afterHash && !hash.test(file.afterHash))
       )
         throw Error(
-          "The story change journal contains an invalid file binding.",
+          "The task change journal contains an invalid file binding.",
         );
       const previous = files.get(file.path);
       const continuous = !previous || previous.afterHash === file.beforeHash;
@@ -180,7 +180,7 @@ export async function captureStoryReview(
   }
   if (files.size > 200)
     throw Error(
-      "Narrow this story to at most 200 changed files before reviewing.",
+      "Narrow this task to at most 200 changed files before reviewing.",
     );
   let bytes = 0;
   const readBlobs = new Map<string, Buffer>();
@@ -194,7 +194,7 @@ export async function captureStoryReview(
     const data = await boundedContent(path);
     bytes += data.length;
     if (data.length > 2_000_000 || bytes > 32_000_000)
-      throw Error("The story exceeds the bounded review snapshot size.");
+      throw Error("The task exceeds the bounded review snapshot size.");
     if (digest(data) !== value)
       throw Error("A saved change blob failed its content check.");
     readBlobs.set(value, data);
@@ -226,7 +226,7 @@ export async function captureStoryReview(
         ))
     ) {
       limitations.add(
-        `Changes to ${path} include an intervening edit. ${file.segments.length > 16 ? "The journal exceeds the bounded 16-segment projection." : file.basis === "legacy" ? "An older scoped baseline cannot establish ownership of every edit." : "Added/deleted-file transitions cannot be projected across peer edits."} They were not attributed to this story as one patch.`,
+        `Changes to ${path} include an intervening edit. ${file.segments.length > 16 ? "The journal exceeds the bounded 16-segment projection." : file.basis === "legacy" ? "An older scoped baseline cannot establish ownership of every edit." : "Added/deleted-file transitions cannot be projected across peer edits."} They were not attributed to this task as one patch.`,
       );
       continue;
     }
@@ -256,7 +256,7 @@ export async function captureStoryReview(
         file.basis === "legacy")
     ) {
       limitations.add(
-        `${path} changed after the story's last checkpoint. Capture its current contribution before reviewing.`,
+        `${path} changed after the task's last checkpoint. Capture its current contribution before reviewing.`,
       );
       continue;
     }
@@ -291,7 +291,7 @@ export async function captureStoryReview(
           : projectStoryContribution(oldText, newText, currentText);
         if (!projection.ok) {
           limitations.add(
-            `${path} ${segmentProjection ? "includes an intervening edit" : "changed after the story's last checkpoint"}. ${projection.reason}`,
+            `${path} ${segmentProjection ? "includes an intervening edit" : "changed after the task's last checkpoint"}. ${projection.reason}`,
           );
           continue;
         }

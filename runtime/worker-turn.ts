@@ -79,7 +79,7 @@ export function workerTurnContext(
       : "initial request"
     : "continuation";
   return {
-    intro: `CURRENT WORKER PASS: ${kind}. Act on the CURRENT REQUESTS block at the end of this prompt. The original story brief, source evidence and historical conversation are background, not new requests to repeat. Preserve completed work and apply the current requests in order; a later current request supersedes an earlier one if they conflict. All host scope, coordination and permission rules still apply.`,
+    intro: `CURRENT WORKER PASS: ${kind}. Act on the CURRENT REQUESTS block at the end of this prompt. The original task brief, source evidence and historical conversation are background, not new requests to repeat. Preserve completed work and apply the current requests in order; a later current request supersedes an earlier one if they conflict. All host scope, coordination and permission rules still apply.`,
     history: history.length
       ? "HISTORICAL CONVERSATION — background only, bounded to recent context. Previous requests may already be complete; their assistant replies are not the instructions for this pass.\n\n" +
         history.join("\n\n")

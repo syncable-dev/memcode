@@ -12,7 +12,7 @@ import type { WorkItem } from "../src/shared";
 import { approveFixtureWorker } from "./fixtures/worker-consent";
 import { startPrintFixtureSession } from "./fixtures/print-session";
 
-async function preparingFixture(holdRenewal = false) {
+async function preparingFixture() {
   const root = await mkdtemp(join(tmpdir(), "memcode-preparation-test-"));
   const repo = join(root, "repo"),
     packageDirectory = join(root, "fake-transformers");
@@ -79,11 +79,6 @@ async function preparingFixture(holdRenewal = false) {
     packageDirectory,
   };
   const calls: string[] = [];
-  let reserved = false;
-  let finishRenewal!: () => void;
-  const renewal = new Promise<void>((resolve) => {
-    finishRenewal = resolve;
-  });
   const engine = {
     analyze: async () => "fixture",
     qualify: async () => ({
@@ -93,23 +88,8 @@ async function preparingFixture(holdRenewal = false) {
       note: "Fixture",
       measuredAt: new Date().toISOString(),
     }),
-    async call(_project: unknown, name: string, args: any) {
+    async call(_project: unknown, name: string) {
       calls.push(name);
-      if (name === "fleet_publish_intent" && args.touched?.length)
-        calls.push("active_intent");
-      if (name === "fleet_acquire_lease") {
-        reserved = true;
-        return { state: "granted", lease_id: "fixture-lease" };
-      }
-      if (name === "fleet_release_lease") {
-        reserved = false;
-        return {};
-      }
-      if (name === "fleet_renew_lease") {
-        assert.equal(reserved, true);
-        if (holdRenewal) await renewal;
-        return {};
-      }
       if (name === "get_query_revision")
         return { ready: true, token: "graph-1" };
       return {};
@@ -174,41 +154,59 @@ async function preparingFixture(holdRenewal = false) {
     pid,
     session,
     repo,
-    finishRenewal,
-    reserved: () => reserved,
+    /** Edits the worker announced and has not recorded. */
+    openDeclarations: () =>
+      (state.fleetDeclarations ?? []).filter((item) => !item.recordedAt).length,
     async cleanup() {
-      finishRenewal();
       await manager.close();
+      await running;
       assert.ok(
         within(tmpdir(), root) &&
           basename(root).startsWith("memcode-preparation-test-"),
       );
-      await rm(root, { recursive: true, force: true });
+      await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     },
   };
 }
 
-test("Fleet renews during slow context preparation; stop releases the reservation and closes the helper/session", async () => {
-  const f = await preparingFixture(true);
+/** The helper is told to stop; give the operating system a moment to finish it. */
+async function exited(pid: number) {
+  for (let waited = 0; waited < 3000; waited += 20) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}
+
+test("stopping during slow context preparation closes the helper and the session, and leaves nothing declared", async () => {
+  const f = await preparingFixture();
   try {
-    const until = Date.now() + 8000;
-    while (!f.calls.includes("fleet_renew_lease") && Date.now() < until)
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    assert.ok(f.calls.includes("fleet_renew_lease"));
     assert.equal(f.task.run.state, "preparing");
-    const stopping = f.manager.stop(f.task.id);
-    // Close the optional process promptly, then finish the existing renewal before releasing.
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    assert.throws(() => process.kill(f.pid, 0), { code: "ESRCH" });
-    f.finishRenewal();
-    await stopping;
+    const declared = await fetch(f.session.endpoint, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer " + f.session.token,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        capability: "coordinate",
+        action: "declare",
+        symbols: ["README.md"],
+        kind: "docs",
+        plan: "Describe the fixture.",
+      }),
+    });
+    assert.equal((await declared.json()).canEdit, true);
+    assert.equal(f.openDeclarations(), 1);
+    await f.manager.stop(f.task.id);
     assert.match((await f.running)!.message, /cancelled/);
     assert.equal(f.task.run.state, "stopped");
-    assert.equal(f.reserved(), false);
-    assert.ok(
-      f.calls.lastIndexOf("fleet_release_lease") >
-        f.calls.lastIndexOf("active_intent"),
-    );
+    assert.equal(f.openDeclarations(), 0, "peers are not left holding for a worker that is gone");
+    assert.equal(f.calls.includes("fleet_acquire_lease"), false);
+    await exited(f.pid);
     assert.throws(() => process.kill(f.pid, 0), { code: "ESRCH" });
     await assert.rejects(fetch(f.session.endpoint));
     assert.equal(await exists(join(f.repo, "launched.txt")), false);
@@ -222,11 +220,41 @@ test("closing the manager cancels preparing context work and waits for optional 
   try {
     await f.manager.close();
     assert.match((await f.running)!.message, /cancelled/);
-    assert.equal(f.reserved(), false);
+    assert.equal(f.openDeclarations(), 0);
     assert.throws(() => process.kill(f.pid, 0), { code: "ESRCH" });
     await assert.rejects(fetch(f.session.endpoint));
     assert.equal(await exists(join(f.repo, "launched.txt")), false);
   } finally {
     await f.cleanup();
+  }
+});
+
+test("a running worker's runbook tool ticks and extends the task the person is watching", async () => {
+  const fixture = await preparingFixture();
+  try {
+    assert.equal(fixture.session.runbook, true, "the gateway is told to offer the runbook tool");
+    const steps = fixture.task.checklist.length;
+    assert.ok(steps > 0 && !fixture.task.checklist[0].done);
+    const call = async (update: object) => {
+      const response = await fetch(fixture.session.endpoint, {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer " + fixture.session.token,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ capability: "runbook", ...update }),
+      });
+      return { ok: response.ok, body: await response.json() };
+    };
+    const ticked = await call({ done: [1], add: ["Check the empty state by hand"] });
+    assert.equal(ticked.ok, true);
+    assert.match(ticked.body, new RegExp(`1 of ${steps + 1} steps done`));
+    assert.equal(fixture.task.checklist[0].done, true);
+    assert.equal(fixture.task.checklist.at(-1)?.text, "Check the empty state by hand");
+    const refused = await call({ done: [99] });
+    assert.equal(refused.ok, false, "a step that doesn't exist is refused");
+    assert.equal(fixture.task.checklist.length, steps + 1);
+  } finally {
+    await fixture.cleanup();
   }
 });

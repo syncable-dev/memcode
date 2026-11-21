@@ -706,7 +706,7 @@ test("declaration changes retain linked native affected-consumer findings withou
       f.fixes[0],
       /Affected consumer evidence, linked to src\/main.ts/,
     );
-    assert.match(f.fixes[0], /not an authored change of this story/);
+    assert.match(f.fixes[0], /not an authored change of this task/);
     assert.match(
       f.fixes[0],
       /requalify and coordinate any additional edit scope/,
@@ -758,7 +758,7 @@ test("unlinked, forged-source and traversal graph anchors cannot expand a story 
     assert.equal(run.coverage.complete, false);
     assert.equal(run.outcome, "incomplete");
     assert.ok(
-      run.coverage.limitations.some((note) => /outside this story/.test(note)),
+      run.coverage.limitations.some((note) => /outside this task/.test(note)),
     );
     assert.deepEqual(
       run.snapshot.files.map((file) => file.path),

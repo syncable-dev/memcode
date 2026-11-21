@@ -304,7 +304,7 @@ export function WorkerActivityView({
       <span role="status">
         {activity?.phase === "waiting_for_user"
           ? "Waiting for your reply below"
-          : (activity?.label ?? "Waiting for a harness update")}
+          : (activity?.label ?? "Working")}
       </span>
       {(activity?.phase === "tool" || elapsed >= 10) && (
         <small>

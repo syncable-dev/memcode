@@ -32,7 +32,7 @@ const exampleTasks: Array<[string, string, Stage, Harness, string, string]> = [
     "working",
     "cursor",
     "Runtime",
-    "Run installed coding tools as story workers on a shared epic branch. Memtrace Fleet coordinates their scope and raises unresolved conflicts for a human decision.",
+    "Run installed coding tools as task workers on a shared goal. Memtrace Fleet coordinates their scope and raises unresolved conflicts for a human decision.",
   ],
   [
     "05",

@@ -31,6 +31,7 @@ import type {
   Epic,
   Cycle,
 } from "../shared";
+import { workerSlotChoices } from "../worker-slots";
 import { useDictation } from "../useDictation";
 import { taskDraftTitle } from "../task-draft";
 import { HarnessMark, Mark, PriorityMark, Spinner, StageIcon } from "./UI";
@@ -235,7 +236,7 @@ export function NewTaskDialog({
             {project.name}
             <ChevronRight size={12} />
             <span>
-              {parent ? `Child of ${parent.identifier}` : "New work item"}
+              {parent ? `Subtask of ${parent.identifier}` : "New task"}
             </span>
           </div>
           <div className="task-title-group">
@@ -334,13 +335,13 @@ export function NewTaskDialog({
           </div>
           <div className="form-row">
             <label className="field">
-              <span>Epic</span>
+              <span>Goal</span>
               <Select
-                aria-label="Story epic"
+                aria-label="Task goal"
                 value={epicId}
                 onValueChange={setEpicId}
               >
-                <option value="none">Project work · default epic</option>
+                <option value="none">Project work · default goal</option>
                 {epics.map((epic) => (
                   <option key={epic.id} value={epic.id}>
                     {epic.identifier} · {epic.title}
@@ -369,7 +370,7 @@ export function NewTaskDialog({
               <label className="field">
                 <span>Cycle</span>
                 <Select
-                  aria-label="New story cycle"
+                  aria-label="New task cycle"
                   value={cycleId}
                   onValueChange={setCycleId}
                 >
@@ -385,10 +386,10 @@ export function NewTaskDialog({
               </label>
               <label className="field">
                 <span>
-                  Estimate <small>Manual story points</small>
+                  Estimate <small>Manual points</small>
                 </span>
                 <Select
-                  aria-label="New story estimate"
+                  aria-label="New task estimate"
                   value={estimate}
                   onValueChange={setEstimate}
                 >
@@ -409,7 +410,7 @@ export function NewTaskDialog({
                 <span>Start date</span>
                 <input
                   type="date"
-                  aria-label="New story start date"
+                  aria-label="New task start date"
                   value={startDate}
                   onChange={(event) => setStartDate(event.target.value)}
                 />
@@ -418,7 +419,7 @@ export function NewTaskDialog({
                 <span>Due date</span>
                 <input
                   type="date"
-                  aria-label="New story due date"
+                  aria-label="New task due date"
                   min={startDate || undefined}
                   value={dueDate}
                   onChange={(event) => setDueDate(event.target.value)}
@@ -428,7 +429,7 @@ export function NewTaskDialog({
             <label className="field">
               <span>Labels</span>
               <input
-                aria-label="New story labels"
+                aria-label="New task labels"
                 placeholder="interface, orchestration…"
                 value={labels}
                 onChange={(event) => setLabels(event.target.value)}
@@ -854,7 +855,7 @@ export function SettingsDialog({
                         setDraft({ ...draft, maxWorkers: Number(e) })
                       }
                     >
-                      {[1, 2, 3, 4, 6, 8].map((n) => (
+                      {workerSlotChoices.map((n) => (
                         <option key={n} value={n}>
                           {n} workers
                         </option>
@@ -885,6 +886,7 @@ export function SettingsDialog({
                       }
                     />
                   )}
+                  <small>Automatic stories use this override. Story assignments take precedence.</small>
                 </label>
                 <label className="checkbox-label">
                   <input
@@ -901,8 +903,8 @@ export function SettingsDialog({
                   <span>
                     Use a local Ollama model with Codex
                     <small>
-                      Requires a model name and an existing local Ollama
-                      installation.
+                      Requires a model name and a local Ollama installation.
+                      Applies to automatic stories and stories assigned to Codex.
                     </small>
                   </span>
                 </label>

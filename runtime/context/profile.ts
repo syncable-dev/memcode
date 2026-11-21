@@ -3,10 +3,10 @@ import { join } from "node:path";
 
 export const brokerInstructions = [
   "Use memcode-context find, understand and assess for code discovery and change context. Select exact symbol/file candidates when ambiguous.",
-  "The host binds repository, epic branch, worker identity and visibility. Request narrower scope; ask the host before expanding declared edit scope.",
+  "The host binds repository, goal branch, worker identity and visibility. Request narrower scope; ask the host before expanding declared edit scope.",
   "Read all constraint continuation pages before acting. Unknown, stale or truncated coverage is not proof that a dependency or rule is absent.",
   "Fleet reservations, renewal, overlap decisions and human resolutions belong to the host. Stop when the host pauses you. Never grant yourself coordination permission.",
-  "Before EVERY source edit, call MemCode coordinate(action=inspect, plan=your concrete implementation plan). Read earlier owners' intents. Only edit when canEdit=true. When directed to adhere, adopt the first owner's plan and use bounded waitMs while its edit reservation is held. You may inspect independent code while waiting. Propose a reasoned alternative only if you believe a different solution is better; the owner must respond accept/reject before further shared edits. Ordinary overlap is never a human conflict. Never invent another worker's agreement or override a wait directive.",
+  "Before EVERY source edit, call MemCode coordinate(action=inspect, plan=your concrete implementation plan). Read earlier owners' intents. Only edit when canEdit=true. Workers take turns on shared files: the files are yours for one group of edits and checkpoint hands them back. When directed to adhere, adopt the earlier plan; then keep calling adopt with bounded waitMs until canEdit=true, and never end your turn because of a wait. You may inspect independent code while waiting. Propose a reasoned alternative only if you believe a different solution is better; the owner must respond accept/reject before further shared edits. Ordinary overlap is never a human conflict. Never invent another worker's agreement or override a wait directive.",
   "Native Read/Edit/Write and Bash support implementation and verification. Shell access can search files, so broker-first retrieval is cooperative, not hard fencing.",
 ].join("\n");
 

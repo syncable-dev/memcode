@@ -5,7 +5,7 @@ export const codeReviewPhases = [
   {
     id: "capture",
     label: "Changes",
-    description: "Capture this story’s contribution",
+    description: "Capture this task’s contribution",
   },
   { id: "review", label: "Review", description: "Check rules and correctness" },
   { id: "quality", label: "Quality", description: "Measure changed code" },
@@ -305,7 +305,7 @@ export function codeReviewTitle(
 ): string {
   if (!run) return "Understand the change. Then move forward.";
   if (run.state === "queued") return "Your review is queued.";
-  if (run.state === "running") return "A closer look at this story.";
+  if (run.state === "running") return "A closer look at this task.";
   if (run.state === "stale") return "The code changed after this review.";
   if (run.state === "failed") return "The review needs attention.";
   if (run.state === "cancelled") return "The review was stopped.";

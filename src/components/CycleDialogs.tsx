@@ -71,7 +71,7 @@ export function CycleForm({
     <Modal
       title={cycle ? "Shape this cycle." : "A clear window for focused work."}
       kicker={cycle ? "EDIT CYCLE" : "NEW CYCLE"}
-      description="Choose the outcome and the time. Add the stories when you’re ready."
+      description="Choose the focus and the time. Add tasks when you’re ready."
       close={close}
     >
       <form onSubmit={submit}>
@@ -88,9 +88,9 @@ export function CycleForm({
             />
           </label>
           <label className="field">
-            <span>Goal</span>
+            <span>Focus</span>
             <textarea
-              aria-label="Cycle goal"
+              aria-label="Cycle focus"
               value={goal}
               onChange={(event) => setGoal(event.target.value)}
               placeholder="What should be meaningfully better by the end?"
@@ -123,7 +123,7 @@ export function CycleForm({
           <div className="form-row">
             <label className="field">
               <span>
-                Capacity <small>Optional story points</small>
+                Capacity <small>Optional points</small>
               </span>
               <input
                 aria-label="Cycle capacity"
@@ -227,7 +227,7 @@ export function FinishCycle({
       );
       notify(
         result.moved
-          ? `Cycle completed. ${result.moved} ${result.moved === 1 ? "story moved" : "stories moved"} ${target === "backlog" ? "to the backlog" : "to the selected cycle"}.`
+          ? `Cycle completed. ${result.moved} ${result.moved === 1 ? "task moved" : "tasks moved"} ${target === "backlog" ? "to the backlog" : "to the selected cycle"}.`
           : "Cycle completed. Its progress record is frozen.",
       );
       close();
@@ -249,8 +249,8 @@ export function FinishCycle({
           <div>
             <strong>
               {unfinished.length
-                ? `${unfinished.length} unfinished ${unfinished.length === 1 ? "story" : "stories"}`
-                : "All assigned stories are complete."}
+                ? `${unfinished.length} unfinished ${unfinished.length === 1 ? "task" : "tasks"}`
+                : "All assigned tasks are complete."}
             </strong>
             <p>The completion snapshot is captured before any work moves.</p>
           </div>
@@ -284,7 +284,7 @@ export function FinishCycle({
               <span>
                 <strong>Carry it forward</strong>
                 <small>
-                  Move unfinished stories to another cycle or the backlog.
+                  Move unfinished tasks to another cycle or the backlog.
                 </small>
               </span>
             </label>
@@ -377,7 +377,7 @@ export function AddCycleWork({
         cycleId: cycle.id,
       });
       notify(
-        `${selected.size} ${selected.size === 1 ? "story added" : "stories added"} to ${cycle.name}.`,
+        `${selected.size} ${selected.size === 1 ? "task added" : "tasks added"} to ${cycle.name}.`,
       );
       close();
     } catch (error) {
@@ -388,7 +388,7 @@ export function AddCycleWork({
   return (
     <Modal
       title="Choose the work for this cycle."
-      kicker="ADD STORIES"
+      kicker="ADD TASKS"
       description={cycle.name}
       close={close}
       wide
@@ -397,10 +397,10 @@ export function AddCycleWork({
         <label className="cycle-picker-search">
           <Search size={15} />
           <input
-            aria-label="Search cycle stories"
+            aria-label="Search cycle tasks"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search stories by title or identifier…"
+            placeholder="Search tasks by title or identifier…"
             autoFocus
           />
         </label>
@@ -445,8 +445,8 @@ export function AddCycleWork({
               <Layers3 size={23} />
               <p>
                 {query
-                  ? "No stories match this search."
-                  : "All available stories are already assigned, archived, or in a completed cycle."}
+                  ? "No tasks match this search."
+                  : "All available tasks are already assigned, archived, or in a completed cycle."}
               </p>
             </div>
           )}
@@ -454,8 +454,8 @@ export function AddCycleWork({
         <div className="cycle-form-note">
           <Layers3 size={13} />
           <p>
-            Selected stories move into this cycle. Their epic branches stay the
-            same; cycle planning never starts a worker.
+            Selected tasks move into this cycle. Their goals keep their work.
+            Planning a cycle never starts a worker.
           </p>
         </div>
       </div>
@@ -467,7 +467,7 @@ export function AddCycleWork({
           onClick={() => void submit()}
         >
           {busy ? <Spinner size={13} /> : <Plus size={13} />}Add{" "}
-          {selected.size || ""} {selected.size === 1 ? "story" : "stories"}
+          {selected.size || ""} {selected.size === 1 ? "task" : "tasks"}
         </button>
       </footer>
     </Modal>

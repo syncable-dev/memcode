@@ -46,7 +46,7 @@ export async function verifyWorkerSessionUI(page, taskId, title) {
         }];
       } else {
         copy.team = [];
-        task.run = { state: mode, startedAt: start, activity: { phase: "working", label: "Joining the epic Fleet", at } };
+        task.run = { state: mode, startedAt: start, activity: { phase: "working", label: "Coordinating with the goal’s other tasks", at } };
         if (mode === "running") task.run.activity = {
           phase: "tool", label: "Reading source", toolId: "test-read", at,
           lastTool: { label: "Running checks", durationMs: 13250, failed: false },
@@ -94,7 +94,7 @@ export async function verifyWorkerSessionUI(page, taskId, title) {
   await page.evaluate(() => window.__rejectWorkerStart());
   await expect(page.getByRole("alert")).toContainText("Could not reserve the fixture story.");
   await phase("preparing");
-  await expect(startup).toContainText("Joining the epic Fleet");
+  await expect(startup).toContainText("Coordinating with the goal’s other tasks");
   await expect(startup).toContainText(/\d+s on this step · 1m \d+s total/);
   await tabs.getByRole("button", { name: "Runbook", exact: true }).click();
   await expect(inspector.getByRole("group", { name: "Worker startup" })).toBeVisible();

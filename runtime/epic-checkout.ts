@@ -31,7 +31,7 @@ export async function enterEpicCheckout(
   const actualAnchor = await realpath(anchor);
   if (!within(await realpath(dataDir), actualAnchor))
     throw Error(
-      "The epic checkout folder resolves outside MemCode's local data directory.",
+      "The goal checkout folder resolves outside MemCode's local data directory.",
     );
   const workspace = join(actualAnchor, checkoutId);
   const registered = (
@@ -62,14 +62,14 @@ export async function enterEpicCheckout(
       owned.prunable !== undefined
     )
       throw Error(
-        "This epic's saved checkout changed branch or is unavailable. Its files were preserved; inspect it before starting workers.",
+        "This goal's saved checkout changed branch or is unavailable. Its files were preserved; inspect it before starting workers.",
       );
     if (
       key(await commonDirectory(workspace)) !== key(common) ||
       key(await realpath(workspace)) !== key(workspace)
     )
       throw Error(
-        "This epic's checkout no longer belongs to the selected repository.",
+        "This goal's checkout no longer belongs to the selected repository.",
       );
     await ensureLocalRuntimeIgnored(workspace);
     return { workspace, created: false };
@@ -81,7 +81,7 @@ export async function enterEpicCheckout(
     if (key(await realpath(occupied.worktree)) === key(root))
       return { workspace: root, created: false };
     throw Error(
-      "This epic branch is already open in another checkout. Connect that checkout explicitly; MemCode has not moved or overwritten it.",
+      "This goal branch is already open in another checkout. Connect that checkout explicitly; MemCode has not moved or overwritten it.",
     );
   }
   let exists = true;
@@ -99,7 +99,7 @@ export async function enterEpicCheckout(
       : ["worktree", "add", "-b", branch, workspace, base],
   );
   if (key(await commonDirectory(workspace)) !== key(common))
-    throw Error("Git did not bind the new epic checkout to this repository.");
+    throw Error("Git did not bind the new goal checkout to this repository.");
   await ensureLocalRuntimeIgnored(workspace);
   epic.baseRevision ??= base;
   return { workspace, created: true };

@@ -24,12 +24,28 @@ const note = (text: string): Message => ({
 async function until(
   predicate: () => boolean | Promise<boolean>,
   label: string,
+  diagnostics?: () => string,
 ) {
   const deadline = Date.now() + 15000;
   while (!(await predicate())) {
-    if (Date.now() >= deadline) throw Error("Timed out: " + label);
+    if (Date.now() >= deadline)
+      throw Error(`Timed out: ${label}${diagnostics ? `\n${diagnostics()}` : ""}`);
     await new Promise((resolve) => setTimeout(resolve, 15));
   }
+}
+
+function workerDiagnostics(task: WorkItem) {
+  return JSON.stringify({
+    harness: task.harness,
+    state: task.run.state,
+    error: task.run.error,
+    activity: task.run.activity,
+    childOutput: task.messages
+      .filter((message) => message.role === "tool")
+      .slice(-3)
+      .map((message) => message.text.slice(-2000)),
+    followupStates: task.messages.map((message) => message.followupState).filter(Boolean),
+  });
 }
 
 async function fixture(
@@ -64,7 +80,51 @@ async function fixture(
   ]);
   await writeFile(
     stub,
-    `import{readFile,writeFile,mkdir,access,rename}from'node:fs/promises';import{join}from'node:path';const id=process.env.MEMCODE_TASK_ID,dir=join('.memcode','gates',id);await mkdir(dir,{recursive:true});const log=join(dir,'runs.json'),runs=JSON.parse(await readFile(log,'utf8').catch(()=>'[]'));let stdin='';for await(const data of process.stdin)stdin+=data;const prompt=stdin||await readFile(join('.memcode','workers',id,'brief.md'),'utf8');const index=runs.length+1;runs.push({index,prompt,at:Date.now()});await writeFile(log+'.tmp',JSON.stringify(runs));await rename(log+'.tmp',log);const release=join(dir,index+'.release');let ready=false;for(let n=0;n<1500;n++){try{await access(release);ready=true;break;}catch{}await new Promise(r=>setTimeout(r,10));}if(!ready)process.exit(8);console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:'Fixture pass '+index+' finished; no model ran.'}}));process.exit(${options.fail ? 7 : 0});`,
+    `import { readFile, writeFile, mkdir, access, rename } from 'node:fs/promises';
+import { join } from 'node:path';
+import { setTimeout as wait } from 'node:timers/promises';
+const id = process.env.MEMCODE_TASK_ID;
+const dir = join('.memcode', 'gates', id);
+await mkdir(dir, { recursive: true });
+const log = join(dir, 'runs.json');
+const runs = JSON.parse(await readFile(log, 'utf8').catch(() => '[]'));
+let stdin = '';
+for await (const data of process.stdin) stdin += data;
+const prompt = stdin || await readFile(join('.memcode', 'workers', id, 'brief.md'), 'utf8');
+const index = runs.length + 1;
+runs.push({ index, prompt, at: Date.now() });
+const temporary = log + '.tmp';
+await writeFile(temporary, JSON.stringify(runs));
+// The test polls runs.json. Windows can refuse replacement until its read finishes.
+const retryDelays = [25, 50, 100, 200, 400, 800, 1000];
+for (let attempt = 0; ; attempt++) {
+  try {
+    await rename(temporary, log);
+    break;
+  } catch (error) {
+    if (process.platform !== 'win32' ||
+        !['EPERM', 'EACCES', 'EBUSY'].includes(error.code) ||
+        attempt >= retryDelays.length)
+      throw error;
+    await wait(retryDelays[attempt]);
+  }
+}
+const release = join(dir, index + '.release');
+let ready = false;
+for (let attempt = 0; attempt < 1500; attempt++) {
+  try {
+    await access(release);
+    ready = true;
+    break;
+  } catch {}
+  await wait(10);
+}
+if (!ready) process.exit(8);
+console.log(JSON.stringify({
+  type: 'item.completed',
+  item: { type: 'agent_message', text: 'Fixture pass ' + index + ' finished; no model ran.' },
+}));
+process.exit(${options.fail ? 7 : 0});`,
   );
   const project: Project = {
     id: "queue-project",
@@ -113,7 +173,6 @@ async function fixture(
       },
     ]),
   );
-  let releases = 0;
   let releasePickup!: () => void,
     pickupHeld = false;
   const pickupGate = new Promise<void>((resolve) => {
@@ -157,11 +216,18 @@ async function fixture(
         };
       },
       call: async (_project: unknown, name: string) => {
+        // An agent outside MemCode on the same branch, as Fleet reports it, names
+        // files by the shared base checkout.
         if (name === "fleet_branch_context" && options.ownedCheckout)
-          return { canonicalScope: "file::" + join(repo, "scope-0.ts"), recalled: JSON.stringify({ workspace_scope: repo }) };
-        if (name === "fleet_acquire_lease")
-          return { state: "granted", lease_id: "queue-lease" };
-        if (name === "fleet_release_lease") releases++;
+          return {
+            peers: [
+              {
+                agent_id: "outside-agent",
+                assignment: JSON.stringify({ workspace_scope: repo }),
+                touched: [join(repo, "scope-0.ts")],
+              },
+            ],
+          };
         return {};
       },
     } as unknown as MemtraceEngine,
@@ -234,7 +300,6 @@ async function fixture(
     enqueue,
     releasePickup,
     releaseSettlement,
-    releases: () => releases,
     async cleanup() {
       releasePickup();
       releaseSettlement();
@@ -260,11 +325,11 @@ test("a follow-up can reuse a verified older save, but never an unverified provi
         task.run.measurements = {modelIds: [], modelSource: source === "changed provider" ? "claude-assistant" : "codex-thread"};
       if (source === "different checkout") task.run.workspace = join(f.root, "previous-repo");
       f.enqueue(task, "Run the follow-up on the correct workspace.");
-      try {
-        await until(async () => (await f.runs(task)).length === 2, "queued pass started");
-      } catch (cause) {
-        throw new Error(`Queued legacy follow-up (${source}) failed: ${JSON.stringify({ state: task.run.state, error: task.run.error, activity: task.run.activity })}`, { cause });
-      }
+      await until(
+        async () => (await f.runs(task)).length === 2,
+        `queued pass started (${source})`,
+        () => workerDiagnostics(task),
+      );
       assert.deepEqual(f.resumedSessions, [undefined, source === "matching legacy" ? "original-local-session" : undefined]);
       await f.release(task, 2);
       await until(() => task.run.state === "finished", "queued pass finished");
@@ -345,18 +410,16 @@ test("all three adapters automatically coalesce busy follow-ups after Fleet clea
       await f.release(task, 1);
       await until(
         async () => (await f.runs(task)).length === 2,
-        "automatic next pass",
-      );
-      assert.ok(
-        f.releases() > 0,
-        "previous Fleet lease released before next pass",
+        `automatic next pass (${provider})`,
+        () => workerDiagnostics(task),
       );
       const passes = await f.runs(task);
       assert.notEqual(task.run.workspace, f.repo);
       for (const { prompt } of passes) {
-        const fleet = JSON.parse(prompt.split("Current Fleet plans and branch context:\n")[1].split("\n")[0]);
-        assert.equal(fleet.engine.canonicalScope, "file::" + join(task.run.workspace!, "scope-0.ts"));
-        assert.equal(JSON.parse(fleet.engine.recalled).workspace_scope, task.run.workspace);
+        const fleet = JSON.parse(prompt.split("decisions involving you):\n")[1].split("\n")[0]);
+        const [outsider] = fleet.otherAgents;
+        assert.equal(outsider.symbols[0], join(task.run.workspace!, "scope-0.ts"));
+        assert.equal(JSON.parse(outsider.plan).workspace_scope, task.run.workspace);
         assert.ok(!prompt.includes(f.repo), "neither the fresh nor resumed provider prompt exposes the shared base");
       }
       const prompt = passes[1].prompt;

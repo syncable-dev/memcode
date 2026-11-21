@@ -5,10 +5,6 @@
 .workspace-scroll:has(.workspace-planning) {
   overflow-anchor: none;
 }
-.workspace-mode-calendar > .workspace-hero,
-.workspace-mode-timeline > .workspace-hero {
-  display: none;
-}
 .workspace-mode-calendar .workspace-view-bar,
 .workspace-mode-timeline .workspace-view-bar {
   margin-top: 0;

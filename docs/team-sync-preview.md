@@ -1,6 +1,6 @@
 # Build with your team
 
-MemCode shares a team’s board, epics, cycles, story comments, activity and published results. Each developer runs their own workers and Memtrace analysis locally. Git carries the code between their computers.
+MemCode shares a team’s board, goals, tasks, cycles, comments, activity and published results. Each developer runs their own workers and Memtrace analysis locally. Git carries the code between their computers.
 
 You can join, plan and comment before downloading the project’s source.
 
@@ -20,8 +20,8 @@ MemCode discovers the official Team service when it is enabled. Normal users do 
 
 1. Open your existing MemCode installation. Choose **Join with invitation** in Team, or the join action in the project selector.
 2. Paste the link, check its team and project, then choose **Accept and open**. Approve the intended Memtrace account in the browser. Email-restricted invitations must match that account’s verified email.
-3. The shared project opens with its current stories, epics, cycles and discussions. Your personal projects are preserved. There is no empty-project prerequisite.
-4. Move a story, leave a comment or review a published result. None of those actions starts a worker on anyone’s computer.
+3. The shared project opens with its current goals, tasks, cycles and discussions. Your personal projects are preserved. There is no empty-project prerequisite.
+4. Move a task, leave a comment or review a published result. None of those actions starts a worker on anyone’s computer.
 
 An invitation grants Team membership. It does not grant GitHub access, connect a coding provider or download source files automatically. Expired, revoked or wrong-account invitations need a new invitation or the intended account.
 
@@ -31,7 +31,7 @@ In the shared project, choose **Work on this computer** when you are ready to ru
 
 - **Already have the code?** Use the matching checkout MemCode finds, or choose its existing folder. MemCode checks the repository identity and preserves its current branch and uncommitted changes. A folder belonging to another repository stays unbound.
 - **Need the code?** Choose **Clone the repository**, check access, pick a destination and name a new folder. MemCode first checks the computer’s existing Git credentials, including authorized SSH setups. GitHub sign-in is offered only when needed and requires an explicit action. Progress and cancellation are visible; failed or cancelled clone folders are preserved.
-- Memtrace then analyzes that local checkout. Open **Workers** to connect your own installed coding provider with explicit approval. Start a story worker when you are ready; it first confirms the shared story claim.
+- Memtrace then analyzes that local checkout. Open **Workers** to connect your own installed coding provider with explicit approval. Start a task’s worker when you are ready; it first confirms the shared task claim.
 
 Team identity, Git repository access and coding-provider authentication are separate connections:
 
@@ -53,15 +53,15 @@ A published HTML file does not bundle its linked assets or share its running dev
 
 The connection indicator, queued-change count and unread activity describe different things. Accepted planning changes are journaled, retried operations are deduplicated, and reconnecting clients catch up from their last received event.
 
-Current clients use an additional authenticated history channel to preserve original story dates, runbooks, archive state, workflow configuration, planning events, cycle baselines and historical checkpoints when an existing project is first shared. The import is owner-only and retry-safe. Future shared planning history is derived from accepted service events, giving each computer the same recorded chronology. Shared worker conversations use a separate authenticated session channel; terminals and the Memtrace graph stay local.
+Current clients use an additional authenticated history channel to preserve original task dates, runbooks, archive state, workflow configuration, planning events, cycle baselines and historical checkpoints when an existing project is first shared. The import is owner-only and retry-safe. Future shared planning history is derived from accepted service events, giving each computer the same recorded chronology. Shared worker conversations use a separate authenticated session channel; terminals and the Memtrace graph stay local.
 
 The Team screen reports history sync separately from the current board. An older service can still sync its supported board fields, but cannot confirm historical planning transfer; update it before relying on matching charts. Older clients can keep using the original board protocol, while an updated client is required to display the preserved history.
 
 Metadata edits can wait in the local outbox while offline. New shared workers need a reachable service to confirm ownership. A registered device or cached claim is not evidence that a worker is currently running.
 
-**A synchronized board does not mean synchronized source.** Fetch, review and integrate code through Git, using your team’s epic-branch workflow. A story claim prevents a second official worker on the same story; different stories can still change the same files. Local Memtrace Fleet coordinates workers on each computer. This pilot does not provide live shared-file editing or cross-computer Fleet coordination.
+**A synchronized board does not mean synchronized source.** Code moves through Git: each goal ships as its own pull request, and you fetch teammates’ merged work as usual. A task claim prevents a second official worker on the same task; different tasks can still change the same files. Local Memtrace Fleet coordinates workers on each computer. This pilot does not provide live shared-file editing or cross-computer Fleet coordination.
 
-Routine completion and explicit Stop release a story claim. After a crash, the owning device must check that its worker stopped before releasing the saved claim.
+Routine completion and explicit Stop release a task claim. After a crash, the owning device must check that its worker stopped before releasing the saved claim.
 
 Owners can remove a teammate’s access. Revocation blocks subsequent Team requests, including pending long polls; it cannot erase already downloaded files, change GitHub repository permissions or stop another computer’s local process. Account changes require reconnecting verified Team membership rather than silently reusing another person’s access.
 

@@ -118,6 +118,13 @@ pub async fn host_call(app: AppHandle, method: &str, input: Value) -> Result<Val
                 .map_err(|e| e.to_string())??;
             Ok(Value::Null)
         }
+        "open_github_pull_request" => {
+            let url = github_pull_request_url(input["url"].as_str().ok_or("Missing pull request URL")?)?;
+            tauri::async_runtime::spawn_blocking(move || open_claim(&url))
+                .await
+                .map_err(|e| e.to_string())??;
+            Ok(Value::Null)
+        }
         "open_github_device" => {
             tauri::async_runtime::spawn_blocking(|| open_claim("https://github.com/login/device"))
                 .await
@@ -144,6 +151,8 @@ pub async fn host_call(app: AppHandle, method: &str, input: Value) -> Result<Val
                 Some("codex") => "https://developers.openai.com/codex/cli/",
                 Some("claude") => "https://code.claude.com/docs/en/setup",
                 Some("cursor") => "https://cursor.com/docs/cli/installation",
+                Some("copilot") => "https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/install-copilot-cli",
+                Some("dsh") => "https://github.com/deepseek-ai/deepseek-harness/blob/master/apps/cli/README.md",
                 _ => return Err("Unknown worker provider".into()),
             };
             tauri::async_runtime::spawn_blocking(move || open_claim(url))
@@ -341,6 +350,26 @@ fn memtrace_claim_url(value: &str) -> Result<String, String> {
     Ok(url.to_string())
 }
 
+/// Only a github.com pull request or the prefilled compare page that creates one.
+fn github_pull_request_url(value: &str) -> Result<String, String> {
+    let invalid = || "Only a GitHub pull request page can open here".to_string();
+    let url = Url::parse(value).map_err(|_| invalid())?;
+    if value.len() > 8192 || url.scheme() != "https" || url.host_str() != Some("github.com")
+        || !url.username().is_empty() || url.password().is_some()
+        || url.port_or_known_default() != Some(443) || url.fragment().is_some()
+    { return Err(invalid()); }
+    let segments: Vec<&str> = url.path_segments().map(|parts| parts.collect()).unwrap_or_default();
+    let name = |part: &str| !part.is_empty() && part != "." && part != ".." && part.len() <= 100
+        && part.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
+    let page = segments.len() >= 4 && name(segments[0]) && name(segments[1]) && match segments[2] {
+        "pull" => segments.len() == 4 && segments[3].chars().all(|c| c.is_ascii_digit()) && !segments[3].is_empty(),
+        "compare" => segments[3..].join("/").contains("..."),
+        _ => false,
+    };
+    if !page { return Err(invalid()); }
+    Ok(url.to_string())
+}
+
 fn memcode_identity_url(value: &str) -> Result<String, String> {
     let invalid = || "Only the official Memtrace team authorization can open here".to_string();
     let url = Url::parse(value).map_err(|_| invalid())?;
@@ -415,7 +444,31 @@ mod beta_url_tests {
 
 #[cfg(test)]
 mod claim_url_tests {
-    use super::{memcode_identity_url, memtrace_claim_url};
+    use super::{github_pull_request_url, memcode_identity_url, memtrace_claim_url};
+    #[test]
+    fn pull_request_opener_accepts_only_github_pull_and_compare_pages() {
+        for value in [
+            "https://github.com/acme/app/pull/42",
+            "https://github.com/acme/app/compare/main...epic/mc-12?expand=1&title=Tokens&body=Text",
+        ] {
+            assert!(github_pull_request_url(value).is_ok(), "rejected {value}");
+        }
+        for value in [
+            "http://github.com/acme/app/pull/42",
+            "https://github.com.evil.test/acme/app/pull/42",
+            "https://gist.github.com/acme/app/pull/42",
+            "https://user:pass@github.com/acme/app/pull/42",
+            "https://github.com:444/acme/app/pull/42",
+            "https://github.com/acme/app/pull/42#files",
+            "https://github.com/acme/app/pull/abc",
+            "https://github.com/acme/app/settings",
+            "https://github.com/acme/app/compare/main",
+            "https://github.com/login/device",
+            "file:///acme/app/pull/42",
+        ] {
+            assert!(github_pull_request_url(value).is_err(), "accepted {value}");
+        }
+    }
     #[test]
     fn claim_url_accepts_only_the_official_device_claim() {
         assert!(memtrace_claim_url("https://memtrace.io/claim?code=ABCD-1234").is_ok());

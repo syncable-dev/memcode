@@ -519,7 +519,7 @@ export function executeTeamCommand(
   };
   const story = (id: string) =>
     snapshot.stories.find((item) => item.id === id) ??
-    error("NOT_FOUND", "Story not found.");
+    error("NOT_FOUND", "Task not found.");
   const expected = (
     current: { revision?: number } | undefined,
     value?: number,
@@ -555,7 +555,7 @@ export function executeTeamCommand(
       value.epicId &&
       !snapshot.epics.some((item) => item.id === value.epicId)
     )
-      error("REFERENCE", "Choose an epic in this workspace.");
+      error("REFERENCE", "Choose a goal in this workspace.");
     if (
       value.cycleId &&
       !snapshot.cycles.some((item) => item.id === value.cycleId)
@@ -566,7 +566,7 @@ export function executeTeamCommand(
       (value.parentId === value.id ||
         !snapshot.stories.some((item) => item.id === value.parentId))
     )
-      error("REFERENCE", "Choose a different parent story in this workspace.");
+      error("REFERENCE", "Choose a different parent task in this workspace.");
     if (
       value.assignedMemberId &&
       !snapshot.members.some((item) => item.id === value.assignedMemberId)
@@ -577,7 +577,7 @@ export function executeTeamCommand(
         (item) => item.id !== value.id && item.identifier === value.identifier,
       )
     )
-      error("IDENTIFIER", "This story identifier is already used.");
+      error("IDENTIFIER", "This task identifier is already used.");
   };
   switch (command.type) {
     case "story.put": {
@@ -607,7 +607,7 @@ export function executeTeamCommand(
       expected(current, command.expectedRevision);
       const claim = snapshot.claims.find((item) => item.storyId === current.id);
       if (claim)
-        error("CLAIMED", "Release this story's worker before deleting it.", {
+        error("CLAIMED", "Release this task's worker before deleting it.", {
           claim,
         });
       changes.push({ collection: "stories", id: current.id, value: null });
@@ -624,10 +624,10 @@ export function executeTeamCommand(
           others.map((item) => item.identifier),
         );
       else if (others.some((item) => item.identifier === value.identifier))
-        error("IDENTIFIER", "This epic identifier is already used.");
+        error("IDENTIFIER", "This goal identifier is already used.");
       put("epics", value, command.expectedRevision);
       entityId = value.id;
-      summary = `Updated epic ${value.title}`;
+      summary = `Updated goal ${value.title}`;
       break;
     }
     case "cycle.put":
@@ -650,12 +650,12 @@ export function executeTeamCommand(
         (item) => item[field] === id,
       )) {
         if (epic && snapshot.claims.some((claim) => claim.storyId === item.id))
-          error("CLAIMED", "Release this epic's active story workers first.");
+          error("CLAIMED", "Release this goal's active task workers first.");
         put("stories", { ...item, [field]: null });
       }
       changes.push({ collection, id, value: null });
       entityId = id;
-      summary = `Deleted ${epic ? "epic" : "cycle"}`;
+      summary = `Deleted ${epic ? "goal" : "cycle"}`;
       break;
     }
     case "comment.add": {
@@ -671,7 +671,7 @@ export function executeTeamCommand(
             item.id === command.parentId && item.storyId === command.storyId,
         )
       )
-        error("REFERENCE", "Reply to a comment on this story.");
+        error("REFERENCE", "Reply to a comment on this task.");
       changes.push({
         collection: "comments",
         id: command.commentId,
@@ -734,7 +734,7 @@ export function executeTeamCommand(
           old.deviceId !== actor.deviceId ||
           old.attemptId !== command.attemptId)
       )
-        error("CLAIMED", "Another worker owns this story.", { claim: old });
+        error("CLAIMED", "Another worker owns this task.", { claim: old });
       const claim = old ?? {
         storyId: command.storyId,
         attemptId: command.attemptId,
@@ -751,7 +751,7 @@ export function executeTeamCommand(
     case "claim.release": {
       const old =
         snapshot.claims.find((item) => item.storyId === command.storyId) ??
-        error("NOT_FOUND", "This story has no active claim.");
+        error("NOT_FOUND", "This task has no active claim.");
       if (
         old.memberId !== actor.memberId ||
         old.deviceId !== actor.deviceId ||

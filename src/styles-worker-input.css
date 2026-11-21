@@ -343,6 +343,26 @@
   color: #93743e;
   font-size: 10px;
 }
+.card-activity {
+  display: block;
+  margin: 2px 0 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: #0b8f80;
+  animation: card-activity-in 0.25s ease-out;
+}
+@keyframes card-activity-in {
+  from {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .card-activity {
+    animation: none;
+  }
+}
 .delete-action {
   display: inline-flex;
   align-items: center;

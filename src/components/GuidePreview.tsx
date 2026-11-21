@@ -66,18 +66,24 @@ function Tabs({ active, items }: { active: string; items: string[] }) {
 function StoryCard({
   title,
   stage = "planned",
+  goal = false,
 }: {
   title: string;
   stage?: "planned" | "working" | "review";
+  goal?: boolean;
 }) {
   return (
     <div className="guide-preview-story">
       <Row>
         <StageIcon stage={stage} />
-        <Label>Example story</Label>
+        <Label>{goal ? "Example goal" : "Example task"}</Label>
       </Row>
       <strong>{title}</strong>
-      <p>One focused change. A result you can check.</p>
+      <p>
+        {goal
+          ? "A few tasks. One outcome you can ship."
+          : "One focused change. A result you can check."}
+      </p>
     </div>
   );
 }
@@ -127,7 +133,7 @@ function WorkerPreview({ privacy = false }: { privacy?: boolean }) {
               <Label>Installed</Label>
             </Row>
             <strong>{["Codex", "Claude Code", "Cursor"][index]}</strong>
-            <p>Your CLI. Your sign-in.</p>
+            <p>Your tool. Your sign-in.</p>
             <Action quiet>
               <Link2 size={12} />
               Connect
@@ -145,17 +151,17 @@ function WorkerPreview({ privacy = false }: { privacy?: boolean }) {
           </strong>
           <p>
             {privacy
-              ? "Model access follows the selected harness configuration. Review the boundary before connecting."
-              : "Review access, approve the connection, then set Default permissions once per harness."}
+              ? "Model access follows your coding tool’s own settings. Read what it can do before connecting."
+              : "Read what it can do, approve it, then set Default permissions once for every task."}
           </p>
         </div>
       </div>
       <Row className="guide-preview-footnote">
         <span>Worker default</span>
         <ArrowRight size={12} />
-        <span>Inherited by stories</span>
+        <span>Used by every task</span>
         <ArrowRight size={12} />
-        <span>Optional card override</span>
+        <span>Change it for one task</span>
       </Row>
     </>
   );
@@ -165,14 +171,14 @@ function BoardPreview({ roadmap = false }: { roadmap?: boolean }) {
     <>
       <Row className="guide-preview-section-heading">
         <div>
-          <Label>
-            {roadmap ? "Epic · one useful outcome" : "Your workspace"}
-          </Label>
-          <h4>Launch the first version</h4>
+          <Label>{roadmap ? "Roadmap · your goals" : "Your workspace"}</Label>
+          <h4>
+            {roadmap ? "One direction for the work" : "Launch the first version"}
+          </h4>
         </div>
         <Action quiet>
           <Plus size={12} />
-          {roadmap ? "New epic" : "New work item"}
+          {roadmap ? "New goal" : "New work"}
         </Action>
       </Row>
       <div className="guide-preview-board">
@@ -186,12 +192,19 @@ function BoardPreview({ roadmap = false }: { roadmap?: boolean }) {
               <strong>{lane}</strong>
             </Row>
             <StoryCard
+              goal={roadmap}
               title={
-                [
-                  "Make the first screen useful",
-                  "Connect the core experience",
-                  "Polish and review",
-                ][index]
+                (roadmap
+                  ? [
+                      "Customers can export reports",
+                      "Sign-in feels instant",
+                      "Teams can share dashboards",
+                    ]
+                  : [
+                      "Make the first screen useful",
+                      "Connect the core experience",
+                      "Polish and review",
+                    ])[index]
               }
               stage={
                 roadmap
@@ -204,10 +217,10 @@ function BoardPreview({ roadmap = false }: { roadmap?: boolean }) {
         ))}
       </div>
       <Row className="guide-preview-footnote">
-        <GitBranch size={13} />
+        <Layers size={13} />
         {roadmap
-          ? "Stories in an epic coordinate on its shared branch."
-          : "Open a card to continue the work. Each lane scrolls independently."}
+          ? "Tasks in a goal run side by side and stay coordinated."
+          : "Open a card to continue the work. Each lane scrolls on its own."}
       </Row>
     </>
   );
@@ -235,19 +248,12 @@ function Composer({ dictation = false }: { dictation?: boolean }) {
 function ConversationPreview({ topic }: { topic: string }) {
   const queue = topic === "queue",
     comments = topic === "comments",
-    runbook = topic === "runbook",
     dictation = topic === "dictation";
-  const active = queue
-    ? "Queue"
-    : comments
-      ? "Comments"
-      : runbook
-        ? "Runbook"
-        : "Conversation";
+  const active = queue ? "Queue" : comments ? "Comments" : "Conversation";
   return (
     <>
       <Row>
-        <Label>Example story</Label>
+        <Label>Example task</Label>
         <span className="guide-preview-spacer" />
         <StageIcon stage="working" />
         <span>In progress</span>
@@ -280,7 +286,7 @@ function ConversationPreview({ topic }: { topic: string }) {
           <>
             <Row>
               <MessageSquare size={16} />
-              <strong>Discuss the story</strong>
+              <strong>Discuss the task</strong>
             </Row>
             <div className="guide-preview-message">
               <p>Could we keep the first version focused on new users?</p>
@@ -288,33 +294,16 @@ function ConversationPreview({ topic }: { topic: string }) {
             </div>
             <p className="guide-preview-muted">
               Discussion stays here. Send an instruction from Conversation when
-              you want a worker to act.
+              you want the worker to act.
             </p>
           </>
-        ) : runbook ? (
-          <div className="guide-preview-checklist">
-            {[
-              "Preserve the existing navigation",
-              "Add one clear first action",
-              "Check keyboard navigation",
-            ].map((text, index) => (
-              <Row key={text}>
-                <span
-                  className={`guide-preview-checkbox ${index === 0 ? "checked" : ""}`}
-                >
-                  {index === 0 && <Check size={11} />}
-                </span>
-                {text}
-              </Row>
-            ))}
-          </div>
         ) : (
           <>
             <div className="guide-preview-message">
               <Label>Your brief</Label>
               <p>
-                When the workspace is empty, help a new user create their first
-                story. Preserve keyboard navigation.
+                When the workspace is empty, help a new user add their first
+                task. Keep keyboard navigation working.
               </p>
             </div>
             {dictation ? (
@@ -337,7 +326,7 @@ function ConversationPreview({ topic }: { topic: string }) {
           </>
         )}
       </div>
-      {!queue && !comments && !runbook && !dictation && (
+      {!queue && !comments && !dictation && (
         <div className="guide-preview-inline-request">
           <ShieldCheck size={14} />
           <span>Questions and approvals appear beside the composer.</span>
@@ -347,26 +336,17 @@ function ConversationPreview({ topic }: { topic: string }) {
   );
 }
 function ReviewPreview({ topic }: { topic: string }) {
-  const annotations = topic === "annotations",
-    files = topic === "files";
+  const annotations = topic === "annotations";
   return (
     <>
       <Row className="guide-preview-section-heading">
         <Row>
-          {files || annotations ? <FileText size={17} /> : <Code2 size={17} />}
-          <strong>
-            {files || annotations ? "project-notes.md" : "empty-state.tsx"}
-          </strong>
+          {annotations ? <FileText size={17} /> : <Code2 size={17} />}
+          <strong>{annotations ? "project-notes.md" : "empty-state.tsx"}</strong>
         </Row>
-        <Label>
-          {files
-            ? "File preview"
-            : annotations
-              ? "Review comments"
-              : "Worker changes"}
-        </Label>
+        <Label>{annotations ? "Review comments" : "Worker changes"}</Label>
       </Row>
-      {files || annotations ? (
+      {annotations ? (
         <div className="guide-preview-document">
           <Label>Example document</Label>
           <h4>Help users find their next step.</h4>
@@ -383,7 +363,7 @@ function ReviewPreview({ topic }: { topic: string }) {
               <strong>Saved comment</strong>
               <Label>Draft</Label>
             </Row>
-            <p>Could this say “Create your first story”?</p>
+            <p>Could this say “Add your first task”?</p>
             <span className="guide-preview-link">
               Add to follow-up <ArrowRight size={11} />
             </span>
@@ -401,7 +381,7 @@ function ReviewPreview({ topic }: { topic: string }) {
           </div>
           <div className="added">
             <span>+</span>
-            <code>&lt;button&gt;Create your first story&lt;/button&gt;</code>
+            <code>&lt;button&gt;Add your first task&lt;/button&gt;</code>
           </div>
           <div className="context">
             <span> </span>
@@ -553,7 +533,7 @@ function IntelligencePreview({
       <div className="guide-preview-intelligence">
         <Label>
           {routing
-            ? "Measured source → model route"
+            ? "Measured code → worker and model"
             : improve
               ? "Compare compatible observations"
               : "Memtrace · source intelligence"}
@@ -567,7 +547,7 @@ function IntelligencePreview({
         </h4>
         <p>
           {routing
-            ? "Source complexity, nesting, observed impact and coverage inform the route."
+            ? "Complexity, nesting and what else the change could affect shape the choice."
             : improve
               ? "Capture checkpoints around a focused change and compare the evidence."
               : "Explore quality, architecture, flows, API surface, changes, styles and rules."}
@@ -590,7 +570,7 @@ function IntelligencePreview({
       <Row className="guide-preview-footnote">
         <ShieldCheck size={13} />
         {routing
-          ? "Review Why this model? and scope coverage before starting."
+          ? "Open Why this model? to see what was measured before you start."
           : "Read alignment and coverage. Missing measurements stay unknown."}
       </Row>
     </>
@@ -604,7 +584,7 @@ function CyclePreview({ delivery = false }: { delivery?: boolean }) {
           <Label>
             {delivery
               ? "Delivery · recorded progress"
-              : "Cycles · optional time window"}
+              : "Cycles · an optional timebox"}
           </Label>
           <h4>A focused window for the work.</h4>
         </div>
@@ -662,7 +642,7 @@ function FleetPreview() {
       <Row className="guide-preview-section-heading">
         <Row>
           <GitBranch size={17} />
-          <strong>One shared epic branch</strong>
+          <strong>One goal, one shared branch</strong>
         </Row>
         <Label>Cooperative coordination</Label>
       </Row>
@@ -670,25 +650,25 @@ function FleetPreview() {
         {(["codex", "claude", "cursor"] as const).map((id) => (
           <div key={id}>
             <HarnessMark id={id} />
-            <span>Publish intent</span>
+            <span>Say what changes</span>
             <ArrowDown size={13} />
-            <span>Inspect peers</span>
+            <span>Edit, then record</span>
           </div>
         ))}
       </div>
       <div className="guide-preview-callout">
         <Layers size={17} />
         <div>
-          <strong>Adhere, coordinate and hand off</strong>
+          <strong>Everyone edits at once</strong>
           <p>
-            Sharing a file is allowed. Reread the source and follow the agreed
-            plan.
+            Working on the same code is fine. Each worker hears what the others
+            changed and why, and builds on it.
           </p>
         </div>
       </div>
       <Row className="guide-preview-footnote">
         <MessageSquare size={13} />
-        Unresolved semantic disagreement <ArrowRight size={12} /> Decisions{" "}
+        A real disagreement <ArrowRight size={12} /> Decisions{" "}
         <ArrowRight size={12} /> Your choice
       </Row>
     </>
@@ -713,7 +693,7 @@ function AccountPreview() {
           <strong>Two separate connections</strong>
         </Row>
         <p>Memtrace provides source intelligence and coordination.</p>
-        <p>Approve Codex, Claude Code or Cursor separately in Workers.</p>
+        <p>Approve your coding tools separately in Workers.</p>
         <p>
           Confirm your Memtrace browser account to join a team. Account changes
           require reconnecting its membership.
@@ -737,7 +717,7 @@ function ActivityPreview() {
           {
             icon: <MessageSquare size={15} />,
             title: "Follow-up added",
-            sub: "Conversation → the story it belongs to",
+            sub: "Conversation → the task it belongs to",
           },
           {
             icon: <GitBranch size={15} />,
@@ -791,7 +771,7 @@ function TeamPreview() {
           </div>
           <div className="guide-preview-team-update">
             <MessageSquare size={13} />
-            <span>Story comments & activity</span>
+            <span>Task comments & activity</span>
           </div>
           <div className="guide-preview-team-update">
             <FileText size={13} />
@@ -827,6 +807,146 @@ function TeamPreview() {
   );
 }
 
+function NewWorkPreview() {
+  return (
+    <>
+      <Row className="guide-preview-section-heading">
+        <div>
+          <Label>New work · press C</Label>
+          <h4>Say it in your own words.</h4>
+        </div>
+        <Sparkles size={22} />
+      </Row>
+      <Row className="guide-preview-cycle-flow">
+        <span>Describe it</span>
+        <ArrowRight size={13} />
+        <span>Your worker plans it</span>
+        <ArrowRight size={13} />
+        <span>Check, then add</span>
+      </Row>
+      <div className="guide-preview-composer">
+        <p>Customers can export reports as CSV.</p>
+        <Row>
+          <HarnessMark id="claude" small />
+          <span>Planned by your worker</span>
+          <span className="guide-preview-spacer" />
+          <Mic size={15} />
+          <span className="guide-preview-send">
+            <ArrowRight size={13} />
+          </span>
+        </Row>
+      </div>
+      <div className="guide-preview-callout">
+        <Layers size={17} />
+        <div>
+          <strong>Where it goes</strong>
+          <p>
+            A small fix becomes a quick change. Bigger work becomes a goal with
+            a few tasks. If a goal is already changing the same code, the work
+            joins it.
+          </p>
+        </div>
+      </div>
+      <Row className="guide-preview-footnote">
+        <span>Add</span>
+        <span className="guide-preview-or">or</span>
+        <span>Add and start</span>
+        <ArrowRight size={12} />
+        <span>Nothing changes until you choose.</span>
+      </Row>
+    </>
+  );
+}
+function ShipPreview() {
+  return (
+    <>
+      <Row className="guide-preview-section-heading">
+        <div>
+          <Label>Goal · ready to ship</Label>
+          <h4>Customers can export reports</h4>
+        </div>
+        <Layers size={22} />
+      </Row>
+      <div className="guide-preview-checklist">
+        {[
+          "Add an Export button to reports",
+          "Write the CSV file",
+          "Show progress for large reports",
+        ].map((text) => (
+          <Row key={text}>
+            <span className="guide-preview-checkbox checked">
+              <Check size={11} />
+            </span>
+            {text}
+            <span className="guide-preview-spacer" />
+            <Label>Reviewed</Label>
+          </Row>
+        ))}
+      </div>
+      <div className="guide-preview-callout">
+        <ShieldCheck size={18} />
+        <div>
+          <strong>Every step is listed first</strong>
+          <p>
+            Read what MemCode will do and the description it wrote for
+            reviewers. Nothing happens until you click.
+          </p>
+        </div>
+      </div>
+      <Row className="guide-preview-footnote">
+        <span>Goal shipped</span>
+        <ArrowRight size={12} />
+        <span>Goals using the same files show Needs update</span>
+        <ArrowRight size={12} />
+        <span>One click brings them current</span>
+      </Row>
+    </>
+  );
+}
+function GoalsPreview() {
+  return (
+    <>
+      <Row className="guide-preview-section-heading">
+        <Row>
+          <GitBranch size={17} />
+          <strong>Your team’s integration branch · dev</strong>
+        </Row>
+        <Label>Read from your history</Label>
+      </Row>
+      <div className="guide-preview-fleet">
+        {[
+          ["Export reports", "Its own branch and workspace"],
+          ["Faster sign-in", "Its own branch and workspace"],
+          ["Quick changes", "One shared batch"],
+        ].map(([goal, space]) => (
+          <div key={goal}>
+            <Layers size={18} />
+            <strong>{goal}</strong>
+            <span>{space}</span>
+            <ArrowDown size={13} />
+            <span>One pull request</span>
+          </div>
+        ))}
+      </div>
+      <div className="guide-preview-callout">
+        <ShieldCheck size={18} />
+        <div>
+          <strong>Nothing leaves without your click</strong>
+          <p>
+            Commit, push, pull request, merge and Update from dev each list
+            their steps before they run.
+          </p>
+        </div>
+      </div>
+      <Row className="guide-preview-footnote">
+        <GitBranch size={13} />
+        A goal merges <ArrowRight size={12} /> Goals sharing its files show
+        Needs update <ArrowRight size={12} /> Update from dev
+      </Row>
+    </>
+  );
+}
+
 /** Guide illustrations and captured examples are independent of live workspace state. */
 export const GuidePreview = memo(function GuidePreview({
   topic,
@@ -842,8 +962,11 @@ export const GuidePreview = memo(function GuidePreview({
   if (topic === "projects") scene = <ProjectPreview />;
   else if (topic === "workers" || topic === "privacy")
     scene = <WorkerPreview privacy={topic === "privacy"} />;
-  else if (["epics", "roadmap", "workspace", "planning-fields"].includes(topic))
-    scene = <BoardPreview roadmap={topic === "epics" || topic === "roadmap"} />;
+  else if (topic === "epics") scene = <NewWorkPreview />;
+  else if (topic === "ship") scene = <ShipPreview />;
+  else if (topic === "how-goals-work") scene = <GoalsPreview />;
+  else if (["roadmap", "workspace", "planning-fields"].includes(topic))
+    scene = <BoardPreview roadmap={topic === "roadmap"} />;
   else if (
     [
       "stories",
@@ -851,12 +974,11 @@ export const GuidePreview = memo(function GuidePreview({
       "conversations",
       "queue",
       "comments",
-      "runbook",
       "dictation",
     ].includes(topic)
   )
     scene = <ConversationPreview topic={topic} />;
-  else if (["changes", "annotations", "files"].includes(topic))
+  else if (["changes", "annotations"].includes(topic))
     scene = <ReviewPreview topic={topic} />;
   else if (topic === "browser") scene = <BrowserPreview />;
   else if (topic === "terminal") scene = <TerminalPreview />;

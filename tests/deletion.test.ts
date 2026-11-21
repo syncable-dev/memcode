@@ -140,6 +140,19 @@ test("story deletion removes its metadata and stale relationships without touchi
         active: false,
       },
     ];
+    f.state.fleetDeclarations = [
+      {
+        id: "declaration-1",
+        taskId: target.id,
+        projectId: target.projectId,
+        branch: "epic/preserved",
+        symbols: ["src/cart.js::cartTotal"],
+        kind: "fix",
+        plan: "Plan",
+        declaredAt: target.createdAt,
+        opened: 1,
+      },
+    ];
     f.state.fleetProposals = [
       {
         id: "proposal-1",
@@ -179,6 +192,7 @@ test("story deletion removes its metadata and stale relationships without touchi
       "workerInputs",
       "fleetPlans",
       "fleetProposals",
+      "fleetDeclarations",
     ] as const)
       assert.equal(f.state[name]?.length, 0, name);
     assert.ok(
@@ -210,7 +224,7 @@ test("story deletion is leaf-only unless cascade is explicit and validates every
   const before = structuredClone(f.state);
   await assert.rejects(
     f.call("story:delete", { id: parent.id }),
-    /child stories/,
+    /has subtasks/,
   );
   assert.deepEqual(f.state, before);
   grandchild.run.state = "preparing";
@@ -339,7 +353,7 @@ test("deletion schemas reject unknown flags and missing entities without saving 
   await assert.rejects(f.call("story:delete", { id: "story-0", force: true }));
   await assert.rejects(
     f.call("epic:delete", { id: "unknown" }),
-    /Epic not found/,
+    /Goal not found/,
   );
   await assert.rejects(
     f.call("cycle:delete", { id: "unknown" }),
@@ -347,7 +361,7 @@ test("deletion schemas reject unknown flags and missing entities without saving 
   );
   await assert.rejects(
     f.call("story:delete", { id: "unknown" }),
-    /Story not found/,
+    /Task not found/,
   );
   assert.deepEqual(f.state, before);
   assert.equal(f.saved(), 0);

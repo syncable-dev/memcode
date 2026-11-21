@@ -295,7 +295,7 @@ export function CodeReview({
     return saved;
   };
   return (
-    <section className="code-review-workspace" aria-label="Story code review">
+    <section className="code-review-workspace" aria-label="Task code review">
       <div className="code-review-scroll">
         <header className="code-review-heading">
           <div className="code-review-eyebrow">
@@ -311,8 +311,8 @@ export function CodeReview({
           <p>
             {run?.note ||
               (run
-                ? "Findings, measured quality and verification for this story’s recorded changes."
-                : "Bring the evidence together before accepting the work. Review this story’s changes, their quality and the code they affect.")}
+                ? "Findings, measured quality and verification for this task’s recorded changes."
+                : "Bring the evidence together before accepting the work. Review this task’s changes, their quality and the code they affect.")}
           </p>
           <div className="code-review-heading-actions">
             <div className="code-review-provenance">
@@ -322,13 +322,13 @@ export function CodeReview({
                   ? `${run.snapshot.files.length} changed files`
                   : run
                     ? working
-                      ? "Capturing story changes"
-                      : "Story patch unavailable"
-                    : "Story-scoped changes"}
+                      ? "Capturing task changes"
+                      : "Task changes unavailable"
+                    : "This task’s changes"}
               </span>
               <span>
                 <GitBranch size={12} />
-                {run?.snapshot.branch || task.run.branch || "Current epic"}
+                {run?.snapshot.branch || task.run.branch || "Current goal"}
               </span>
             </div>
             {working ? (
@@ -368,7 +368,7 @@ export function CodeReview({
           </div>
           {(!canStartReview || remoteReview) && (
             <p className="code-review-run-hint">
-              {remoteReview ? `This review runs on ${remoteReview.host}. Its progress, measurements and discussion appear here.` : "Move this story to Code review to run a new review."}
+              {remoteReview ? `This review runs on ${remoteReview.host}. Its progress, measurements and discussion appear here.` : "Move this task to Code review to run a new review."}
             </p>
           )}
           {remoteReview?.error && <p className="code-review-notice error" role="alert">{remoteReview.error}</p>}
@@ -434,7 +434,7 @@ export function CodeReview({
         {loading ? (
           <div className="code-review-loading">
             <Spinner />
-            Loading this story’s review…
+            Loading this task’s review…
           </div>
         ) : !run ? (
           <div className="code-review-empty">
@@ -471,7 +471,7 @@ export function CodeReview({
             </div>
             <small>
               {task.example
-                ? "Example stories do not produce live review evidence."
+                ? "Example tasks do not produce live review evidence."
                 : !api.startCodeReview
                   ? "Connecting the review experience to the local engine."
                   : "Start a review when the implementation is ready. No changes are accepted automatically."}
@@ -712,10 +712,10 @@ export function CodeReview({
                           {finding.locationScope === "affected-code" &&
                             !!finding.relatedCapturedPaths?.length && (
                               <p className="code-review-related-change">
-                                Connected story changes:{" "}
+                                Connected task changes:{" "}
                                 {finding.relatedCapturedPaths.join(", ")}. This
                                 consumer is affected code, not a file authored
-                                by this story.
+                                by this task.
                               </p>
                             )}
                           {finding.recommendation && (
@@ -836,7 +836,7 @@ export function CodeReview({
                         />
                         {!canStartReview && (
                           <p className="review-comparison-note">
-                            Move this story to Code review to change a saved
+                            Move this task to Code review to change a saved
                             decision.
                           </p>
                         )}
@@ -1062,7 +1062,7 @@ export function CodeReview({
                           : "Ready for your final look."}
                       </strong>
                       <small>
-                        Keep the evidence with the story as it moves forward.
+                        Keep the evidence with the task as it moves forward.
                       </small>
                     </span>
                   </div>
@@ -1087,7 +1087,7 @@ export function CodeReview({
                   <div>
                     <p>
                       Review the missing measurements above. Explain why this
-                      story can move to your final acceptance; its review stays
+                      task can move to your final acceptance; its review stays
                       incomplete.
                     </p>
                     <label htmlFor={`review-handoff-${task.id}`}>

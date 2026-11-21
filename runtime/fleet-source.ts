@@ -4,16 +4,25 @@ import { createHash } from "node:crypto";
 import type { Project, WorkItem } from "../src/shared";
 import { within, now, git } from "./local";
 
-/** A Class B refresh reads the current bounded source, rather than escalating overlap. */
-export async function rereadFleetSource(project: Project, task: WorkItem) {
+/**
+ * A Class B refresh reads the current bounded source, rather than escalating overlap.
+ * `only` narrows it to the files two workers actually share; otherwise the task's planned files.
+ */
+export async function rereadFleetSource(
+  project: Project,
+  task: WorkItem,
+  only?: string[],
+) {
   const workspace = task.run.workspace ?? project.path;
   if (!workspace) throw Error("The shared project folder is unavailable.");
   const root = await realpath(workspace);
   const files = [
-    ...new Set([
-      ...(task.scope ?? []),
-      ...(task.evidence?.symbols ?? []).map((symbol) => symbol.file),
-    ]),
+    ...new Set(
+      only ?? [
+        ...(task.scope ?? []),
+        ...(task.evidence?.symbols ?? []).map((symbol) => symbol.file),
+      ],
+    ),
   ];
   const records = [];
   const seen = new Set<string>();

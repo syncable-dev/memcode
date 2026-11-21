@@ -25,11 +25,19 @@ import {
   coordinationSchema,
   type CoordinationRequest,
 } from "../fleet-requests";
+import { runbookUpdateSchema, type RunbookUpdate } from "../../src/runbook";
 import {
   contextAssistantDefaults,
   type ContextAssistantSettings,
 } from "../../src/context-settings";
 
+/** Adds what peers just did to a reply, in a form the worker reads whatever it asked for. */
+function withFleetNews(result: unknown, news: unknown[]): unknown {
+  if (!news.length) return result;
+  if (result && typeof result === "object" && !Array.isArray(result))
+    return { ...result, fleetNews: news };
+  return { reply: result, fleetNews: news };
+}
 export interface ContextSession {
   endpoint: string;
   token: string;
@@ -50,6 +58,9 @@ export async function startContextSession(
     browser?: (request: BrowserRequest) => Promise<BrowserReply>;
     coordination?: (request: CoordinationRequest) => Promise<unknown>;
     terminal?: (request: TerminalRequest) => Promise<TerminalReply>;
+    runbook?: (update: RunbookUpdate) => Promise<string>;
+    /** Fleet updates waiting for this worker; they ride along on whatever it asks next. */
+    news?: () => unknown[];
   } = {},
 ): Promise<ContextSession> {
   await mkdir(directory, { recursive: true });
@@ -132,13 +143,27 @@ export async function startContextSession(
                     ),
                   ),
                 )
-              : await broker.execute(input);
+              : input.capability === "runbook" && options.runbook
+                ? await options.runbook(
+                    runbookUpdateSchema.parse(
+                      Object.fromEntries(
+                        Object.entries(input).filter(
+                          ([key]) => key !== "capability",
+                        ),
+                      ),
+                    ),
+                  )
+                : await broker.execute(input);
+      const fleetNews =
+        req.url === "/context" && input.capability !== "coordinate"
+          ? (options.news?.() ?? [])
+          : [];
       res
         .writeHead(200, {
           "Content-Type": "application/json",
           "Cache-Control": "no-store",
         })
-        .end(JSON.stringify(result));
+        .end(JSON.stringify(withFleetNews(result, fleetNews)));
     } catch (error) {
       res
         .writeHead(400, { "Content-Type": "application/json" })
@@ -165,6 +190,7 @@ export async function startContextSession(
       token,
       coordination: !!options.coordination,
       terminal: !!options.terminal,
+      runbook: !!options.runbook,
     }),
     {
       mode: 0o600,

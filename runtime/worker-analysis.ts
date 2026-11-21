@@ -54,7 +54,7 @@ export async function prepareWorkerAnalysis(
         )
           throw error;
         update(
-          "Another Fleet worker updated this epic. Following the current source before starting…",
+          "Another Fleet worker updated this goal. Following the current source before starting…",
         );
         await new Promise<void>((resolve) => setTimeout(resolve, 500));
       }
@@ -99,7 +99,7 @@ export async function prepareWorkerAnalysis(
     assertQueued();
     if ((await checkSourceBinding(path)) !== source)
       throw Error(
-        "The epic checkout changed while preparing the queued follow-up. Retry on the current source.",
+        "The goal checkout changed while preparing the queued follow-up. Retry on the current source.",
       );
     assertQueued();
   };

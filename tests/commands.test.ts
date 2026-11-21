@@ -28,3 +28,17 @@ test("standalone workers keep their configuration without claiming the desktop p
     });
   }
 });
+
+test("the engine MemCode starts lets workers who agree settle a disagreement without the person", () => {
+  const before = process.env.MEMTRACE_FLEET_MEDIATOR;
+  try {
+    delete process.env.MEMTRACE_FLEET_MEDIATOR;
+    assert.equal(childEnv({ engine: true }).MEMTRACE_FLEET_MEDIATOR, "auto");
+    assert.equal(childEnv().MEMTRACE_FLEET_MEDIATOR, undefined, "workers and tools are not given engine settings");
+    process.env.MEMTRACE_FLEET_MEDIATOR = "advisory";
+    assert.equal(childEnv({ engine: true }).MEMTRACE_FLEET_MEDIATOR, "advisory", "a person's own choice is kept");
+  } finally {
+    if (before === undefined) delete process.env.MEMTRACE_FLEET_MEDIATOR;
+    else process.env.MEMTRACE_FLEET_MEDIATOR = before;
+  }
+});
