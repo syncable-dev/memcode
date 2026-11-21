@@ -1,13 +1,17 @@
-# Proposal: the board as one Yjs document
+# The board as one Yjs document
 
-Status: proposed on 21 November 2026. Nothing here is built. Alex decides first.
+Status: accepted. Alex approved this layout on 21 November 2026 and asked for board sync
+to be built on it. It is built on the branch `feat/memsync-shared-projects`, and
+[Shared projects](shared-projects.md) says how it runs. Nothing is deployed.
 
 MemSync keeps a board as a log of Yjs updates and never looks inside one
-(its ADR-0004 and ADR-0013). What is inside is MemCode's to define. This page proposes
-that layout, how a board that already exists on a computer becomes the first updates, and
-what MemCode does with an update it cannot apply.
+(its ADR-0004 and ADR-0013). What is inside is MemCode's to define. This page says what
+that layout is, how a board that already exists on a computer becomes the first updates,
+and what MemCode does with an update it cannot apply.
 
-The questions that need an answer are collected [at the end](#decisions-needed).
+It was written as a proposal and is kept as the record of what was decided. Three things
+turned out differently when it was built. Each is marked **As built** where it stands.
+What is still missing is listed under [Not built](#not-built).
 
 ## What a board holds today
 
@@ -101,13 +105,19 @@ same translation today.
 Two computers that are offline can both create MC-014. Nobody numbers tasks for them,
 because MemSync does not read the board.
 
-Proposed rule: the log decides. Every computer applies the log in the same order, so every
+The rule: the log decides. Every computer applies the log in the same order, so every
 computer sees the same task arrive first with a given identifier. A task that arrives with
 an identifier already taken gets the number after the highest one in use, and that new
 identifier is written to the document as an ordinary change. Every computer works
 out the same number from the same log, so it does not matter which of them writes it.
 
 Existing identifiers never change when a board is first shared.
+
+**As built.** A task arrives with the log entry that made it, and MemCode keeps that
+number for every task. A task that is not in the log yet gives way to one that is. Two
+that arrived in the same entry are told apart by id. When two boards are brought
+together, the tasks that are added take their new numbers before they are written, so the
+log never holds the clash. The rule is in `runtime/sharing/board/identifiers.ts`.
 
 ### Who and when
 
@@ -125,6 +135,12 @@ every update: `logged_at` and `author_account_id`.
   its receipt arrives.
 
 Nothing in the document says who wrote it or when.
+
+**As built.** What arrives from the log is dated and signed this way: when a task, cycle
+or comment was made and last changed, and who wrote a comment. Three parts of this
+section are not built. A change made on this computer keeps this computer's clock, also
+after the log has dated it. A change to someone else's comment is shown like any other.
+The delivery history is still each computer's own.
 
 ### Not trusting what is read
 
@@ -146,6 +162,14 @@ connected project, MemCode keeps:
 - the number of the last log entry it has dealt with,
 - its own changes that are not in the log yet, each with the id it will be sent under,
 - the log entries it could not apply.
+
+**As built.** These are two files in a folder of their own under `shared-boards/` in the
+profile: `log.bin` is the document, `sync.json` is the rest, with the board as this
+computer last wrote or took it. Changes made here are found by comparing the workspace
+with that board. A change that comes from the log is saved together with the workspace
+file. The save is written beside what is there, then the workspace file is written, then
+the save is put in place. Both carry the same counter, so after a crash MemCode can tell
+whether the workspace got there, and finishes the save or drops it.
 
 A local change becomes a Yjs update against the document and joins the unsent changes.
 An update from the log is applied to the document and then copied into the workspace
@@ -181,15 +205,25 @@ change that would exceed 1 MiB into several updates: the entry first, then a lon
 pieces. A single value over 1 MiB cannot be split. MemCode refuses to save it, with the
 sentence for `update_too_large`.
 
+**As built.** A change is written in pieces of about 256 KiB. An entry stays whole when
+it fits in one, and an entry that is larger goes key by key. A single value of about
+1 MiB or more is not written to the board. It stays on the computer it was typed on, and
+the Sharing view says so. MemCode does not refuse to save it.
+
 ### Two boards meet
 
 The second computer finds a log that already has a board. If its own local project is
 empty, it takes the board from the log. That is the case of a second computer.
 
-If both have content, the proposal is to keep everything: the entries of the local board
+If both have content, everything is kept: the entries of the local board
 are added to the log as new entries. Ids cannot collide, and identifiers that do are
 renumbered by the rule above. Nothing is lost and nothing is merged by guesswork. The
 person is told how many tasks will be added before it happens.
+
+**As built.** The Sharing view asks: "Website board already has 3 tasks, and website has
+2 of its own. Keeping both adds them to Website board. Nothing is replaced." Until the
+person chooses **Keep both**, nothing is added to either board and nothing is sent. The
+other choice is to disconnect.
 
 The same board on two computers of one person, with the same ids, is not two boards: the
 second computer finds its ids in the document and adds only what is missing.
@@ -231,6 +265,13 @@ failed. So:
 3. Either way the entry is written down as not applied (its number, id, author and time)
    and the next entry is read. The number of the last entry dealt with moves on.
 
+**As built: reading first is not enough.** The proposal said that reading an update had
+refused every update that went on to fail. A second measurement, kept as a test, found
+otherwise. Of 2,241 damaged copies of two small updates, 839 made `applyUpdate` throw,
+and 7 of those had read fine with `decodeUpdate`. So the guard in rule 2 is used, not just
+kept in reserve. MemCode then goes back to the documents it last saved, reads the log
+again from there and leaves that entry out.
+
 **Damage that still reads as an update cannot be seen.** Three quarters of the single
 flipped bits gave an update that applied: a changed letter, a changed number. MemCode
 cannot know. What it can do is give every update an id made from its bytes (a UUID built
@@ -252,22 +293,57 @@ waiting changes took effect on arrival. As long as one computer still holds what
 update carried, the board heals. If none does, the waiting updates stay set aside and are
 listed with the updates that could not be applied.
 
+**As built: what waits, and who repairs.** Two things are narrower than the paragraphs
+above say.
+
+What waits is wider than one task. Yjs takes the changes of one writer in order, and a
+writer is one run of MemCode on one computer. After a left-out update, everything that
+run wrote later is set aside on the computers that left it out, whatever it touches.
+MemCode started again is a new writer, and what it writes from then on arrives, unless it
+changes something the lost update made.
+
+The repair is done by one computer only: the one that wrote the update. It sees its own
+update come back from the log damaged, and sends what the log lacks as a new update. The
+same bytes can be sent under up to eight ids, so the repair is never mistaken for the
+entry it repairs. A computer that alone could not read an update, because of a fault on
+its own side or because it runs a MemCode that reads updates differently, is not
+repaired by anyone: nobody else knows. It shows the line about changes left out, and
+"Some changes are set aside until one they build on arrives". Damage that appears in the
+log after the author has read the update back is in the same place.
+
 What the person sees: a line in the Sharing view such as "2 changes from Dana Ek on
 21 November could not be read and were left out", with nothing else interrupted.
 
 Two computers with different versions of MemCode could disagree about one update. The one
-that left it out will set later changes aside until someone sends the difference, and the
-same repair covers it.
+that left it out will set later changes aside. The proposal said the same repair covers
+it. It does not, for the reason above. Updating MemCode on that computer and connecting
+the project again does.
 
-## What this adds to MemCode
+## What this added to MemCode
 
-- The `yjs` package (MIT, three packages with what it needs). It would be the first
-  package added for sharing, and it goes into the lock file and the third-party notices.
+- The `yjs` package, 13.6.33 (MIT, three packages with what it needs). It is the first
+  package added for sharing, and it is in the lock file and the third-party notices.
   MemSync's tests use `yrs`, which reads and writes the same v1 updates.
-- Two more calls of the kind MemCode already makes, and one that stays open
-  (`WatchUpdates`). The gRPC client reads one reply today and would learn to read many.
-- The measurements on this page as tests. They were made in a scratch folder, because
-  `yjs` is not in the repository yet.
+- Two more calls of the kind MemCode already made, and one that stays open
+  (`WatchUpdates`). The gRPC client learned to read a reply that has many parts.
+- The measurements on this page as tests, in `tests/sharing-board-updates.test.ts` and
+  `tests/sharing-board-document.test.ts`.
+
+## Not built
+
+- **A change to someone else's comment is shown.** MemCode itself lets only the author
+  change a comment. Nothing stops a changed MemCode from writing one, and other computers
+  would show it.
+- **The delivery history is not read off the log.** Burn-down and cycle snapshots stay
+  each computer's own, drawn from what that computer saw and when.
+- **A change made on this computer keeps this computer's clock.** Other computers date it
+  by the log. Sorting by "updated" can differ by seconds between computers.
+- **Nobody repairs a computer that alone could not read an update.** See above.
+- **A value of about 1 MiB or more is not shared.** No field in MemCode accepts one today.
+- **A snapshot.** A new computer reads the whole log.
+- **Two computers that both find the log empty in the same second both write the board.**
+  It needs the same board, with the same ids, on both. MemSync has no "only if the log is
+  still empty".
 
 ## What would help from MemSync
 
@@ -280,7 +356,11 @@ None of this blocks a first version.
 - **A reader for the delivery history** that is safe on bytes from outside, and that reads
   this layout. Until then MemCode works the history out itself, as described above.
 
-## Decisions needed
+## Decisions
+
+Alex was asked on 21 November 2026 whether he approved the layout on this page so that
+board sync could be built on it, and answered "Yes, build it". The ten points below were
+put to him as one question and were not gone through one by one.
 
 1. **Is this the layout?** Collections at the top, an entry per id, one key per member of
    a set, descriptions as Yjs text, everything else replaced whole.
