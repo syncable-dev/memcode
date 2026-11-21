@@ -12,6 +12,12 @@ import {
   projectsContract,
   projectsService,
 } from "../runtime/sharing/memsync/projects-contract";
+import {
+  boardsCalls,
+  boardsContract,
+  boardsService,
+} from "../runtime/sharing/memsync/boards-contract";
+import { ownerCalls, ownerContract } from "./support/memsync-owner";
 
 const hex = (bytes: Uint8Array) => Buffer.from(bytes).toString("hex");
 const bytes = (text: string) => new Uint8Array(Buffer.from(text, "hex"));
@@ -224,7 +230,7 @@ function parseProto(source: string) {
   }
   const calls: Record<string, { request: string; reply: string }> = {};
   for (const [, name, request, reply] of text.matchAll(
-    /rpc\s+(\w+)\s*\(\s*(\w+)\s*\)\s*returns\s*\(\s*(\w+)\s*\)/g,
+    /rpc\s+(\w+)\s*\(\s*(\w+)\s*\)\s*returns\s*\(\s*(?:stream\s+)?(\w+)\s*\)/g,
   ))
     calls[name] = { request, reply };
   return {
@@ -235,36 +241,77 @@ function parseProto(source: string) {
   };
 }
 
-test("what MemCode reads and writes is what the contract says", async () => {
-  const contract = parseProto(
+/** The shapes written by hand, as the .proto file would state them. */
+const written = (shapes: Contract) =>
+  Object.fromEntries(
+    Object.entries(shapes)
+      .filter(([name]) => !name.startsWith("google.protobuf."))
+      .map(([name, shape]) => [
+        name,
+        Object.fromEntries(
+          Object.entries(shape).map(([field, stated]) => [
+            field,
+            {
+              number: stated.number,
+              kind:
+                typeof stated.kind === "string"
+                  ? stated.kind
+                  : stated.kind.message,
+              repeated: "repeated" in stated && !!stated.repeated,
+            },
+          ]),
+        ),
+      ]),
+  );
+const contractIn = async (file: string) =>
+  parseProto(
     await readFile(
-      new URL("../runtime/sharing/memsync/projects.proto", import.meta.url),
+      new URL(`../runtime/sharing/memsync/${file}`, import.meta.url),
       "utf8",
     ),
   );
+
+test("what MemCode reads and writes of projects is what the contract says", async () => {
+  const contract = await contractIn("projects.proto");
   assert.equal(`${contract.package}.${contract.service}`, projectsService);
-  for (const [name, call] of Object.entries(projectsCalls))
+  // The owner's calls are used by tests only, and are held to the contract all the same.
+  for (const [name, call] of Object.entries(ownerCalls))
     assert.deepEqual(contract.calls[name], call, `call ${name}`);
-  const shapes = projectsContract as Contract;
-  for (const [name, shape] of Object.entries(shapes)) {
-    if (name.startsWith("google.protobuf.")) continue;
-    const written = Object.fromEntries(
-      Object.entries(shape).map(([field, written]) => [
-        field,
-        {
-          number: written.number,
-          kind:
-            typeof written.kind === "string"
-              ? written.kind
-              : written.kind.message,
-          repeated: "repeated" in written && !!written.repeated,
-        },
-      ]),
-    );
-    assert.deepEqual(written, contract.messages[name], `message ${name}`);
-  }
-  // Every message a call uses is one MemCode has a shape for.
+  for (const [name, shape] of Object.entries(written(ownerContract)))
+    assert.deepEqual(shape, contract.messages[name], `message ${name}`);
   for (const call of Object.values(projectsCalls))
     for (const used of [call.request, call.reply])
-      assert.ok(shapes[used], `no shape for ${used}`);
+      assert.ok((projectsContract as Contract)[used], `no shape for ${used}`);
+});
+
+test("what MemCode reads and writes of a board's log is what the contract says", async () => {
+  const contract = await contractIn("boards.proto");
+  assert.equal(`${contract.package}.${contract.service}`, boardsService);
+  // A watched log answers with a stream, which the contract marks and the shape does not.
+  assert.deepEqual(
+    Object.keys(contract.calls).sort(),
+    Object.keys(boardsCalls).sort(),
+  );
+  for (const [name, call] of Object.entries(boardsCalls))
+    assert.deepEqual(contract.calls[name], call, `call ${name}`);
+  assert.deepEqual(written(boardsContract), contract.messages);
+});
+
+test("a logged update travels with its bytes, its number and its time intact", () => {
+  const payload = new Uint8Array([0, 1, 2, 250, 255, 0]);
+  const logged = {
+    id: "5f0c7a52-0b1f-4a43-8a3b-0c5d7e9f1a22",
+    sequence: 4294967297,
+    logged_at: { seconds: 1795300000, nanos: 5 },
+    author_account_id: "acct-1",
+    payload,
+  };
+  assert.deepEqual(
+    decodeMessage(
+      boardsContract,
+      "BoardUpdate",
+      encodeMessage(boardsContract, "BoardUpdate", logged),
+    ),
+    logged,
+  );
 });
