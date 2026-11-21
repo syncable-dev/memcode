@@ -6,6 +6,7 @@ import {
   dirname,
   isAbsolute,
   join,
+  normalize,
   resolve,
   sep,
 } from "node:path";
@@ -106,6 +107,58 @@ async function direct(
 const WINDOWS_DSH_SHIM =
   /^\s*"%~dp0\\?([^"%\r\n]+\.exe)"\s+--expose-internals\s+"%~dp0\\?([^"%\r\n]+\.(?:c|m)?js)"\s+%\*\s*$/i;
 
+async function dshInstallCommand(
+  executable: string,
+  script: string,
+): Promise<Command | null> {
+  // Bind the entry to the installation that owns the executable, so a changed
+  // .exe cannot keep a saved worker approval for the same script identity.
+  if (basename(executable).toLowerCase() !== "deepseek harness.exe")
+    return null;
+  const appAsar = join(dirname(executable), "resources", "app.asar");
+  if (!script.toLowerCase().startsWith((appAsar + sep).toLowerCase()))
+    return null;
+  // A leftover shim from an uninstall must not look "installed", and must not
+  // block the node_modules fallback in the same directory.
+  if (!(await exists(executable)) || !(await exists(appAsar))) return null;
+  return {
+    command: executable,
+    prefix: ["--expose-internals", script],
+    identity: script,
+    env: { ELECTRON_RUN_AS_NODE: "1" },
+  };
+}
+
+/**
+ * A saved dsh identity points inside the installer's app.asar, which ordinary
+ * filesystem access cannot read. Rebuild the command from the owning
+ * installation before the configured-path existence check rejects it.
+ */
+async function savedArchiveCommand(
+  name: string,
+  configured: string,
+): Promise<Command | null> {
+  if (name !== "dsh" || process.platform !== "win32" || !isAbsolute(configured))
+    return null;
+  const normalized = normalize(configured);
+  // A saved identity must be the exact entry the shim resolved. Reject `..`
+  // segments that would redirect an approved identity to another installation.
+  if (normalized.toLowerCase() !== configured.toLowerCase()) return null;
+  const parts = normalized.split(sep);
+  const archive = parts.findLastIndex(
+    (part) => part.toLowerCase() === "app.asar",
+  );
+  if (
+    archive < 2 ||
+    parts[archive - 1]?.toLowerCase() !== "resources" ||
+    archive === parts.length - 1 ||
+    !/\.(?:c|m)?js$/i.test(parts[parts.length - 1])
+  )
+    return null;
+  const install = parts.slice(0, archive - 1).join(sep);
+  return dshInstallCommand(join(install, "DeepSeek Harness.exe"), normalized);
+}
+
 /**
  * The launcher installed by the official DeepSeek Harness CLI is a .cmd shim
  * that delegates to an Electron executable. Worker sessions spawn with
@@ -131,21 +184,7 @@ async function windowsShimCommand(path: string): Promise<Command | null> {
   const base = dirname(path);
   const command = resolve(base, match[1]);
   const script = resolve(base, match[2]);
-  // Bind the entry to the installation that owns the executable, so a changed
-  // .exe cannot keep a saved worker approval for the same script identity.
-  if (basename(command).toLowerCase() !== "deepseek harness.exe") return null;
-  const appAsar = join(dirname(command), "resources", "app.asar");
-  if (!script.toLowerCase().startsWith((appAsar + sep).toLowerCase()))
-    return null;
-  // A leftover shim from an uninstall must not look "installed", and must not
-  // block the node_modules fallback in the same directory.
-  if (!(await exists(command)) || !(await exists(appAsar))) return null;
-  return {
-    command,
-    prefix: ["--expose-internals", script],
-    identity: script,
-    env: { ELECTRON_RUN_AS_NODE: "1" },
-  };
+  return dshInstallCommand(command, script);
 }
 
 async function cursorRuntime(): Promise<Command | null> {
@@ -250,6 +289,8 @@ export async function findCommand(
   options: MacCommandOptions & { platform?: NodeJS.Platform } = {},
 ): Promise<Command | null> {
   if (configured) {
+    const archived = await savedArchiveCommand(name, configured);
+    if (archived) return archived;
     if (!isAbsolute(configured) || !(await exists(configured))) return null;
     if (/\.(cjs|mjs|js)$/i.test(configured))
       return {

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, normalize, relative, sep } from "node:path";
 import { commandIdentity, findCommand } from "../runtime/commands";
 
 // Byte-for-byte shape of the launcher written by the official DSH installer,
@@ -220,5 +220,86 @@ test(
 
     process.env.PATH = `${other};${f.bin}`;
     assert.equal((await findCommand("dsh"))?.command, otherExe);
+  },
+);
+
+async function withoutLauncherInPath(t: test.TestContext) {
+  const f = await fixture(t);
+  const elsewhere = join(f.root, "empty-path");
+  await mkdir(elsewhere, { recursive: true });
+  process.env.PATH = elsewhere;
+  return f;
+}
+
+test(
+  "a saved app.asar identity rediscovers the harness without the launcher directory in PATH",
+  { skip: process.platform !== "win32" },
+  async (t) => {
+    const f = await withoutLauncherInPath(t);
+    assert.equal(
+      await findCommand("dsh"),
+      null,
+      "the installer's launcher directory must be absent",
+    );
+
+    const command = await findCommand("dsh", f.script);
+    assert.ok(command, "the saved identity must rediscover the installation");
+    assert.equal(command.command, f.exe);
+    assert.deepEqual(command.prefix, ["--expose-internals", f.script]);
+    assert.equal(commandIdentity(command), f.script);
+    assert.equal(command.env?.ELECTRON_RUN_AS_NODE, "1");
+  },
+);
+
+test(
+  "a saved archive identity is only reconstructed from a still matching installation",
+  { skip: process.platform !== "win32" },
+  async (t) => {
+    const f = await withoutLauncherInPath(t);
+    assert.equal(
+      await findCommand("codex", f.script),
+      null,
+      "another harness must not inherit the dsh archive identity",
+    );
+
+    await rm(f.exe);
+    assert.equal(await findCommand("dsh", f.script), null);
+    await writeFile(f.exe, "fixture-only");
+
+    await rm(f.asar);
+    assert.equal(await findCommand("dsh", f.script), null);
+  },
+);
+
+test(
+  "a configured executable path keeps its direct-command behavior",
+  { skip: process.platform !== "win32" },
+  async (t) => {
+    const f = await withoutLauncherInPath(t);
+    assert.equal((await findCommand("dsh", f.exe))?.command, f.exe);
+  },
+);
+
+test(
+  "a saved archive identity cannot traverse into another installation",
+  { skip: process.platform !== "win32" },
+  async (t) => {
+    const f = await withoutLauncherInPath(t);
+    const other = join(f.root, "other");
+    const otherScript = join(
+      other,
+      "resources",
+      "app.asar",
+      "dsh",
+      "cli.js",
+    );
+    await mkdir(join(other, "resources"), { recursive: true });
+    await writeFile(join(other, "DeepSeek Harness.exe"), "fixture-only");
+    await writeFile(join(other, "resources", "app.asar"), "fixture-only");
+
+    const from = dirname(f.script);
+    const forged = from + sep + relative(from, otherScript);
+    assert.equal(normalize(forged), otherScript);
+    assert.equal(await findCommand("dsh", forged), null);
   },
 );
