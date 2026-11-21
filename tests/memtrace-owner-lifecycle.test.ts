@@ -10,6 +10,7 @@ import {
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
+import { spawn } from "node:child_process";
 import { MemtraceEngine } from "../runtime/memtrace";
 import { git } from "../runtime/local";
 import type { Project } from "../src/shared";
@@ -88,6 +89,118 @@ createInterface({input:process.stdin}).on('line',line=>{
   } finally {
     await engine.close();
     await rm(directory, { recursive: true, force: true, maxRetries: 3 });
+  }
+});
+
+/** A project attached to an engine owner the test can end, with a count of owner starts. */
+async function attachedProject(label: string) {
+  const directory = await mkdtemp(join(tmpdir(), `memcode-${label}-`));
+  const source = join(directory, "source"),
+    owner = join(directory, "owner"),
+    executable = join(directory, "mcp-fixture.mjs");
+  await mkdir(source);
+  await git(source, ["init", "--initial-branch=main"]);
+  await writeFile(
+    executable,
+    `import {createInterface} from 'node:readline';
+import {existsSync} from 'node:fs';
+const fixture=${JSON.stringify({ source, owner })};
+createInterface({input:process.stdin}).on('line',line=>{
+ const message=JSON.parse(line);if(message.id===undefined)return;let result={};
+ if(message.method==='initialize')result={protocolVersion:message.params.protocolVersion,capabilities:{tools:{}},serverInfo:{name:'synthetic-lost-owner',version:'fixture'}};
+ if(message.method==='tools/call'){
+  const {name}=message.params;
+  if(name==='get_repository_stats'&&!existsSync(fixture.owner))result={isError:true,content:[{type:'text',text:'repository summary revision probe failed: no workspace owner is attached yet'}]};
+  else result={content:[{type:'text',text:JSON.stringify(name==='list_indexed_repositories'?[{repo_id:'selected',path:fixture.source}]:{repo_in_store:true})}]};
+ }
+ process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:message.id,result})+'\\n');
+});`,
+  );
+  const project = {
+    id: label,
+    name: "Selected project",
+    path: source,
+    branch: "main",
+    description: "",
+    analysis: "idle",
+    createdAt: new Date().toISOString(),
+  } as Project;
+  const engine = new MemtraceEngine(() => executable),
+    internal = engine as any;
+  let ownerStarts = 0,
+    record = "";
+  const recordOwner = (pid?: number) =>
+    writeFile(record, JSON.stringify({ pid }));
+  internal.owners.ready = async (
+    _scope: unknown,
+    _command: unknown,
+    _environment: unknown,
+    probe: () => Promise<void>,
+  ) => {
+    ownerStarts++;
+    await writeFile(owner, "tracked-owner");
+    if (record) await recordOwner(process.pid);
+    await probe();
+  };
+  internal.owners.close = async () => {};
+  await engine.connect(project);
+  const store = engine.scopeFor(project.id)!.dataDirectory;
+  await mkdir(store, { recursive: true });
+  record = join(store, "daemon-state.json");
+  await recordOwner(process.pid);
+  return {
+    engine,
+    project,
+    ownerStarts: () => ownerStarts,
+    async ownerDies() {
+      const finished = spawn(process.execPath, ["-e", ""]);
+      await new Promise((resolve) => finished.once("exit", resolve));
+      await recordOwner(finished.pid);
+    },
+    async close() {
+      await engine.close();
+      await rm(directory, { recursive: true, force: true, maxRetries: 3 });
+    },
+  };
+}
+
+test("a project whose engine owner has died gets its engine back before the next request, instead of waiting on nobody", async () => {
+  const attached = await attachedProject("lost-owner");
+  const { engine, project } = attached;
+  try {
+    await engine.call(project, "list_indexed_repositories", {});
+    assert.equal(attached.ownerStarts(), 1, "a running owner is left alone");
+    await attached.ownerDies();
+    const repositories = await engine.call(
+      project,
+      "list_indexed_repositories",
+      {},
+    );
+    assert.equal(
+      attached.ownerStarts(),
+      2,
+      "the engine is brought back before the request is sent",
+    );
+    assert.equal(repositories[0].repo_id, "selected");
+  } finally {
+    await attached.close();
+  }
+});
+
+test("requests that arrive together after the engine owner died share one new engine session", async () => {
+  const attached = await attachedProject("lost-owner-together");
+  const { engine, project } = attached;
+  try {
+    await attached.ownerDies();
+    const answers = await Promise.all(
+      ["first", "second", "third"].map(() =>
+        engine.call(project, "list_indexed_repositories", {}),
+      ),
+    );
+    assert.equal(attached.ownerStarts(), 2, "the engine is brought back once");
+    assert.ok(answers.every((answer) => answer[0].repo_id === "selected"));
+  } finally {
+    await attached.close();
   }
 });
 
