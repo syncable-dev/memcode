@@ -63,10 +63,16 @@ export function boardSyncScenarios(
         later,
       );
       const before = structuredClone(mac.board());
+      const untouched = JSON.stringify(mac.state.tasks);
+      const saves = mac.saves;
       mac.connect(shared);
       await mac.synced();
-      // Writing the board out changes nothing on the computer it came from.
+      // Writing the board out changes nothing on the computer it came from:
+      // not a task, not a date, and the workspace file is not written again.
       assert.deepEqual(mac.board(), before);
+      assert.equal(JSON.stringify(mac.state.tasks), untouched);
+      assert.equal(mac.saves, saves);
+      assert.equal(mac.state.sharedProjectLinks![0].applied, undefined);
       assert.equal(mac.status().waiting, 0);
 
       pc.connect(shared);
