@@ -35,6 +35,15 @@ export type Board = Record<Collection, Record<string, Entry>>;
 export const LAYOUT = 1;
 /** What marks a change this computer made, as opposed to one that came from the log. */
 export const LOCAL = "local";
+/** The sharing service takes no update larger than this. */
+export const LARGEST_UPDATE = 1024 * 1024;
+/**
+ * How much is written as one change before the rest goes into the next. A
+ * quarter of what the service takes, so that no update comes near the limit.
+ */
+const ROOM_IN_ONE_CHANGE = 256 * 1024;
+/** One value this large would be an update the service refuses. It is not written. */
+const LARGEST_VALUE = LARGEST_UPDATE - 64 * 1024;
 
 const META = "meta",
   LAYOUT_KEY = "layout",
@@ -112,73 +121,169 @@ function writeText(kept: Y.Map<unknown>, name: string, wording: string) {
   if (change.insert) text.insert(change.at, change.insert);
 }
 
-/** Writes the values that differ between two records, and takes out the ones that are gone. */
-function writeValues(
-  kept: Y.Map<unknown>,
+/** One thing to write, with a number its update will not be larger than. */
+interface Write {
+  bytes: number;
+  run(): void;
+}
+const OVERHEAD = 48;
+const bytesOf = (key: string, value: unknown) =>
+  OVERHEAD +
+  Buffer.byteLength(key) +
+  Buffer.byteLength(JSON.stringify(value) ?? "");
+
+/** The values that differ between two records, and the ones that are gone. */
+function valueWrites(
+  kept: () => Y.Map<unknown>,
   was: Record<string, Json>,
   now: Record<string, Json>,
   keyOf: (name: string) => string,
-) {
+): Write[] {
+  const writes: Write[] = [];
   for (const name of new Set([...Object.keys(was), ...Object.keys(now)])) {
     if (same(was[name], now[name])) continue;
-    if (name in now) kept.set(keyOf(name), now[name]);
-    else kept.delete(keyOf(name));
+    const key = keyOf(name);
+    if (name in now)
+      writes.push({
+        bytes: bytesOf(key, now[name]),
+        run: () => kept().set(key, now[name]),
+      });
+    else
+      writes.push({ bytes: bytesOf(key, null), run: () => kept().delete(key) });
   }
+  return writes;
 }
 
-function writeEntry(
+/** What it takes to make the document's entry say what `after` says. */
+function entryWrites(
   held: Y.Map<unknown>,
   id: string,
   before: Entry | undefined,
   after: Entry,
-) {
+): Write[] {
   // An entry is made once. Putting a second map under an id that is already there
   // would replace the first one whole, with every edit anyone made to it.
-  let kept = held.get(id);
-  if (!(kept instanceof Y.Map)) {
-    kept = new Y.Map<unknown>();
-    held.set(id, kept);
-  }
-  const map = kept as Y.Map<unknown>;
-  const known = before ?? readEntry(map);
-  if (map.get(DELETED) === true) map.delete(DELETED);
-  writeValues(map, known.fields, after.fields, (name) => name);
+  const kept = () => {
+    let entry = held.get(id);
+    if (!(entry instanceof Y.Map)) {
+      entry = new Y.Map<unknown>();
+      held.set(id, entry);
+    }
+    return entry as Y.Map<unknown>;
+  };
+  const there = held.get(id);
+  const known =
+    before ??
+    (there instanceof Y.Map
+      ? readEntry(there)
+      : { fields: {}, texts: {}, sets: {} });
+  const writes: Write[] = [
+    {
+      bytes: bytesOf(id, null),
+      run: () => {
+        const entry = kept();
+        if (entry.get(DELETED) === true) entry.delete(DELETED);
+      },
+    },
+    ...valueWrites(kept, known.fields, after.fields, (name) => name),
+  ];
   for (const set of new Set([
     ...Object.keys(known.sets),
     ...Object.keys(after.sets),
   ]))
-    writeValues(
-      map,
-      known.sets[set] ?? {},
-      after.sets[set] ?? {},
-      (member) => set + MEMBER_OF + member,
+    writes.push(
+      ...valueWrites(
+        kept,
+        known.sets[set] ?? {},
+        after.sets[set] ?? {},
+        (member) => set + MEMBER_OF + member,
+      ),
     );
   for (const [name, wording] of Object.entries(after.texts))
-    if (known.texts[name] !== wording) writeText(map, name, wording);
+    if (known.texts[name] !== wording)
+      writes.push({
+        bytes: bytesOf(name, wording),
+        run: () => writeText(kept(), name, wording),
+      });
+  return writes;
 }
 
 /**
- * Writes what changed on this computer into the document, as one change.
- * `before` is the board as this computer last saw it and `after` as it is now:
- * only what differs between the two is written, so a change that arrived from
- * someone else in the meantime is not undone.
+ * Writes entries as few changes as will stay small. An entry goes into one
+ * change whole unless it is too large for that by itself.
+ * Answers how many values were too large to write at all.
  */
-export function writeChanges(doc: Y.Doc, before: Board, after: Board): void {
-  doc.transact(() => {
-    const meta = doc.getMap(META);
-    if (meta.get(LAYOUT_KEY) === undefined) meta.set(LAYOUT_KEY, LAYOUT);
-    for (const collection of collections) {
-      const held = doc.getMap(collection);
-      const was = before[collection],
-        now = after[collection];
-      for (const id of Object.keys(was))
-        if (!(id in now)) {
-          const gone = held.get(id);
-          // Marked, not removed: an edit made elsewhere at the same moment is kept.
-          if (gone instanceof Y.Map) gone.set(DELETED, true);
-        }
-      for (const [id, entry] of Object.entries(now))
-        if (!same(was[id], entry)) writeEntry(held, id, was[id], entry);
-    }
-  }, LOCAL);
+function writeEntries(doc: Y.Doc, entries: Write[][]): number {
+  let together: Write[] = [],
+    room = ROOM_IN_ONE_CHANGE,
+    tooLarge = 0;
+  const written = () => {
+    const writes = together;
+    together = [];
+    room = ROOM_IN_ONE_CHANGE;
+    if (!writes.length) return;
+    doc.transact(() => {
+      const meta = doc.getMap(META);
+      if (meta.get(LAYOUT_KEY) === undefined) meta.set(LAYOUT_KEY, LAYOUT);
+      for (const write of writes) write.run();
+    }, LOCAL);
+  };
+  const add = (writes: Write[], bytes: number) => {
+    if (bytes > room) written();
+    together.push(...writes);
+    room -= bytes;
+  };
+  for (const all of entries) {
+    const writes = all.filter((write) => write.bytes <= LARGEST_VALUE);
+    tooLarge += all.length - writes.length;
+    const bytes = writes.reduce((sum, write) => sum + write.bytes, 0);
+    if (bytes <= ROOM_IN_ONE_CHANGE) add(writes, bytes);
+    else for (const write of writes) add([write], write.bytes);
+  }
+  written();
+  return tooLarge;
+}
+
+/**
+ * Writes what changed on this computer into the document. `before` is the
+ * board as this computer last saw it and `after` as it is now: only what
+ * differs between the two is written, so a change that arrived from someone
+ * else in the meantime is not undone.
+ * Answers how many values were too large for the sharing service to take.
+ */
+export function writeChanges(doc: Y.Doc, before: Board, after: Board): number {
+  const entries: Write[][] = [];
+  for (const collection of collections) {
+    const held = doc.getMap(collection);
+    const was = before[collection],
+      now = after[collection];
+    for (const id of Object.keys(was))
+      if (!(id in now))
+        entries.push([
+          {
+            bytes: bytesOf(id, true),
+            run: () => {
+              const gone = held.get(id);
+              // Marked, not removed: an edit made elsewhere at the same moment is kept.
+              if (gone instanceof Y.Map) gone.set(DELETED, true);
+            },
+          },
+        ]);
+    for (const [id, entry] of Object.entries(now))
+      if (!same(was[id], entry))
+        entries.push(entryWrites(held, id, was[id], entry));
+  }
+  return writeEntries(doc, entries);
+}
+
+/** Writes one entry as a change of its own, as when a whole board is first written out. */
+export function writeEntryAlone(
+  doc: Y.Doc,
+  collection: Collection,
+  id: string,
+  entry: Entry,
+): number {
+  return writeEntries(doc, [
+    entryWrites(doc.getMap(collection), id, undefined, entry),
+  ]);
 }

@@ -3,12 +3,14 @@ import assert from "node:assert/strict";
 import * as Y from "yjs";
 import {
   emptyBoard,
+  LARGEST_UPDATE,
   LAYOUT,
   layoutOf,
   LOCAL,
   readBoard,
   textChange,
   writeChanges,
+  writeEntryAlone,
   type Board,
   type Entry,
 } from "../runtime/sharing/board/document";
@@ -381,4 +383,96 @@ test("what MemCode did not put in a document is read past, never tripped over", 
   assert.deepEqual(Object.keys(read.tasks), ["odd"]);
   assert.equal(read.tasks.odd.fields.title, "Still a task");
   assert.equal(layoutOf(doc), undefined);
+});
+
+/** What another computer reads after taking every update, in the order they were made. */
+function readBy(updates: Uint8Array[]) {
+  const reader = new Y.Doc();
+  for (const update of updates) Y.applyUpdate(reader, update);
+  return readBoard(reader);
+}
+const QUARTER_OF_THE_LIMIT = LARGEST_UPDATE / 4;
+
+test("a change with more in it than one update should hold is written as several small ones", () => {
+  const mac = computer();
+  const tasks = Object.fromEntries(
+    Array.from({ length: 900 }, (_, at) => [
+      `task-${at}`,
+      task(`Task ${at}`, { texts: { description: "å".repeat(600) } }),
+    ]),
+  );
+  mac.change((board) => void (board.tasks = tasks));
+  assert.ok(mac.made.length > 1, `${mac.made.length} update`);
+  for (const update of mac.made)
+    assert.ok(
+      update.length <= QUARTER_OF_THE_LIMIT + 4096,
+      `${update.length} bytes`,
+    );
+  assert.deepEqual(readBy(mac.made).tasks, tasks);
+  // A task is never cut in two when it fits in one update.
+  const afterTheFirst = readBy(mac.made.slice(0, 1));
+  assert.ok(Object.keys(afterTheFirst.tasks).length > 0);
+  for (const [id, read] of Object.entries(afterTheFirst.tasks))
+    assert.deepEqual(read, tasks[id]);
+});
+
+test("an entry too large for one update by itself goes in pieces, and arrives whole", () => {
+  const mac = computer();
+  const steps = Object.fromEntries(
+    Array.from({ length: 30 }, (_, at) => [
+      `step-${at}`,
+      { text: "x".repeat(20000), done: false, order: at },
+    ]),
+  );
+  const large = task("Has a very long runbook", { sets: { step: steps } });
+  mac.change((board) => void (board.tasks.large = large));
+  assert.ok(mac.made.length > 1);
+  for (const update of mac.made)
+    assert.ok(update.length <= QUARTER_OF_THE_LIMIT + 32768);
+  assert.deepEqual(readBy(mac.made).tasks.large, large);
+});
+
+test("a value the service would refuse for its size is not written, and everything else is", () => {
+  const mac = computer();
+  let tooLarge = 0;
+  const next = board({
+    tasks: {
+      "task-1": task("Carries far too much", {
+        fields: {
+          identifier: "MC-001",
+          title: "Carries far too much",
+          stage: "planned",
+          category: "y".repeat(LARGEST_UPDATE),
+        },
+        texts: { description: "z".repeat(LARGEST_UPDATE) },
+      }),
+      "task-2": task("An ordinary task"),
+    },
+  });
+  tooLarge = writeChanges(mac.doc, emptyBoard(), next);
+  assert.equal(tooLarge, 2);
+  for (const update of mac.made) assert.ok(update.length < LARGEST_UPDATE);
+  const read = readBy(mac.made);
+  assert.deepEqual(read.tasks["task-2"], next.tasks["task-2"]);
+  assert.deepEqual(read.tasks["task-1"].fields, {
+    identifier: "MC-001",
+    title: "Carries far too much",
+    stage: "planned",
+  });
+  assert.deepEqual(read.tasks["task-1"].texts, {});
+});
+
+test("an entry written alone is one update that holds the entry and the layout it is in", () => {
+  const mac = computer();
+  const first = task("The first task of a board", {
+    texts: { description: "Written out when the board is first shared." },
+    sets: { label: { urgent: true } },
+  });
+  assert.equal(writeEntryAlone(mac.doc, "tasks", "task-1", first), 0);
+  writeEntryAlone(mac.doc, "tasks", "task-2", task("The second"));
+  assert.equal(mac.made.length, 2);
+  const reader = new Y.Doc();
+  Y.applyUpdate(reader, mac.made[0]);
+  assert.equal(layoutOf(reader), LAYOUT);
+  assert.deepEqual(readBoard(reader).tasks, { "task-1": first });
 });
