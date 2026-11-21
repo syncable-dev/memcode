@@ -431,3 +431,306 @@ test("a closed channel makes no more calls", async () => {
     await server.close();
   }
 });
+
+const trailersWhenDone = (stream: ServerHttp2Stream, status = "0") => {
+  stream.respond(
+    { ":status": 200, "content-type": "application/grpc" },
+    { waitForTrailers: true },
+  );
+  stream.on("wantTrailers", () =>
+    stream.sendTrailers({ "grpc-status": status }),
+  );
+};
+const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const text = (message: Uint8Array) => Buffer.from(message).toString();
+
+test("a watched call hands over each message as it arrives, in order, until the service ends it", async () => {
+  const server = await listening(async (stream) => {
+    trailersWhenDone(stream);
+    // Two messages in one piece, then one message in two pieces.
+    stream.write(Buffer.concat([framed(say("one")), framed(say("two"))]));
+    await pause(20);
+    const third = framed(say("three"));
+    stream.write(third.subarray(0, 3));
+    await pause(20);
+    stream.write(third.subarray(3));
+    await pause(20);
+    stream.end(framed(new Uint8Array()));
+  });
+  const channel = grpcChannel(server.address);
+  try {
+    const seen: string[] = [];
+    const watching = channel.serverStream(
+      { path: "/s/watch", request: say("from 41") },
+      (message) => void seen.push(text(message)),
+    );
+    await watching.finished;
+    assert.deepEqual(seen, ["one", "two", "three", ""]);
+  } finally {
+    channel.close();
+    await server.close();
+  }
+});
+
+test("a watched call sends its request and metadata like any other, with no deadline on the stream", async () => {
+  let seen: IncomingHttpHeaders = {},
+    asked = "";
+  const server = await listening((stream, headers, request) => {
+    seen = headers;
+    asked = request.subarray(5).toString();
+    trailersWhenDone(stream);
+    stream.end();
+  });
+  const channel = grpcChannel(new URL("/memsync/", server.address));
+  try {
+    await channel.serverStream(
+      {
+        path: "/memsync.v1.Boards/WatchUpdates",
+        request: say("after 7"),
+        metadata: { authorization: "Bearer token-1" },
+      },
+      () => {},
+    ).finished;
+    assert.equal(asked, "after 7");
+    assert.equal(seen[":path"], "/memsync/memsync.v1.Boards/WatchUpdates");
+    assert.equal(seen.authorization, "Bearer token-1");
+    assert.equal(seen["content-type"], "application/grpc");
+    assert.equal(seen["grpc-timeout"], undefined);
+  } finally {
+    channel.close();
+    await server.close();
+  }
+});
+
+test("a stream the service ends with a status fails with it, after the messages before it", async () => {
+  const server = await listening((stream) => {
+    trailersWhenDone(stream, String(grpcStatus.UNAVAILABLE));
+    stream.end(framed(say("last one")));
+  });
+  const channel = grpcChannel(server.address);
+  try {
+    const seen: string[] = [];
+    const ended = await failure(
+      channel.serverStream(
+        { path: "/s/watch", request: say("") },
+        (message) => {
+          seen.push(text(message));
+        },
+      ).finished,
+    );
+    assert.equal(ended.code, grpcStatus.UNAVAILABLE);
+    assert.deepEqual(seen, ["last one"]);
+  } finally {
+    channel.close();
+    await server.close();
+  }
+});
+
+test("a watched call that is turned down at once fails with the rule's name", async () => {
+  const server = await listening((stream) =>
+    refuse(stream, grpcStatus.NOT_FOUND, "there is no such project", {
+      "memsync-refusal": "no_such_project",
+    }),
+  );
+  const channel = grpcChannel(server.address);
+  try {
+    const refused = await failure(
+      channel.serverStream({ path: "/s/watch", request: say("") }, () => {})
+        .finished,
+    );
+    assert.equal(refused.code, grpcStatus.NOT_FOUND);
+    assert.equal(refused.metadata["memsync-refusal"], "no_such_project");
+  } finally {
+    channel.close();
+    await server.close();
+  }
+});
+
+test("hanging up ends a watched call quietly, and the service sees it go", async () => {
+  let gone!: () => void;
+  const serviceSawItGo = new Promise<void>((resolve) => (gone = resolve));
+  const server = await listening((stream) => {
+    trailersWhenDone(stream);
+    stream.write(framed(say("first")));
+    stream.on("close", gone);
+  });
+  const channel = grpcChannel(server.address);
+  try {
+    const seen: string[] = [];
+    const watching = channel.serverStream(
+      { path: "/s/watch", request: say("") },
+      (message) => void seen.push(text(message)),
+    );
+    await pause(40);
+    watching.cancel();
+    await watching.finished;
+    await serviceSawItGo;
+    assert.deepEqual(seen, ["first"]);
+  } finally {
+    channel.close();
+    await server.close();
+  }
+});
+
+test("a slow reader gets one message at a time and none is lost", async () => {
+  const count = 200;
+  const server = await listening((stream) => {
+    trailersWhenDone(stream);
+    for (let number = 0; number < count; number++)
+      stream.write(framed(say(String(number))));
+    stream.end();
+  });
+  const channel = grpcChannel(server.address);
+  try {
+    const seen: number[] = [];
+    let inHand = 0,
+      mostInHand = 0;
+    await channel.serverStream(
+      { path: "/s/watch", request: say("") },
+      async (message) => {
+        mostInHand = Math.max(mostInHand, ++inHand);
+        await pause(1);
+        seen.push(Number(text(message)));
+        inHand--;
+      },
+    ).finished;
+    assert.equal(mostInHand, 1);
+    assert.deepEqual(
+      seen,
+      Array.from({ length: count }, (_, number) => number),
+    );
+  } finally {
+    channel.close();
+    await server.close();
+  }
+});
+
+test("a reader that fails ends the stream with its own failure", async () => {
+  const server = await listening((stream) => {
+    trailersWhenDone(stream);
+    stream.write(
+      Buffer.concat([
+        framed(say("fine")),
+        framed(say("bad")),
+        framed(say("never")),
+      ]),
+    );
+  });
+  const channel = grpcChannel(server.address);
+  try {
+    const seen: string[] = [];
+    await assert.rejects(
+      channel.serverStream(
+        { path: "/s/watch", request: say("") },
+        (message) => {
+          seen.push(text(message));
+          if (text(message) === "bad") throw new Error("could not keep it");
+        },
+      ).finished,
+      /could not keep it/,
+    );
+    assert.deepEqual(seen, ["fine", "bad"]);
+  } finally {
+    channel.close();
+    await server.close();
+  }
+});
+
+test("a streamed message that is too large, compressed or cut short ends the stream", async () => {
+  const broken: Array<[string, number, (stream: ServerHttp2Stream) => void]> = [
+    [
+      "too large",
+      grpcStatus.RESOURCE_EXHAUSTED,
+      (stream) => stream.end(framed(new Uint8Array(5000))),
+    ],
+    [
+      "compressed",
+      grpcStatus.INTERNAL,
+      (stream) => stream.end(framed(say("squeezed"), 1)),
+    ],
+    [
+      "cut short",
+      grpcStatus.INTERNAL,
+      (stream) => stream.end(framed(say("whole")).subarray(0, 7)),
+    ],
+  ];
+  for (const [name, code, send] of broken) {
+    const server = await listening((stream) => {
+      trailersWhenDone(stream);
+      send(stream);
+    });
+    const channel = grpcChannel(server.address, { maxReplyBytes: 4096 });
+    try {
+      const ended = await failure(
+        channel.serverStream({ path: "/s/watch", request: say("") }, () => {})
+          .finished,
+      );
+      assert.equal(ended.code, code, name);
+    } finally {
+      channel.close();
+      await server.close();
+    }
+  }
+});
+
+test("a service that never begins to answer a watched call is given up on", async () => {
+  const server = await listening(() => {});
+  const channel = grpcChannel(server.address);
+  try {
+    const late = await failure(
+      channel.serverStream(
+        { path: "/s/watch", request: say(""), timeoutMs: 100 },
+        () => {},
+      ).finished,
+    );
+    assert.equal(late.code, grpcStatus.DEADLINE_EXCEEDED);
+  } finally {
+    channel.close();
+    await server.close();
+  }
+});
+
+test("a quiet stream keeps its connection, and a connection lost under it ends it as unavailable", async () => {
+  let send!: (message: string) => void;
+  const server = await listening((stream) => {
+    trailersWhenDone(stream);
+    stream.write(framed(say("first")));
+    send = (message) => stream.write(framed(say(message)));
+  });
+  const channel = grpcChannel(server.address, { idleMs: 30, keepAliveMs: 25 });
+  try {
+    const seen: string[] = [];
+    const watching = channel.serverStream(
+      { path: "/s/watch", request: say("") },
+      (message) => void seen.push(text(message)),
+    );
+    // Longer than an unused connection is kept, with a call made and finished in between.
+    await pause(150);
+    send("after a long silence");
+    await pause(40);
+    assert.deepEqual(seen, ["first", "after a long silence"]);
+    assert.equal(server.sessions, 1);
+    server.hangUp();
+    const lost = await failure(watching.finished);
+    assert.equal(lost.code, grpcStatus.UNAVAILABLE);
+  } finally {
+    channel.close();
+    await server.close();
+  }
+});
+
+test("a closed channel starts no watched call", async () => {
+  const server = await listening((stream) => trailersWhenDone(stream));
+  const channel = grpcChannel(server.address);
+  channel.close();
+  try {
+    const refused = await failure(
+      channel.serverStream({ path: "/s/watch", request: say("") }, () => {})
+        .finished,
+    );
+    assert.equal(refused.code, grpcStatus.CANCELLED);
+    assert.equal(server.sessions, 0);
+  } finally {
+    await server.close();
+  }
+});

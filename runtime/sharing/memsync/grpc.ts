@@ -45,21 +45,43 @@ export interface GrpcCall {
   metadata?: Record<string, string>;
   timeoutMs?: number;
 }
+/** A call the service keeps answering until it ends the call or the caller hangs up. */
+export interface GrpcStream {
+  /** Settles when the stream is over: rejects with what ended it, unless the caller hung up. */
+  finished: Promise<void>;
+  cancel(): void;
+}
 export interface GrpcChannel {
   /** One request, one reply. */
   unary(call: GrpcCall): Promise<Uint8Array>;
+  /**
+   * One request, then a message at a time for as long as the service sends them.
+   * `timeoutMs` is how long the service may take to begin. Messages are handed
+   * over in order, the next one only when the one before has been dealt with.
+   */
+  serverStream(
+    call: GrpcCall,
+    onMessage: (message: Uint8Array) => void | Promise<void>,
+  ): GrpcStream;
   close(): void;
 }
 export interface GrpcChannelOptions {
   /** How long an unused connection is kept. A stale one is the usual way a call hangs. */
   idleMs?: number;
   maxReplyBytes?: number;
+  /** How often a connection with an open stream is asked whether it is still there. */
+  keepAliveMs?: number;
 }
 
 const FRAME_HEADER_BYTES = 5,
   NOT_COMPRESSED = 0;
 const DEFAULT_TIMEOUT_MS = 10_000,
   DEFAULT_IDLE_MS = 10_000,
+  DEFAULT_KEEP_ALIVE_MS = 20_000,
+  // A stream can be silent for hours, so a lost connection shows only when asked.
+  KEEP_ALIVE_PATIENCE_MS = 10_000,
+  // Messages read ahead of a slow reader before the service is asked to wait.
+  HELD_FOR_A_SLOW_READER = 32,
   // What a gRPC server sends at most unless it is set up otherwise.
   DEFAULT_MAX_REPLY_BYTES = 4 * 1024 * 1024;
 
@@ -145,11 +167,8 @@ function withoutStatus(
   );
 }
 
-function outcome({
-  headers,
-  trailers,
-  body,
-}: Received): Uint8Array | GrpcFailure {
+/** Why the call did not succeed, or nothing when the service said it did. */
+function failureOf({ headers, trailers }: Received): GrpcFailure | undefined {
   if (!headers)
     return new GrpcFailure(
       grpcStatus.UNAVAILABLE,
@@ -160,12 +179,39 @@ function outcome({
   const status = metadata["grpc-status"];
   if (status === undefined) return withoutStatus(headers, metadata);
   const code = Number(status);
-  if (code === grpcStatus.OK) return soleMessage(Buffer.concat(body));
+  if (code === grpcStatus.OK) return undefined;
   return new GrpcFailure(
     Number.isInteger(code) ? code : grpcStatus.UNKNOWN,
     reasonSent(metadata["grpc-message"]),
     metadata,
   );
+}
+
+const outcome = (received: Received): Uint8Array | GrpcFailure =>
+  failureOf(received) ?? soleMessage(Buffer.concat(received.body));
+
+/** The first whole message in what has arrived so far, or nothing when more bytes are needed. */
+function nextMessage(
+  arrived: Buffer,
+  maxMessageBytes: number,
+): { message: Uint8Array; rest: Buffer } | GrpcFailure | undefined {
+  if (arrived.length < FRAME_HEADER_BYTES) return undefined;
+  if (arrived[0] !== NOT_COMPRESSED)
+    return new GrpcFailure(
+      grpcStatus.INTERNAL,
+      "The sharing service sent a message that is compressed.",
+    );
+  const end = FRAME_HEADER_BYTES + arrived.readUInt32BE(1);
+  if (end - FRAME_HEADER_BYTES > maxMessageBytes)
+    return new GrpcFailure(
+      grpcStatus.RESOURCE_EXHAUSTED,
+      "The sharing service sent a larger message than MemCode reads.",
+    );
+  if (arrived.length < end) return undefined;
+  return {
+    message: new Uint8Array(arrived.subarray(FRAME_HEADER_BYTES, end)),
+    rest: arrived.subarray(end),
+  };
 }
 
 const notReached = (error: unknown) =>
@@ -231,6 +277,101 @@ function exchange(
   });
 }
 
+function follow(
+  session: ClientHttp2Session,
+  path: string,
+  call: GrpcCall,
+  maxMessageBytes: number,
+  onMessage: (message: Uint8Array) => void | Promise<void>,
+): GrpcStream {
+  const received: Received = { body: [], bytes: 0 };
+  const stream = session.request({
+    ...call.metadata,
+    ":method": "POST",
+    ":path": path,
+    "content-type": "application/grpc",
+    te: "trailers",
+  });
+  let arrived: Buffer = Buffer.alloc(0),
+    handling: Promise<void> = Promise.resolve(),
+    held = 0,
+    hungUp = false,
+    failure: unknown;
+  const fail = (problem: unknown) => {
+    if (failure !== undefined || hungUp) return;
+    failure = problem;
+    clearTimeout(silence);
+    stream.close(constants.NGHTTP2_CANCEL);
+  };
+  const silence = setTimeout(
+    () =>
+      fail(
+        new GrpcFailure(
+          grpcStatus.DEADLINE_EXCEEDED,
+          "The sharing service did not answer in time.",
+        ),
+      ),
+    call.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+  );
+  const handOver = (message: Uint8Array) => {
+    if (++held > HELD_FOR_A_SLOW_READER) stream.pause();
+    handling = handling
+      .then(() =>
+        failure === undefined && !hungUp ? onMessage(message) : undefined,
+      )
+      .then(() => {
+        if (--held <= HELD_FOR_A_SLOW_READER / 2) stream.resume();
+      }, fail);
+  };
+  stream.on("response", (headers) => {
+    received.headers = headers;
+    clearTimeout(silence);
+  });
+  stream.on("trailers", (trailers) => (received.trailers = trailers));
+  stream.on("data", (part: Buffer) => {
+    arrived = arrived.length ? Buffer.concat([arrived, part]) : part;
+    for (;;) {
+      const next = nextMessage(arrived, maxMessageBytes);
+      if (!next) return;
+      if (next instanceof GrpcFailure) return fail(next);
+      arrived = next.rest;
+      handOver(next.message);
+    }
+  });
+  stream.on("error", (error) => fail(notReached(error)));
+  const finished = new Promise<void>((resolve, reject) => {
+    stream.on("close", () => {
+      clearTimeout(silence);
+      void handling.then(() => {
+        const ended = hungUp
+          ? undefined
+          : (failure ?? endOf(received, arrived));
+        if (ended === undefined) resolve();
+        else reject(ended);
+      });
+    });
+  });
+  stream.end(frame(call.request));
+  return {
+    finished,
+    cancel() {
+      hungUp = true;
+      clearTimeout(silence);
+      stream.close(constants.NGHTTP2_CANCEL);
+    },
+  };
+}
+
+/** Why a stream that closed did not end well, or nothing when the service ended it properly. */
+function endOf(received: Received, unread: Buffer): GrpcFailure | undefined {
+  const failure = failureOf(received);
+  if (failure || !unread.length) return failure;
+  return new GrpcFailure(
+    grpcStatus.INTERNAL,
+    "The sharing service ended in the middle of a message.",
+  );
+}
+
 /** After one of these the connection itself is in doubt, so the next call opens another. */
 const connectionInDoubt = (failure: unknown) =>
   failure instanceof GrpcFailure &&
@@ -253,7 +394,8 @@ export function grpcChannel(
 ): GrpcChannel {
   const pathPrefix = address.pathname.replace(/\/+$/, "");
   const idleMs = options.idleMs ?? DEFAULT_IDLE_MS,
-    maxReplyBytes = options.maxReplyBytes ?? DEFAULT_MAX_REPLY_BYTES;
+    maxReplyBytes = options.maxReplyBytes ?? DEFAULT_MAX_REPLY_BYTES,
+    keepAliveMs = options.keepAliveMs ?? DEFAULT_KEEP_ALIVE_MS;
   let session: ClientHttp2Session | undefined,
     idle: ReturnType<typeof setTimeout> | undefined,
     callsInFlight = 0,
@@ -270,6 +412,23 @@ export function grpcChannel(
     opened.on("close", () => retire(opened));
     session = opened;
     return opened;
+  };
+  /** Asks a connection that carries a stream whether it is still there, and drops one that is not. */
+  const keptAlive = (carrying: ClientHttp2Session) => {
+    const asking = setInterval(() => {
+      const gaveUp = setTimeout(
+        () => carrying.destroy(),
+        KEEP_ALIVE_PATIENCE_MS,
+      );
+      gaveUp.unref();
+      const asked = carrying.ping((unanswered) => {
+        clearTimeout(gaveUp);
+        if (unanswered) carrying.destroy();
+      });
+      if (!asked) clearTimeout(gaveUp);
+    }, keepAliveMs);
+    asking.unref();
+    return () => clearInterval(asking);
   };
   const restWhenUnused = () => {
     if (--callsInFlight > 0 || !session) return;
@@ -307,6 +466,48 @@ export function grpcChannel(
       } finally {
         restWhenUnused();
       }
+    },
+    serverStream(call, onMessage) {
+      if (closed)
+        return {
+          finished: Promise.reject(
+            new GrpcFailure(
+              grpcStatus.CANCELLED,
+              "Sharing was closed before the call was made.",
+            ),
+          ),
+          cancel() {},
+        };
+      clearTimeout(idle);
+      callsInFlight++;
+      let using: ClientHttp2Session;
+      try {
+        using = connected();
+      } catch (failure) {
+        restWhenUnused();
+        return { finished: Promise.reject(notReached(failure)), cancel() {} };
+      }
+      const stream = follow(
+        using,
+        pathPrefix + call.path,
+        call,
+        maxReplyBytes,
+        onMessage,
+      );
+      const stopAsking = keptAlive(using);
+      const finished = stream.finished
+        .catch((failure) => {
+          if (connectionInDoubt(failure)) {
+            retire(using);
+            using.close();
+          }
+          throw failure;
+        })
+        .finally(() => {
+          stopAsking();
+          restWhenUnused();
+        });
+      return { finished, cancel: stream.cancel };
     },
     close() {
       closed = true;
