@@ -17,6 +17,7 @@ import {
   type ProjectRecord,
   type ProjectsApi,
 } from "./memsync/projects-api";
+import { SignedCalls } from "./memsync/signed-calls";
 import {
   SharingRefused,
   SharingSignedOut,
@@ -229,7 +230,7 @@ export class Sharing {
       address: memsync.href,
       channel,
       access,
-      projects: new MemsyncProjects(channel, access),
+      projects: new MemsyncProjects(new SignedCalls(channel, access)),
     };
     return this.service;
   }

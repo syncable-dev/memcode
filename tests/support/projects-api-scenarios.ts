@@ -1,12 +1,29 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { grpcChannel } from "../../runtime/sharing/memsync/grpc";
+import {
+  grpcChannel,
+  type GrpcChannel,
+} from "../../runtime/sharing/memsync/grpc";
+import {
+  SignedCalls,
+  type AccessTokens,
+} from "../../runtime/sharing/memsync/signed-calls";
 import { MemsyncProjects } from "../../runtime/sharing/memsync/projects-api";
 import { SharingRefused } from "../../runtime/sharing/problems";
 import type { RefusalRule } from "../../src/sharing-refusals";
 import { actingAs } from "./memsync-owner";
 import type { StandInPerson } from "./memsync-stand-in";
+
+/** MemCode's Projects client over a channel, signed in with the tokens it is handed. */
+export const projectsOver = (
+  channel: Pick<GrpcChannel, "unary">,
+  access: AccessTokens,
+  timeoutMs?: number,
+) =>
+  new MemsyncProjects(
+    new SignedCalls(channel as GrpcChannel, access, timeoutMs),
+  );
 
 /** A sharing service to run a scenario against: the stand-in, or a real memsync-server. */
 export interface SharingWorld {
@@ -44,7 +61,7 @@ export function signedInTo(world: SharingWorld, person: StandInPerson) {
   return {
     token,
     /** MemCode's own client. */
-    projects: new MemsyncProjects(channel, {
+    projects: projectsOver(channel, {
       current: async () => ({ token, accountId: person.accountId }),
       forget() {},
     }),
