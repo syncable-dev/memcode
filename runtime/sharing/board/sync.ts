@@ -35,7 +35,12 @@ import {
   NOT_IN_THE_LOG,
   type NumberedTask,
 } from "./identifiers";
-import { BoardStore, type BoardToKeep, type KeptBoard } from "./store";
+import {
+  BoardStore,
+  type BoardToKeep,
+  type KeptBoard,
+  type LeftOutUpdate,
+} from "./store";
 import {
   holdsMore,
   idOf,
@@ -432,54 +437,70 @@ export class BoardSync {
     this.noteOwnChanges();
     const before = this.kept.joined ? readBoard(this.doc) : undefined;
     if (before) this.stamps.clear();
-    let logChanged = false;
-    for (const entry of next) {
+    const logChanged = this.applyAll(next);
+    // Until the boards are brought together the workspace follows nothing.
+    if (!before) return;
+    const follows = this.follow(before, next[next.length - 1].loggedAt);
+    await this.keep(logChanged, follows);
+  }
+
+  /** Applies entries in order and moves the log position past each. Says whether any applied. */
+  private applyAll(entries: LoggedUpdate[]): boolean {
+    let applied = false;
+    for (const entry of entries) {
       const id = entry.id.toLowerCase();
       const mine = this.kept.unsent.findIndex((update) => update.id === id);
       const why = this.unusable.has(id)
         ? "failed"
         : whyNotApplied(id, entry.payload);
-      if (why) {
-        this.kept.leftOut.push({
-          sequence: entry.sequence,
-          id,
-          author: entry.author,
-          loggedAt: entry.loggedAt,
-          reason: why,
-        });
-        this.kept.leftOut.splice(0, this.kept.leftOut.length - LEFT_OUT_KEPT);
-      } else if (!this.apply(entry, mine < 0)) {
+      if (why) this.leaveOut(entry, why);
+      else if (this.apply(entry, mine < 0)) applied = true;
+      else {
         // Applying threw, and may have left a document half changed. Both go
         // back to what was last saved and the log is read again from there,
         // this entry left out.
         this.unusable.add(id);
         this.mustReopen = true;
         throw new StartAgain();
-      } else logChanged = true;
+      }
       // The log has it now, damaged or not. A damaged one is sent again as a repair.
       if (mine >= 0) this.kept.unsent.splice(mine, 1);
       this.logged.delete(id);
       this.kept.cursor = entry.sequence;
     }
-    if (!before) return;
+    return applied;
+  }
 
+  private leaveOut(entry: LoggedUpdate, reason: LeftOutUpdate["reason"]): void {
+    this.kept.leftOut.push({
+      sequence: entry.sequence,
+      id: entry.id.toLowerCase(),
+      author: entry.author,
+      loggedAt: entry.loggedAt,
+      reason,
+    });
+    this.kept.leftOut.splice(0, this.kept.leftOut.length - LEFT_OUT_KEPT);
+  }
+
+  /**
+   * Makes the workspace follow what the entries changed on the board.
+   * `before` is the board as it was before them. Says whether it changed.
+   */
+  private follow(before: Board, at: string): boolean {
     const after = readBoard(this.doc);
-    const follows = !sameBoard(before, after);
-    if (follows) {
-      const state = this.options.state();
-      applyBoard(state, this.options.projectId, before, after, {
-        at: next[next.length - 1].loggedAt,
-        stampOf: (collection, id) => this.stamps.get(`${collection}/${id}`),
-        nameOf: (account) => this.names.get(account),
-      });
-      // Read-only on a newer layout: `seen` stays, so changes made here are still found later.
-      if (!this.isNewer()) {
-        this.kept.seen = boardOf(state, this.options.projectId);
-        // A task that came with an identifier one here already has.
-        if (this.renumber()) this.noteOwnChanges();
-      }
-    }
-    await this.keep(logChanged, follows);
+    if (sameBoard(before, after)) return false;
+    const state = this.options.state();
+    applyBoard(state, this.options.projectId, before, after, {
+      at,
+      stampOf: (collection, id) => this.stamps.get(`${collection}/${id}`),
+      nameOf: (account) => this.names.get(account),
+    });
+    // Read-only on a newer layout: `seen` stays, so changes made here are still found later.
+    if (this.isNewer()) return true;
+    this.kept.seen = boardOf(state, this.options.projectId);
+    // A task that came with an identifier one here already has.
+    if (this.renumber()) this.noteOwnChanges();
+    return true;
   }
 
   /** Applies one entry inside a guard. Says whether it applied. */
