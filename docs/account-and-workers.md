@@ -51,7 +51,7 @@ Switch runs the official `memtrace auth logout` command before starting
 started by MemCode. A failed or cancelled login is not presented as a completed switch.
 
 This changes the shared Memtrace CLI session for the current OS user, across local
-projects. It does not delete local MemCode projects, sign Codex/Claude/Cursor out
+projects. It does not delete local MemCode projects, sign your coding tools out
 of their providers, or delete saved Team membership. Verified Teams lock locally
 until the intended Memtrace person confirms the account in the browser again.
 Older invitation-preview memberships stay separate. The browser's memtrace.io
@@ -63,7 +63,7 @@ After changing the session, restart MemCode before starting more workers. Restar
 any Memtrace workspace running separately as well: CLI logout removes saved
 credentials but does not replace an already-running daemon's cached authentication.
 MemCode does not terminate external workspace daemons. The worker guard applies
-to direct starts and automatic queued follow-ups for all three adapters.
+to direct starts and automatic queued follow-ups for every adapter.
 
 MemCode records only a non-secret explicit signed-out flag in its local profile,
 so refreshing or reopening the app cannot turn a cached owner's old `Valid` status
@@ -107,11 +107,13 @@ The user opens Connect, reviews the execution and context scope, checks the
 approval box and explicitly approves. The host validates an existing sign-in
 using read-only commands:
 
-| Adapter      | Read-only check              |
-| ------------ | ---------------------------- |
-| Codex        | `codex login status`         |
-| Claude Code  | `claude auth status`         |
-| Cursor Agent | `agent status --format json` |
+| Adapter          | Read-only check                                          |
+| ---------------- | -------------------------------------------------------- |
+| Codex            | `codex login status`                                     |
+| Claude Code      | `claude auth status`                                     |
+| Cursor Agent     | `agent status --format json`                             |
+| GitHub Copilot   | Model catalog probe; the CLI confirms access on first use |
+| DeepSeek Harness | Model catalog probe; the CLI confirms access on first use |
 
 Configured local Codex inference does not require a cloud login. The consent
 receipt contains only adapter, executable path, approval time, auth category,
@@ -120,7 +122,7 @@ in the receipt. Changing the runtime path requires a new approval. Automatic
 routing considers only approved installed runtimes; manual starts validate their
 specific adapter and path.
 
-Connecting does not start a coding task. Sending a task authorizes work. To
+Connecting does not start a coding task. Starting a task authorizes work. To
 disconnect an adapter, first stop its active workers; disconnect then prevents
 future starts without signing the user out of their provider. Local Fleet
 coordination and provider permission rules still apply; these consent records
@@ -129,5 +131,6 @@ are not hard filesystem write fencing.
 The connection tests use real short fixture processes to verify that only the
 documented status commands run, approval is explicit, paths are bound, secrets
 are omitted and Memtrace sign-in opens only the official claim host. Actual
-installed status checks on the Windows development machine confirmed all three
-CLIs had existing provider authentication, without granting production consent.
+installed status checks on the Windows development machine confirmed the Codex,
+Claude Code and Cursor CLIs had existing provider authentication, without granting
+production consent.

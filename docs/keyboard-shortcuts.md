@@ -4,11 +4,13 @@ MemCode shows the shortcut for the computer running the app. On macOS, **⌘** m
 
 | Action | macOS | Windows / Linux |
 | --- | --- | --- |
+| Start new work (outside text fields) | C | C |
+| Plan what you wrote in New work | ⌘+Enter | Ctrl+Enter |
+| Accept the plan in New work (the highlighted button) | ⌘+Enter | Ctrl+Enter |
 | Search the current project | ⌘+K | Ctrl+K |
 | Send or queue a conversation follow-up | ⌘+Enter | Ctrl+Enter |
 | Save a selected-text review comment | ⌘+Enter | Ctrl+Enter |
 | Copy selected terminal output | ⌘+C | Ctrl+Shift+C |
-| Create a work item outside text fields | C | C |
 
 Enter still adds a new line in a conversation draft. Saving a review comment keeps it on its selection; send it explicitly when you want the worker to act on it.
 
