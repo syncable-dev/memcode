@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { join } from "node:path";
 import type { AppState, Project } from "../../src/shared";
 import type {
   PendingInvitation,
@@ -6,9 +8,13 @@ import type {
   SharedProjectLink,
   SharingOverview,
 } from "../../src/sharing";
+import type { StoryAuthor } from "../../src/story-comments";
 import type { BetaSessionProof } from "../beta";
 import { SharingAccess } from "./access";
 import { sharingAddresses } from "./addresses";
+import { BoardStore } from "./board/store";
+import { BoardSync } from "./board/sync";
+import { MemsyncBoards, type BoardsApi } from "./memsync/boards-api";
 import { grpcChannel, type GrpcChannel } from "./memsync/grpc";
 import {
   MemsyncProjects,
@@ -30,6 +36,15 @@ export interface SharingOptions {
   changed(): Promise<unknown>;
   /** The Memtrace sign-in to show memtrace.io. Null: nobody is signed in. */
   session(): Promise<BetaSessionProof | null>;
+  /** Where each connected board keeps what it needs between runs. */
+  boardsFolder: string;
+  /**
+   * Saves the workspace as it is at the moment of the call, and writes it only
+   * after `first` has finished. Board sync saves its own state through `first`.
+   */
+  saveWorkspace(first: () => Promise<void>): Promise<unknown>;
+  /** What the window shows changed, and nothing needs saving. */
+  shown?(): void;
   fetcher?: typeof fetch;
   now?: () => string;
 }
@@ -41,6 +56,13 @@ interface Service {
   channel: GrpcChannel;
   access: SharingAccess;
   projects: ProjectsApi;
+  boards: BoardsApi;
+}
+/** Board sync running for one connected project. */
+interface RunningBoard {
+  link: SharedProjectLink;
+  service: Service;
+  sync: BoardSync;
 }
 
 const NOT_SET_UP =
@@ -73,13 +95,22 @@ const shownInvitation = (invitation: InvitationRecord): PendingInvitation => ({
   expiresAt: invitation.expiresAt,
 });
 
+/** A folder name for a link that no other link on this computer gets. */
+const folderOf = (link: SharedProjectLink) =>
+  createHash("sha256")
+    .update([link.service, link.sharedProjectId, link.projectId].join("\n"))
+    .digest("hex")
+    .slice(0, 32);
+
 /**
  * Sharing a project through the sharing service: who is signed in, the shared
- * projects and invitations of that person, and which shared project each local
- * project is connected to. The board itself is not synchronized here.
+ * projects and invitations of that person, which shared project each local
+ * project is connected to, and the board sync that runs for each of those.
  */
 export class Sharing {
   private service?: Service;
+  private readonly boards = new Map<string, RunningBoard>();
+  private matching: Promise<void> = Promise.resolve();
   private readonly now: () => string;
   constructor(private readonly options: SharingOptions) {
     this.now = options.now ?? (() => new Date().toISOString());
@@ -136,8 +167,6 @@ export class Sharing {
       service.access.current(),
       service.projects.getProject(input.sharedProjectId),
     ]);
-    // Another connect may have finished while the service was being asked.
-    this.assertFree(input, service);
     const link: SharedProjectLink = {
       projectId: input.projectId,
       sharedProjectId: shared.id,
@@ -146,8 +175,13 @@ export class Sharing {
       service: service.address,
       connectedAt: this.now(),
     };
+    // Whatever an earlier connection left behind belongs to another moment of this board.
+    await new BoardStore(this.boardFolder(link)).remove();
+    // Another connect may have finished while the service was being asked.
+    this.assertFree(input, service);
     (this.options.state().sharedProjectLinks ??= []).push(link);
     await this.options.changed();
+    await this.syncBoards();
     return link;
   }
 
@@ -158,13 +192,146 @@ export class Sharing {
       (link) => link.projectId !== projectId,
     );
     if (kept.length === (state.sharedProjectLinks ?? []).length) return;
+    const running = this.boards.get(projectId);
+    this.boards.delete(projectId);
+    await running?.sync.stop();
+    for (const link of state.sharedProjectLinks ?? [])
+      if (link.projectId === projectId)
+        await new BoardStore(this.boardFolder(link)).remove();
     state.sharedProjectLinks = kept;
+    this.showBoards();
     await this.options.changed();
   }
 
-  close() {
+  /**
+   * Makes board sync run for exactly the projects the signed-in person has
+   * connected to the sharing service in use. For when MemCode starts, and when
+   * the sign-in, the addresses or the links change.
+   */
+  syncBoards(): Promise<void> {
+    const matched = this.matching.then(() => this.matchBoardsToLinks());
+    this.matching = matched.catch((problem) =>
+      console.error("Board sync could not be started:", problem),
+    );
+    return this.matching;
+  }
+
+  /** The workspace was saved. Changes made on this computer to connected boards are found now. */
+  async workspaceSaved(): Promise<void> {
+    const projects = this.options.state().projects;
+    await Promise.all(
+      [...this.boards.values()].map(({ link, sync }) =>
+        projects.some((project) => project.id === link.projectId)
+          ? sync
+              .capture()
+              .catch((problem) =>
+                console.error("A board change was not picked up:", problem),
+              )
+          : undefined,
+      ),
+    );
+  }
+
+  /** The person said to keep both boards: theirs is added to the shared one. */
+  async keepBoth(projectId: string): Promise<void> {
+    const running = this.boards.get(projectId);
+    if (!running) throw new Error("This project's board is not being shared.");
+    await running.sync.keepBoth();
+  }
+
+  /** Who a comment written in a connected project is by: the person signed in to Memtrace. */
+  author(projectId: string): StoryAuthor | undefined {
+    const running = this.boards.get(projectId);
+    if (!running) return undefined;
+    const { accountId } = running.link;
+    return {
+      id: accountId,
+      name: running.sync.nameOf(accountId) ?? "You",
+      source: "memtrace",
+    };
+  }
+
+  async close(): Promise<void> {
+    await this.matching;
+    const running = [...this.boards.values()];
+    this.boards.clear();
+    await Promise.all(running.map(({ sync }) => sync.stop()));
+    this.closeService();
+  }
+
+  private closeService() {
     this.service?.channel.close();
     this.service = undefined;
+  }
+
+  private boardFolder(link: SharedProjectLink) {
+    return join(this.options.boardsFolder, folderOf(link));
+  }
+
+  private async matchBoardsToLinks(): Promise<void> {
+    const state = this.options.state();
+    let service: Service | null = null;
+    try {
+      service = this.serviceInUse();
+    } catch {
+      // An address that cannot be used: nothing is synchronized, and the Sharing view says why.
+    }
+    const session = service
+      ? await this.options.session().catch(() => null)
+      : null;
+    const wanted = (state.sharedProjectLinks ?? []).filter(
+      (link) =>
+        link.service === service?.address &&
+        link.accountId === session?.accountId &&
+        state.projects.some(
+          (project) => project.id === link.projectId && !project.example,
+        ),
+    );
+    for (const [projectId, running] of this.boards) {
+      const stays = wanted.some(
+        (link) =>
+          link.projectId === projectId &&
+          link.sharedProjectId === running.link.sharedProjectId &&
+          running.service === service,
+      );
+      if (stays) continue;
+      this.boards.delete(projectId);
+      await running.sync.stop();
+    }
+    for (const link of wanted)
+      if (!this.boards.has(link.projectId)) this.startBoard(link, service!);
+    this.showBoards();
+  }
+
+  private startBoard(link: SharedProjectLink, service: Service): void {
+    const sync = new BoardSync({
+      projectId: link.projectId,
+      sharedProjectId: link.sharedProjectId,
+      folder: this.boardFolder(link),
+      state: this.options.state,
+      boards: service.boards,
+      saveWorkspace: this.options.saveWorkspace,
+      shown: () => this.showBoards(),
+      people: async () => {
+        const shared = await service.projects.getProject(link.sharedProjectId);
+        return new Map(
+          [shared.owner, ...shared.guests].map((person) => [
+            person.accountId,
+            person.name,
+          ]),
+        );
+      },
+    });
+    this.boards.set(link.projectId, { link, service, sync });
+    sync.start();
+  }
+
+  /** Puts how each board stands where the window reads it. */
+  private showBoards(): void {
+    this.options.state().sharedBoards = [...this.boards.values()].map(
+      ({ sync }) => sync.status(),
+    );
+    this.options.shown?.();
   }
 
   private assertFree(
@@ -210,7 +377,7 @@ export class Sharing {
       settings?.tokenUrl ?? "",
     ]);
     if (this.service?.settingsKey === settingsKey) return this.service;
-    this.close();
+    this.closeService();
     let addresses: ReturnType<typeof sharingAddresses>;
     try {
       addresses = sharingAddresses(settings);
@@ -225,12 +392,14 @@ export class Sharing {
       tokenEndpoint: () => tokenEndpoint,
       fetcher: this.options.fetcher,
     });
+    const calls = new SignedCalls(channel, access);
     this.service = {
       settingsKey,
       address: memsync.href,
       channel,
       access,
-      projects: new MemsyncProjects(new SignedCalls(channel, access)),
+      projects: new MemsyncProjects(calls),
+      boards: new MemsyncBoards(calls),
     };
     return this.service;
   }

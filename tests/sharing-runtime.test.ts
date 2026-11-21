@@ -7,13 +7,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRuntime } from "../runtime/app";
 import type { BetaCredentials, BetaStoredState } from "../runtime/beta";
-import type { AppState, Project } from "../src/shared";
+import type { AppState, Project, WorkItem } from "../src/shared";
+import type { StoryComment } from "../src/story-comments";
 import type { SharingOverview } from "../src/sharing";
 import { refusalSentences } from "../src/sharing-refusals";
 import { signedInBetaStore } from "./support/beta-session";
 import { actingAs } from "./support/memsync-owner";
+import { until } from "./support/board-computers";
 import {
   startStandInMemsync,
+  type StandInMemsync,
   type StandInPerson,
 } from "./support/memsync-stand-in";
 import { cast } from "./support/projects-api-scenarios";
@@ -70,10 +73,13 @@ async function tokenEndpointFor(
 }
 
 /** The whole local runtime, signed in to the beta, beside a stand-in memtrace.io and sharing service. */
-async function fixture(signedIn = true) {
+async function fixture(
+  signedIn = true,
+  beside?: { service: StandInMemsync; people: ReturnType<typeof cast> },
+) {
   const root = await mkdtemp(join(tmpdir(), "memcode-sharing-runtime-"));
-  const service = await startStandInMemsync();
-  const people = cast();
+  const service = beside?.service ?? (await startStandInMemsync());
+  const people = beside?.people ?? cast();
   const me: StandInPerson = people.alex;
   const stored: BetaStoredState = signedIn
     ? signedInBetaStore(
@@ -147,7 +153,7 @@ async function fixture(signedIn = true) {
     async close() {
       await runtime.current.close();
       await tokens.close();
-      await service.close();
+      if (!beside) await service.close();
       await rm(root, { recursive: true, force: true });
     },
   };
@@ -361,5 +367,139 @@ test("connecting through sharing makes no Team room, and Team's own requests are
     assert.equal(f.state().team?.length ?? 0, 0);
   } finally {
     await f.close();
+  }
+});
+
+test("a board connected on two computers of one person follows what is done in the app on either", async () => {
+  const mac = await fixture();
+  const pc = await fixture(true, mac);
+  const tasksOf = (f: typeof mac) =>
+    f.state().tasks.filter((task) => task.projectId === "local-web");
+  const boardOf = (f: typeof mac) => f.state().sharedBoards?.[0];
+  try {
+    for (const f of [mac, pc])
+      await f.saveAddresses({
+        memsyncUrl: f.service.address.href,
+        tokenUrl: f.tokens.url,
+      });
+    // The Mac has a goal with two tasks, made in the app.
+    const goal = await mac.request<{ id: string }>("epic:create", {
+      projectId: "local-web",
+      title: "Customers can export reports",
+      description: "As CSV and as PDF.",
+      phase: "now",
+    });
+    const made: WorkItem[] = [];
+    for (const title of ["Export as CSV", "Export as PDF"])
+      made.push(
+        await mac.request<WorkItem>("task:create", {
+          projectId: "local-web",
+          title,
+          description: `What “${title}” means.`,
+          priority: "medium",
+          harness: mac.state().settings.defaultHarness,
+          epicId: goal.id,
+        }),
+      );
+    const shared = await mac.website(mac.me).startProject("Website");
+    await mac.request("sharing:connect", {
+      projectId: "local-web",
+      sharedProjectId: shared,
+    });
+    await until(() => boardOf(mac)?.state === "synced", "the Mac's board");
+    assert.ok(mac.service.boards.log(shared).length > 0);
+
+    // The PC connects its own, empty project to the same shared project.
+    await pc.request("sharing:connect", {
+      projectId: "local-web",
+      sharedProjectId: shared,
+    });
+    await until(
+      () => tasksOf(pc).length === 2 && boardOf(pc)?.state === "synced",
+      "the PC to take the board",
+    );
+    assert.deepEqual(
+      tasksOf(pc).map((task) => [task.identifier, task.title, task.epicId]),
+      made.map((task) => [task.identifier, task.title, goal.id]),
+    );
+    // It is in the PC's workspace file, and the window was told.
+    const onDisk = JSON.parse(
+      await readFile(join(pc.root, "profile", "workspace.json"), "utf8"),
+    ) as AppState;
+    assert.equal(
+      onDisk.tasks.filter((task) => task.projectId === "local-web").length,
+      2,
+    );
+    assert.equal(onDisk.sharedProjectLinks![0].applied, 1);
+    assert.ok(pc.emitted.includes("workspace:state"));
+
+    // Work goes on from the PC: a task is moved and renamed, and a comment is written.
+    await pc.request("task:update", {
+      id: made[0].id,
+      patch: { title: "Export as CSV, continued on the PC", stage: "working" },
+    });
+    const comment = await pc.request<StoryComment>("story-comment:add", {
+      taskId: made[0].id,
+      text: "Picked this up on the PC.",
+    });
+    assert.deepEqual(comment.author, {
+      id: pc.me.accountId,
+      name: pc.me.name,
+      source: "memtrace",
+    });
+    await until(
+      () =>
+        tasksOf(mac).find((task) => task.id === made[0].id)?.stage ===
+          "working" && (mac.state().storyComments ?? []).length === 1,
+      "the Mac to see what was done on the PC",
+    );
+    const onMac = tasksOf(mac).find((task) => task.id === made[0].id)!;
+    assert.equal(onMac.title, "Export as CSV, continued on the PC");
+    assert.deepEqual(mac.state().storyComments![0].author, comment.author);
+    assert.equal(
+      mac.state().storyComments![0].text,
+      "Picked this up on the PC.",
+    );
+    // The person may change their own comment from the other computer.
+    await mac.request("story-comment:edit", {
+      taskId: made[0].id,
+      id: comment.id,
+      text: "Picked this up on the PC, finished on the Mac.",
+    });
+    await until(
+      () =>
+        pc.state().storyComments?.[0].text ===
+        "Picked this up on the PC, finished on the Mac.",
+      "the PC to see the comment change",
+    );
+
+    // The PC is restarted. What the Mac does meanwhile is there afterwards.
+    await pc.restart();
+    await mac.request("task:update", {
+      id: made[1].id,
+      patch: { title: "Export as PDF, while the PC was off" },
+    });
+    await until(
+      () =>
+        tasksOf(pc).find((task) => task.id === made[1].id)?.title ===
+        "Export as PDF, while the PC was off",
+      "the restarted PC to catch up",
+    );
+
+    // Disconnecting on the PC leaves the board there and the Mac alone.
+    await pc.request("sharing:disconnect", { projectId: "local-web" });
+    assert.deepEqual(pc.state().sharedBoards, []);
+    assert.equal(tasksOf(pc).length, 2);
+    await assert.rejects(
+      pc.request("sharing:keep-both", { projectId: "local-web" }),
+      /not being shared/,
+    );
+    await assert.rejects(
+      pc.request("sharing:keep-both", {}),
+      /expected string/,
+    );
+  } finally {
+    await pc.close();
+    await mac.close();
   }
 });

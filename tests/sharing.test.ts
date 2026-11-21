@@ -1,5 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { initialState } from "../src/seed";
 import type { AppState, Project } from "../src/shared";
 import type { SharingOverview } from "../src/sharing";
@@ -10,6 +13,7 @@ import {
   type StandInMemsync,
   type StandInPerson,
 } from "./support/memsync-stand-in";
+import { giveWork, task, until } from "./support/board-computers";
 import { actingAs } from "./support/memsync-owner";
 import { cast } from "./support/projects-api-scenarios";
 
@@ -28,9 +32,12 @@ const encoded = (value: unknown) =>
   Buffer.from(JSON.stringify(value)).toString("base64url");
 
 /** MemCode's sharing with a sign-in the test controls, a stand-in memtrace.io and a stand-in service. */
-async function fixture() {
-  const service = await startStandInMemsync();
-  const people = cast();
+async function fixture(beside?: {
+  service: StandInMemsync;
+  people: ReturnType<typeof cast>;
+}) {
+  const service = beside?.service ?? (await startStandInMemsync());
+  const people = beside?.people ?? cast();
   const state: AppState = initialState();
   state.projects.push(
     localProject("local-web", "website"),
@@ -47,9 +54,34 @@ async function fixture() {
     admitAt: service as StandInMemsync,
   };
   let serial = 0;
+  const issueToken = (async (url) => {
+    world.exchanges.push(String(url));
+    if (world.tokenEndpointStatus !== 200)
+      return new Response("{}", { status: world.tokenEndpointStatus });
+    const token = [
+      encoded({ alg: "EdDSA", typ: "JWT" }),
+      encoded({ sub: world.signedIn!.accountId, serial: ++serial }),
+      "c2lnbmF0dXJl",
+    ].join(".");
+    world.admitAt.admit(token, world.signedIn!);
+    return Response.json({
+      access_token: token,
+      token_type: "Bearer",
+      expires_in: 600,
+    });
+  }) as typeof fetch;
+  const boardsFolder = await mkdtemp(join(tmpdir(), "memcode-sharing-"));
   const sharing = new Sharing({
     state: () => state,
-    changed: async () => void world.saves++,
+    changed: async () => {
+      world.saves++;
+      await sharing.workspaceSaved();
+    },
+    boardsFolder,
+    saveWorkspace: async (first) => {
+      await first();
+      world.saves++;
+    },
     session: async () =>
       world.signedIn && {
         refreshToken: "refresh-" + "r".repeat(40),
@@ -58,22 +90,7 @@ async function fixture() {
         accountId: world.signedIn.accountId,
       },
     now: () => at,
-    fetcher: (async (url) => {
-      world.exchanges.push(String(url));
-      if (world.tokenEndpointStatus !== 200)
-        return new Response("{}", { status: world.tokenEndpointStatus });
-      const token = [
-        encoded({ alg: "EdDSA", typ: "JWT" }),
-        encoded({ sub: world.signedIn!.accountId, serial: ++serial }),
-        "c2lnbmF0dXJl",
-      ].join(".");
-      world.admitAt.admit(token, world.signedIn!);
-      return Response.json({
-        access_token: token,
-        token_type: "Bearer",
-        expires_in: 600,
-      });
-    }) as typeof fetch,
+    fetcher: issueToken,
   });
   const as = (person: StandInPerson) =>
     actingAs(service.address, service.tokenFor(person));
@@ -84,12 +101,45 @@ async function fixture() {
     world,
     sharing,
     as,
+    boardsFolder,
+    /** MemCode is started again on the same profile: what was kept is still there. */
+    restarted: () =>
+      new Sharing({
+        state: () => state,
+        changed: async () => void world.saves++,
+        boardsFolder,
+        saveWorkspace: async (first) => {
+          await first();
+          world.saves++;
+        },
+        session: async () =>
+          world.signedIn && {
+            refreshToken: "refresh-" + "r".repeat(40),
+            deviceId: "device-1234567890abcdef",
+            sessionId: world.sessionId,
+            accountId: world.signedIn.accountId,
+          },
+        fetcher: issueToken,
+      }),
     close: async () => {
-      sharing.close();
-      await service.close();
+      await sharing.close();
+      if (!beside) await service.close();
+      await rm(boardsFolder, { recursive: true, force: true });
     },
   };
 }
+/** Waits until board sync has nothing left to do for the connected projects. */
+const boardsSynced = (
+  f: { state: AppState },
+  boards: number,
+  state = "synced",
+) =>
+  until(
+    () =>
+      f.state.sharedBoards?.length === boards &&
+      f.state.sharedBoards.every((board) => board.state === state),
+    () => `the boards to be ${state}: ${JSON.stringify(f.state.sharedBoards)}`,
+  );
 type Ready = Extract<SharingOverview, { state: "ready" }>;
 const ready = (overview: SharingOverview): Ready => {
   assert.equal(overview.state, "ready", JSON.stringify(overview));
@@ -427,6 +477,16 @@ test("disconnecting forgets the link on this computer and asks the service nothi
       projectId: "local-app",
       sharedProjectId: website,
     });
+    // Board sync has read both logs and asked who is on the projects.
+    await boardsSynced(f, 2);
+    await until(
+      () =>
+        ["local-web", "local-app"].every(
+          (id) => f.sharing.author(id)?.name === alex.name,
+        ),
+      "board sync to know who is on the projects",
+    );
+    await until(() => f.service.boards.watching === 2, "both to be listening");
     const asked = f.service.calls.length;
     await f.sharing.disconnect("local-web");
     assert.deepEqual(
@@ -479,5 +539,237 @@ test("a new sharing address in Settings is used from the next call on", async ()
   } finally {
     await f.close();
     await elsewhere.close();
+  }
+});
+
+test("connecting writes the project's board to the shared project, and the person's second computer takes it", async () => {
+  const mac = await fixture();
+  const pc = await fixture(mac);
+  const { alex } = mac.people;
+  try {
+    giveWork(mac.state, "local-web");
+    const shared = await mac.as(alex).startProject("Website");
+    await mac.sharing.connect({
+      projectId: "local-web",
+      sharedProjectId: shared,
+    });
+    await boardsSynced(mac, 1);
+    assert.equal(mac.state.sharedBoards![0].projectId, "local-web");
+    assert.ok(mac.service.boards.log(shared).length > 0);
+    assert.deepEqual(await readdir(mac.boardsFolder), [
+      (await readdir(mac.boardsFolder))[0],
+    ]);
+
+    await pc.sharing.connect({
+      projectId: "local-app",
+      sharedProjectId: shared,
+    });
+    await boardsSynced(pc, 1);
+    const taken = pc.state.tasks.filter((one) => one.projectId === "local-app");
+    assert.deepEqual(taken.map((one) => one.title).sort(), [
+      "Export as CSV",
+      "Export as PDF",
+    ]);
+    // The second computer saved the workspace with the board in it, as one change.
+    assert.equal(pc.state.sharedProjectLinks![0].applied, 1);
+
+    // A change made on the Mac after a save of its workspace reaches the PC.
+    mac.state.tasks.find((one) => one.id === "task-2")!.title =
+      "Export as PDF/A";
+    await mac.sharing.workspaceSaved();
+    await until(
+      () =>
+        pc.state.tasks.find((one) => one.id === "task-2")?.title ===
+        "Export as PDF/A",
+      "the PC to see the change",
+    );
+  } finally {
+    await pc.close();
+    await mac.close();
+  }
+});
+
+test("a comment written in a connected project is by the person signed in to Memtrace", async () => {
+  const f = await fixture();
+  const { alex } = f.people;
+  try {
+    assert.equal(f.sharing.author("local-web"), undefined);
+    const shared = await f.as(alex).startProject("Website");
+    await f.sharing.connect({
+      projectId: "local-web",
+      sharedProjectId: shared,
+    });
+    await boardsSynced(f, 1);
+    await until(
+      () => f.sharing.author("local-web")?.name === alex.name,
+      "the name of the person signed in",
+    );
+    assert.deepEqual(f.sharing.author("local-web"), {
+      id: alex.accountId,
+      name: alex.name,
+      source: "memtrace",
+    });
+    assert.equal(f.sharing.author("local-app"), undefined);
+  } finally {
+    await f.close();
+  }
+});
+
+test("disconnecting ends sync for the board and forgets what was kept for it", async () => {
+  const f = await fixture();
+  const { alex } = f.people;
+  try {
+    giveWork(f.state, "local-web");
+    const shared = await f.as(alex).startProject("Website");
+    await f.sharing.connect({
+      projectId: "local-web",
+      sharedProjectId: shared,
+    });
+    await boardsSynced(f, 1);
+    assert.equal((await readdir(f.boardsFolder)).length, 1);
+    const logged = f.service.boards.log(shared).length;
+
+    await f.sharing.disconnect("local-web");
+    assert.deepEqual(f.state.sharedBoards, []);
+    assert.deepEqual(await readdir(f.boardsFolder), []);
+    assert.equal(f.service.boards.watching, 0);
+    // The board stays on this computer, and what changes on it now goes nowhere.
+    assert.equal(
+      f.state.tasks.filter((one) => one.projectId === "local-web").length,
+      2,
+    );
+    f.state.tasks.find((one) => one.id === "task-1")!.title = "Mine alone";
+    await f.sharing.workspaceSaved();
+    assert.equal(f.service.boards.log(shared).length, logged);
+    await assert.rejects(f.sharing.keepBoth("local-web"), /not being shared/);
+  } finally {
+    await f.close();
+  }
+});
+
+test("a board is synchronized only for the account that connected it, on the service it was connected at", async () => {
+  const f = await fixture();
+  const { alex, dana } = f.people;
+  try {
+    giveWork(f.state, "local-web");
+    const shared = await f.as(alex).startProject("Website");
+    await f.sharing.connect({
+      projectId: "local-web",
+      sharedProjectId: shared,
+    });
+    await boardsSynced(f, 1);
+    const logged = f.service.boards.log(shared).length;
+
+    // Someone else signs in to Memtrace on this computer.
+    f.world.signedIn = dana;
+    await f.sharing.syncBoards();
+    assert.deepEqual(f.state.sharedBoards, []);
+    f.state.tasks.find((one) => one.id === "task-1")!.title =
+      "While Dana was signed in";
+    await f.sharing.workspaceSaved();
+    assert.equal(f.service.boards.log(shared).length, logged);
+
+    // Nobody is signed in.
+    f.world.signedIn = null;
+    await f.sharing.syncBoards();
+    assert.deepEqual(f.state.sharedBoards, []);
+
+    // Alex signs in again: the board takes up where it stopped, with the change made meanwhile.
+    f.world.signedIn = alex;
+    await f.sharing.syncBoards();
+    await boardsSynced(f, 1);
+    assert.equal(f.service.boards.log(shared).length, logged + 1);
+
+    // The sharing addresses are taken out of Settings.
+    f.state.settings.sharing = undefined;
+    await f.sharing.syncBoards();
+    assert.deepEqual(f.state.sharedBoards, []);
+    assert.equal(f.state.sharedProjectLinks!.length, 1);
+  } finally {
+    await f.close();
+  }
+});
+
+test("boards connected on an earlier run are synchronized again when MemCode starts", async () => {
+  const f = await fixture();
+  const { alex } = f.people;
+  try {
+    giveWork(f.state, "local-web");
+    const shared = await f.as(alex).startProject("Website");
+    await f.sharing.connect({
+      projectId: "local-web",
+      sharedProjectId: shared,
+    });
+    await boardsSynced(f, 1);
+    const logged = f.service.boards.log(shared).length;
+    await f.sharing.close();
+    f.state.sharedBoards = [
+      { ...f.state.sharedBoards![0], state: "offline", detail: "left over" },
+    ];
+
+    const again = f.restarted();
+    try {
+      f.state.tasks.push(
+        task("local-web", "task-3", { title: "Made while MemCode was closed" }),
+      );
+      await again.syncBoards();
+      await boardsSynced(f, 1);
+      assert.equal(f.state.sharedBoards![0].detail, undefined);
+      assert.equal(f.service.boards.log(shared).length, logged + 1);
+    } finally {
+      await again.close();
+    }
+  } finally {
+    await f.close();
+  }
+});
+
+test("when both boards have work, nothing is added until the person says to keep both", async () => {
+  const mac = await fixture();
+  const laptop = await fixture(mac);
+  const { alex, dana } = mac.people;
+  try {
+    laptop.world.signedIn = dana;
+    giveWork(mac.state, "local-web");
+    const shared = await mac.as(alex).startProject("Website");
+    const invitation = await mac.as(alex).invite(shared, dana.email!);
+    await laptop.sharing.acceptInvitation({
+      projectId: shared,
+      invitationId: invitation,
+    });
+    await mac.sharing.connect({
+      projectId: "local-web",
+      sharedProjectId: shared,
+    });
+    await boardsSynced(mac, 1);
+    const logged = mac.service.boards.log(shared).length;
+
+    laptop.state.tasks.push(
+      task("local-app", "dana-1", { title: "Dana's own" }),
+    );
+    await laptop.sharing.connect({
+      projectId: "local-app",
+      sharedProjectId: shared,
+    });
+    await boardsSynced(laptop, 1, "choose");
+    assert.deepEqual(laptop.state.sharedBoards![0].choice, {
+      shared: 2,
+      added: 1,
+    });
+    assert.equal(mac.service.boards.log(shared).length, logged);
+
+    await laptop.sharing.keepBoth("local-app");
+    await boardsSynced(laptop, 1);
+    await until(
+      () => mac.state.tasks.some((one) => one.id === "dana-1"),
+      "the Mac to get Dana's task",
+    );
+    assert.equal(
+      laptop.state.tasks.filter((one) => one.projectId === "local-app").length,
+      3,
+    );
+  } finally {
+    await laptop.close();
+    await mac.close();
   }
 });
