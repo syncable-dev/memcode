@@ -205,7 +205,6 @@ const render = (
       busy: extra.busy ?? "",
       error: extra.error ?? "",
       ...actions,
-      onKeepBoth() {},
     }),
   );
 const text = (markup: string) =>
@@ -240,7 +239,6 @@ test("a connected project says so, says how its board stands, and offers to disc
   assert.match(page, /Disconnect/);
   // A project that is connected is not offered a second shared project.
   assert.doesNotMatch(page, /Connect website/);
-  assert.doesNotMatch(page, /Keep both/);
 
   assert.match(connected({ state: "starting" }), /Reading the shared board/);
   assert.match(
@@ -278,45 +276,22 @@ test("while the service cannot be reached, the page says so and how many changes
   assert.doesNotMatch(nothingWaiting, /kept on this computer/);
 });
 
-test("two boards that both have work ask before anything is added, and say what keeping both does", () => {
-  const page = text(
-    render(
-      ready(),
-      shown({
-        sharedProjectLinks: [link()],
-        sharedBoards: [
-          board({ state: "choose", choice: { shared: 30, added: 12 } }),
-        ],
-      }),
-    ),
+test("two boards that both have work are said to stay two, with what to do about it", () => {
+  const page = connected({ state: "apart" });
+  assert.match(
+    page,
+    /website has tasks of its own, and Launch plan already has a board\. Two boards are never made into one\./,
   );
   assert.match(
     page,
-    /Launch plan already has 30 tasks, and website has 12 of its own/,
+    /To join Launch plan, connect a project that has no tasks yet\./,
   );
   assert.match(
     page,
-    /Keeping both adds them to Launch plan\. Nothing is replaced/,
+    /To share website, start a new shared project for it at memtrace\.io\./,
   );
-  assert.match(page, /Keep both/);
   assert.match(page, /Disconnect/);
-  assert.match(
-    connected({ state: "choose", choice: { shared: 1, added: 1 } }),
-    /already has 1 task, and website has 1 of its own/,
-  );
-  // While something is running, the button waits like every other.
-  const busy = render(
-    ready(),
-    shown({
-      sharedProjectLinks: [link()],
-      sharedBoards: [
-        board({ state: "choose", choice: { shared: 2, added: 2 } }),
-      ],
-    }),
-    website,
-    { busy: "keep-both" },
-  );
-  assert.match(busy, /disabled=""[^>]*>(<svg[^>]*>.*?<\/svg>)?Keep both/s);
+  assert.doesNotMatch(page, /Keep both|The board is in sync/);
 });
 
 test("changes that could not be read are named by person and day, and never stop the rest", () => {

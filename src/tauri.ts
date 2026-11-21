@@ -208,8 +208,6 @@ export async function installNativeBridge(): Promise<void> {
     connectSharedProject: (input) => call("sharing:connect", input),
     disconnectSharedProject: (projectId) =>
       call("sharing:disconnect", { projectId }),
-    keepBothSharedBoards: (projectId) =>
-      call("sharing:keep-both", { projectId }),
     openSharedProjectsPage: () => call("sharing:manage"),
     teamsList: () => call("team:list"),
     createTeamWorkspace: (input) => call("team:create-workspace", input),
