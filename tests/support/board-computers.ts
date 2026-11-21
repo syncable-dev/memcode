@@ -202,6 +202,8 @@ export async function computer(
       return sync!;
     },
     isOffline: false,
+    /** The service takes calls and never answers them, as on a network that drops everything. */
+    isSilent: false,
     /** How many of the next saves of the workspace fail, as on a full disk. */
     failingSaves: 0,
     /** Run after the workspace file was written and before board sync hears of it. */
@@ -273,6 +275,7 @@ export async function computer(
           return signedIn.boards.append(project, updates);
         },
         async readAfter(project, sequence) {
+          if (self.isSilent) return new Promise<never>(() => {});
           if (self.isOffline) throw unreachable();
           self.reads.push(sequence);
           return signedIn.boards.readAfter(project, sequence);
