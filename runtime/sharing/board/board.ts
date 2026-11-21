@@ -288,6 +288,46 @@ function customValues(set: Record<string, Json> | undefined) {
   return Object.keys(values).length ? values : undefined;
 }
 
+const positive: Read<number> = (value) =>
+  Number.isInteger(value) && (value as number) > 0
+    ? (value as number)
+    : undefined;
+/** What each part of a comment's reference may be. A part that is not listed makes it no reference. */
+const referenceParts: Record<string, Read<unknown>> = {
+  kind: oneOf("file", "artifact", "changes", "terminal"),
+  name: line(240),
+  quote: wording(20000),
+  path: (value) =>
+    typeof value === "string" && isPortablePath(value) ? value : undefined,
+  resultId: line(250),
+  revision: line(200),
+  line: positive,
+  endLine: positive,
+  page: positive,
+  sheet: line(200),
+  range: line(100),
+  selector: line(1000),
+};
+
+/** What a comment points at, when the board holds exactly what MemCode writes there. */
+function referenceFrom(value: Json | undefined): StoryComment["reference"] {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    return undefined;
+  const parts = Object.entries(value);
+  const usable = parts.every(
+    ([name, part]) => referenceParts[name]?.(part) !== undefined,
+  );
+  const { kind, name, quote } = value;
+  if (
+    !usable ||
+    kind === undefined ||
+    name === undefined ||
+    quote === undefined
+  )
+    return undefined;
+  return value as unknown as StoryComment["reference"];
+}
+
 /** The shared part of a task as the board has it. Nothing when the board has no usable task there. */
 function taskFromBoard(
   projectId: string,
@@ -530,10 +570,7 @@ function applyComments(
       taskId,
       text,
       parentId: parentId ?? undefined,
-      reference:
-        fields.reference && typeof fields.reference === "object"
-          ? (fields.reference as unknown as StoryComment["reference"])
-          : undefined,
+      reference: referenceFrom(fields.reference),
       updatedAt: stamp?.changedAt ?? options.at,
       deletedAt: undefined,
     };
