@@ -53,6 +53,7 @@ const refusals = {
   no_such_guest: grpcStatus.NOT_FOUND,
   only_the_owner_invites: grpcStatus.PERMISSION_DENIED,
   not_the_owner: grpcStatus.PERMISSION_DENIED,
+  the_owner_cannot_leave: grpcStatus.FAILED_PRECONDITION,
   guest_limit_reached: grpcStatus.RESOURCE_EXHAUSTED,
   already_on_project: grpcStatus.ALREADY_EXISTS,
   already_invited: grpcStatus.ALREADY_EXISTS,
@@ -254,6 +255,17 @@ export async function startStandInMemsync() {
       boards.recheckWatchers();
       cards.recheckWatchers();
       return projectMessage(project);
+    },
+    LeaveProject({ project_id }, caller) {
+      const project = sharedWith(project_id, caller);
+      if (project.owner.accountId === caller.accountId)
+        refuse("the_owner_cannot_leave");
+      project.guests = project.guests.filter(
+        (guest) => guest.accountId !== caller.accountId,
+      );
+      boards.recheckWatchers();
+      cards.recheckWatchers();
+      return {};
     },
     DeleteProject({ project_id }, caller) {
       const deleted = ownedBy(project_id, caller, "not_the_owner").id;

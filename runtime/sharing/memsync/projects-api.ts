@@ -41,6 +41,16 @@ export interface ProjectsApi {
     projectId: string,
     invitationId: string,
   ): Promise<ProjectRecord>;
+  /** Starts a shared project owned by the caller. */
+  startProject(name: string): Promise<ProjectRecord>;
+  invitePerson(projectId: string, email: string): Promise<InvitationRecord>;
+  cancelInvitation(
+    projectId: string,
+    invitationId: string,
+  ): Promise<ProjectRecord>;
+  removeGuest(projectId: string, accountId: string): Promise<ProjectRecord>;
+  /** A guest leaves a project. The owner cannot. */
+  leaveProject(projectId: string): Promise<void>;
 }
 
 const unreadable = () =>
@@ -121,5 +131,27 @@ export class MemsyncProjects implements ProjectsApi {
   acceptInvitation(projectId: string, invitationId: string) {
     const request = { project_id: projectId, invitation_id: invitationId };
     return this.calls.unary(call("AcceptInvitation"), request, project);
+  }
+  startProject(name: string) {
+    return this.calls.unary(call("StartProject"), { name }, project);
+  }
+  invitePerson(projectId: string, email: string) {
+    const request = { project_id: projectId, email };
+    return this.calls.unary(call("InvitePerson"), request, invitation);
+  }
+  cancelInvitation(projectId: string, invitationId: string) {
+    const request = { project_id: projectId, invitation_id: invitationId };
+    return this.calls.unary(call("CancelInvitation"), request, project);
+  }
+  removeGuest(projectId: string, accountId: string) {
+    const request = { project_id: projectId, account_id: accountId };
+    return this.calls.unary(call("RemoveGuest"), request, project);
+  }
+  async leaveProject(projectId: string) {
+    await this.calls.unary(
+      call("LeaveProject"),
+      { project_id: projectId },
+      () => undefined,
+    );
   }
 }

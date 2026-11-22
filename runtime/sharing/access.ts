@@ -32,7 +32,7 @@ const tokenForm = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
 
 const unexpectedReply = () =>
   new SharingUnavailable(
-    "The sign-in address for sharing did not answer with an access token. Check the address in Settings.",
+    "The sign-in for sharing did not answer with an access token. Try again later.",
   );
 
 function refusedExchange(status: number): Error {
@@ -49,7 +49,7 @@ function refusedExchange(status: number): Error {
       "Sharing is switched off or not set up at memtrace.io right now. Try again later.",
     );
   return new SharingUnavailable(
-    `The sign-in address for sharing answered HTTP ${status}. Check the address in Settings, or try again later.`,
+    `The sign-in for sharing answered HTTP ${status}. Try again later.`,
   );
 }
 

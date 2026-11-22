@@ -24,7 +24,6 @@ import {
   Route,
   Search,
   Settings2,
-  Share2,
   ShieldCheck,
   Sparkles,
   Square,
@@ -75,8 +74,16 @@ import {
 import type { GuideDestination } from "./guide-content";
 import { WorkerConnections } from "./components/WorkerConnections";
 import { TeamOnboarding } from "./components/TeamOnboarding";
-import { SharedProjects } from "./components/SharedProjects";
-import { sharingIsSet } from "./sharing";
+import {
+  NoFolderYet,
+  SHARED_GROUP,
+  ShareButton,
+  SwitcherShared,
+  isSharedHere,
+  offersSharing,
+  useSharingOverview,
+} from "./components/ShareProject";
+import { LocalProjectSetup } from "./components/LocalProjectSetup";
 import "./styles-team.css";
 import "./styles-collaboration.css";
 import "./styles-sharing.css";
@@ -111,14 +118,8 @@ type View =
   | "artifacts"
   | "activity"
   | "docs"
-  | "team"
-  | "sharing";
+  | "team";
 const pageCopy: Record<View, [string, string, string]> = {
-  sharing: [
-    "SHARED PROJECTS",
-    "Projects you share.",
-    "Your shared projects and invitations, and the one this project belongs to.",
-  ],
   team: [
     "BUILD WITH YOUR TEAM",
     "Better together. Still local.",
@@ -213,6 +214,10 @@ export function App() {
   const [toast, setToast] = useState("");
   const [fatal, setFatal] = useState("");
   const [collapsed, setCollapsed] = useState(false);
+  const [folderSetupOpen, setFolderSetupOpen] = useState(false);
+  const sharing = useSharingOverview(
+    betaStatus?.state === "connected" ? betaStatus.account?.id : undefined,
+  );
   const notify = useCallback((message: string) => {
     setToast(message);
   }, []);
@@ -619,10 +624,6 @@ export function App() {
       count: state.team?.find((item) => item.projectId === project.id)
         ?.unreadCount,
     },
-    // Sharing has no service to talk to until its addresses are set, so it is not offered.
-    ...(sharingIsSet(state.settings.sharing)
-      ? [{ id: "sharing" as const, label: "Sharing", icon: Share2 }]
-      : []),
     { id: "docs", label: "Docs", icon: BookOpen },
   ];
   const projectGroups = new Map<string, typeof state.projects>();
@@ -630,9 +631,16 @@ export function App() {
     const shared = state.team?.find((room) => room.projectId === item.id);
     const label = shared
       ? (shared.teamName ?? "Shared preview projects")
-      : "Personal projects";
+      : isSharedHere(state, item.id)
+        ? SHARED_GROUP
+        : "Personal projects";
     projectGroups.set(label, [...(projectGroups.get(label) ?? []), item]);
   }
+  // Shared projects come last, so those not on this computer yet follow them.
+  const switcherGroups = [...projectGroups].sort(
+    ([left], [right]) =>
+      Number(left === SHARED_GROUP) - Number(right === SHARED_GROUP),
+  );
   return (
     <div className={`app-shell ${collapsed ? "sidebar-collapsed" : ""}`}>
       <InstallationGuide />
@@ -686,7 +694,10 @@ export function App() {
           <button
             className={"project-picker " + (projectMenu ? "selected" : "")}
             data-guide="project-picker"
-            onClick={() => setProjectMenu(!projectMenu)}
+            onClick={() => {
+              if (!projectMenu) void sharing.refresh();
+              setProjectMenu(!projectMenu);
+            }}
           >
             <span className="project-avatar">
               <Layers3 size={17} />
@@ -701,7 +712,7 @@ export function App() {
           </button>
           {projectMenu && (
             <div className="project-menu">
-              {[...projectGroups].map(([group, items]) => (
+              {switcherGroups.map(([group, items]) => (
                 <div key={group}>
                   <span className="menu-eyebrow">{group}</span>
                   {items.map((item) => (
@@ -714,7 +725,11 @@ export function App() {
                       }}
                     >
                       <span className="project-avatar small">
-                        <Folder size={14} />
+                        {isSharedHere(state, item.id) ? (
+                          <Users size={14} aria-label="Shared" />
+                        ) : (
+                          <Folder size={14} />
+                        )}
                       </span>
                       <span>
                         {item.name}
@@ -725,6 +740,18 @@ export function App() {
                   ))}
                 </div>
               ))}
+              <SwitcherShared
+                state={state}
+                overview={sharing.overview}
+                act={act}
+                headed={!projectGroups.has(SHARED_GROUP)}
+                onOpened={() => {
+                  setSelectedId(null);
+                  setView("board");
+                  setProjectMenu(false);
+                  void sharing.refresh();
+                }}
+              />
               <div className="menu-divider" />
               <button
                 onClick={() => {
@@ -858,6 +885,22 @@ export function App() {
             >
               <Search size={16} />
             </button>
+            {sharing.overview &&
+              offersSharing(sharing.overview, project, state) && (
+                <ShareButton
+                  state={state}
+                  project={project}
+                  overview={sharing.overview}
+                  setOverview={sharing.setOverview}
+                  yourName={betaStatus?.account?.name}
+                  refresh={sharing.refresh}
+                  notify={notify}
+                  onSignIn={() => {
+                    setSettingsSection("account");
+                    setDialog("settings");
+                  }}
+                />
+              )}
             <BetaAccess
               compact
               notify={notify}
@@ -911,17 +954,24 @@ export function App() {
               }}
             />
           )}
-          {view === "sharing" && (
-            <SharedProjects
-              state={state}
-              project={project}
-              notify={notify}
-              onAccount={() => {
-                setSettingsSection("account");
-                setDialog("settings");
-              }}
-            />
-          )}
+          {view === "board" &&
+            !project.path &&
+            isSharedHere(state, project.id) && (
+              <div className="share-folder">
+                <NoFolderYet
+                  open={folderSetupOpen}
+                  onOpen={() => setFolderSetupOpen((value) => !value)}
+                />
+                {folderSetupOpen && (
+                  <LocalProjectSetup
+                    project={project}
+                    notify={notify}
+                    onWorkers={() => setView("workers")}
+                    onInsights={() => setView("insights")}
+                  />
+                )}
+              </div>
+            )}
           {view === "docs" && (
             <Suspense fallback={<Spinner />}>
               <Docs

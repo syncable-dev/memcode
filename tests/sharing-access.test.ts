@@ -230,6 +230,8 @@ test("memtrace.io's other answers each say what the person can do", async () => 
     await assert.rejects(f.access.current(), (error) => {
       assert.ok(error instanceof SharingUnavailable, `HTTP ${status}`);
       assert.match(error.message, sentence);
+      // memtrace.io names the sign-in address; there is nothing in Settings to check.
+      assert.doesNotMatch(error.message, /Settings/);
       return true;
     });
   }
@@ -281,7 +283,12 @@ test("a reply that is not the token it should be is not used", async () => {
     new Response("<!doctype html><title>Memtrace</title>", {
       headers: { "content-type": "text/html" },
     });
-  await assert.rejects(f.access.current(), SharingUnavailable);
+  await assert.rejects(f.access.current(), (error) => {
+    assert.ok(error instanceof SharingUnavailable);
+    assert.match(error.message, /Try again later/);
+    assert.doesNotMatch(error.message, /Settings/);
+    return true;
+  });
   f.state.answer = async () => new Response("x".repeat(40000));
   await assert.rejects(f.access.current(), SharingUnavailable);
 });
