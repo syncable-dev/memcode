@@ -552,6 +552,20 @@ export interface MemCodeAPI extends CodeReviewAPI {
     sharedProjectId: string;
   }): Promise<import("./sharing").SharedProjectLink>;
   disconnectSharedProject(projectId: string): Promise<void>;
+  /** A card of a shared project was opened or closed: its activity elsewhere is followed while open. */
+  followSharedCard(taskId: string): Promise<void>;
+  unfollowSharedCard(taskId: string): Promise<void>;
+  /** Shares a file a task saved, or its changes, with everyone on the shared project. */
+  shareCardFile(input: {
+    taskId: string;
+    artifactId: string;
+  }): Promise<{ id: string; name: string }>;
+  shareCardChanges(taskId: string): Promise<{ id: string; name: string }>;
+  /** Fetches a file shared from a card, to open it like the card's own. */
+  openSharedCardFile(input: {
+    taskId: string;
+    resultId: string;
+  }): Promise<Artifact>;
   /** Opens the page at memtrace.io where projects are started and people invited. */
   openSharedProjectsPage(): Promise<void>;
   teamsList(): Promise<import("./team-space").TeamDirectory>;

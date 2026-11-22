@@ -622,3 +622,105 @@ test("a board connected on two computers of one person follows what is done in t
     await mac.close();
   }
 });
+
+test("a worker run on the Mac is on the PC's card when it is opened there, and the PC cannot steer it", async () => {
+  const mac = await fixture();
+  const pc = await fixture(true, mac);
+  try {
+    for (const f of [mac, pc])
+      await f.saveAddresses({
+        memsyncUrl: f.service.address.href,
+        tokenUrl: f.tokens.url,
+      });
+    const goal = await mac.request<{ id: string }>("epic:create", {
+      projectId: "local-web",
+      title: "Customers can export reports",
+      description: "",
+      phase: "now",
+    });
+    const made = await mac.request<WorkItem>("task:create", {
+      projectId: "local-web",
+      title: "Export as CSV",
+      description: "Write the CSV export.",
+      priority: "medium",
+      harness: mac.state().settings.defaultHarness,
+      epicId: goal.id,
+    });
+    const shared = await mac.website(mac.me).startProject("Website");
+    await mac.request("sharing:connect", {
+      projectId: "local-web",
+      sharedProjectId: shared,
+    });
+    await pc.request("sharing:connect", {
+      projectId: "local-web",
+      sharedProjectId: shared,
+    });
+    await until(
+      () => pc.state().tasks.some((task) => task.id === made.id),
+      "the PC to have the task",
+    );
+    // The PC opens the card.
+    await pc.request("sharing:follow-card", { taskId: made.id });
+    // A worker runs on the Mac: what it says is saved with the workspace.
+    const onMac = mac.state().tasks.find((task) => task.id === made.id)!;
+    onMac.run = {
+      state: "running",
+      startedAt: new Date().toISOString(),
+      activity: {
+        phase: "reading",
+        label: "Reading",
+        at: new Date().toISOString(),
+      },
+    } as never;
+    onMac.messages.push({
+      id: "reply-1",
+      role: "assistant",
+      text: "Found the export in src/export.ts.",
+      at: new Date().toISOString(),
+    });
+    await mac.request("task:update", {
+      id: made.id,
+      patch: { priority: "high" },
+    });
+    const onPc = () => pc.state().tasks.find((task) => task.id === made.id)!;
+    await until(
+      () =>
+        !!onPc().sharedSession?.messages.some(
+          (message) => message.id === "reply-1",
+        ),
+      "the PC's card to show the Mac's run",
+    );
+    assert.equal(onPc().sharedFromLog, true);
+    assert.equal(onPc().sharedSession!.owner.name, mac.me.name);
+    assert.equal(onPc().sharedSession!.state, "running");
+    assert.equal(onPc().run.state, "idle");
+    assert.ok(pc.emitted.includes("workspace:state"));
+    // The PC reads the run; it cannot send to it, or start its review.
+    await assert.rejects(
+      pc.request("review:send", {
+        taskId: made.id,
+        text: "Also add a header row.",
+      }),
+      /^Error: This worker runs on .+'s (Mac|Windows|Linux)\. Sending to it from here is not available yet\. Comment on the card instead\.$/,
+    );
+    assert.equal(
+      onPc().messages.some((message) => /header row/.test(message.text)),
+      false,
+    );
+    assert.equal(
+      await pc.request("code-review:get", { taskId: made.id }),
+      null,
+    );
+    assert.deepEqual(await pc.request("worker:changes", made.id), {
+      taskId: made.id,
+      checkpoints: [],
+      additions: 0,
+      deletions: 0,
+      files: 0,
+    });
+    await pc.request("sharing:unfollow-card", { taskId: made.id });
+  } finally {
+    await pc.close();
+    await mac.close();
+  }
+});

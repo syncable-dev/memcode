@@ -52,6 +52,26 @@ export function registerSharing(
     z.object({ projectId: id }).strict(),
     ({ projectId }) => sharing.disconnect(projectId),
   );
+  const task = z.object({ taskId: id }).strict();
+  register("sharing:follow-card", task, ({ taskId }) =>
+    sharing.followCard(taskId),
+  );
+  register("sharing:unfollow-card", task, ({ taskId }) =>
+    sharing.unfollowCard(taskId),
+  );
+  register(
+    "sharing:share-result",
+    z.object({ taskId: id, artifactId: id }).strict(),
+    (input) => sharing.shareResult(input),
+  );
+  register("sharing:share-changes", task, ({ taskId }) =>
+    sharing.shareChanges(taskId),
+  );
+  register(
+    "sharing:open-result",
+    z.object({ taskId: id, resultId: id }).strict(),
+    (input) => sharing.openSharedResult(input),
+  );
   // Starting, renaming and deleting a project and inviting people happen at memtrace.io.
   register("sharing:manage", z.undefined(), () =>
     host.call("open_memcode_projects", {}),

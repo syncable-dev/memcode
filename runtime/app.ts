@@ -81,6 +81,7 @@ import { discoverOfficialTeamService } from "./team/discovery";
 import { createBetaAuthorization } from "./beta-auth";
 import { MemCodeBeta, nativeBetaStorage } from "./beta";
 import { Sharing } from "./sharing/sharing";
+import { shareableFile } from "./sharing/cards/files";
 import {
   registerSharing,
   sharingSettingsSchema,
@@ -376,7 +377,11 @@ export async function createRuntime(
         await codeReviews.discuss(item.id, command.reviewRunId!, command.text, {id: command.id, actor: command.author});
       }
     },
-    onWorkerActivity: () => emit("workspace:state", store.state),
+    onWorkerActivity: () => {
+      emit("workspace:state", store.state);
+      // What a worker on a shared project does goes to its card's log as it happens.
+      sharing?.workerActivity();
+    },
     identityProof: teamIdentity,
     identityAvailable: teamIdentity.available,
     serviceDiscovery: () => discoverOfficialTeamService(),
@@ -775,6 +780,14 @@ export async function createRuntime(
     // The workspace is read at this very call, so a board change is saved whole or not at all.
     saveWorkspace: (first) => saved(() => store.save(first)),
     shown: () => emit("workspace:state", store.state),
+    cards: {
+      reviewOf: (taskId) =>
+        codeReviews?.get(taskId).catch(() => null) ?? Promise.resolve(null),
+      shareableFile: (taskId, artifactId) =>
+        shareableFile(store.dir, store.state, taskId, artifactId),
+      changesOf: (taskId) => readDisplayedWorkerChanges(task(taskId)),
+      filesFolder: (taskId) => join(store.dir, "captures", taskId),
+    },
   });
   registerSharing(register, sharing, host);
   register("beta:status", z.undefined(), () => beta!.status());
@@ -1595,7 +1608,10 @@ export async function createRuntime(
     () => preview.publishComments(),
     workers,
     {
-      remoteSend: (item, body) => team?.remoteSession(item.id) ? team.sendSessionCommand(item.id, "followup", body) : Promise.resolve(undefined),
+      remoteSend: (item, body) => {
+        refuseRunElsewhere(item.id);
+        return team?.remoteSession(item.id) ? team.sendSessionCommand(item.id, "followup", body) : Promise.resolve(undefined);
+      },
       actor: (item) => team?.sessionActor(item.projectId),
       edit: async (item, messageId, text, cancel) => {
         if (!team?.remoteSession(item.id) && !item.messages.some(m => m.id === messageId && m.sourceCommandId)) return false;
@@ -1663,6 +1679,14 @@ export async function createRuntime(
   });
   const reviewTask = z.object({ taskId: identifier }).strict();
   const reviewRun = reviewTask.extend({ runId: identifier }).strict();
+  /** A run shown from another computer's card log can be read here, not steered. */
+  const refuseRunElsewhere = (taskId: string) => {
+    if (!sharing?.showsRunElsewhere(taskId)) return;
+    const owner = task(taskId).sharedSession?.owner;
+    throw Error(
+      `This worker runs on ${owner ? `${owner.name}'s ${owner.device}` : "another computer"}. Sending to it from here is not available yet. Comment on the card instead.`,
+    );
+  };
   const requireReviewLane = (taskId: string) => {
     if (!isCodeReviewTask(state(), task(taskId)))
       throw Error(
@@ -1670,11 +1694,14 @@ export async function createRuntime(
       );
   };
   register("code-review:get", reviewTask, ({ taskId }) => {
+    if (sharing?.showsRunElsewhere(taskId))
+      return task(taskId).sharedSession?.review ?? null;
     const remote = team?.remoteSession(taskId);
     return remote ? task(taskId).sharedSession?.review ?? (remote.review ? {...remote.review, taskId} : null) : codeReviews.get(taskId);
   });
   register("code-review:start", reviewTask, async ({ taskId }) => {
     requireReviewLane(taskId);
+    refuseRunElsewhere(taskId);
     const remote = team?.remoteSession(taskId);
     if (remote) {
       await team!.sendSessionCommand(taskId, "review-start", "Run code review for this task's recorded changes.");
@@ -1717,6 +1744,7 @@ export async function createRuntime(
     "code-review:discuss",
     reviewRun.extend({ text: nonempty.max(20000) }).strict(),
     async ({ taskId, runId, text }) => {
+      refuseRunElsewhere(taskId);
       const remote = team?.remoteSession(taskId);
       if (!remote) return codeReviews.discuss(taskId, runId, text);
       await team!.sendSessionCommand(taskId, "review-question", text, runId);
@@ -1930,6 +1958,16 @@ export async function createRuntime(
   );
   register("preview:hide", z.undefined(), () => preview.hide());
   register("worker:changes", identifier, async (id) => {
+    if (sharing?.showsRunElsewhere(id))
+      return (
+        (await sharing.sharedChanges(id)) ?? {
+          taskId: id,
+          checkpoints: [],
+          additions: 0,
+          deletions: 0,
+          files: 0,
+        }
+      );
     const item = task(id);
     let changes = await readDisplayedWorkerChanges(item);
     if (
