@@ -109,6 +109,77 @@ export function projectsApiScenarios(
       }
     });
 
+  scenario(
+    "MemCode starts a project, invites, cancels and removes, and a guest leaves",
+    async (world) => {
+      const people = cast();
+      const alex = signedInTo(world, people.alex),
+        bo = signedInTo(world, people.bo),
+        dana = signedInTo(world, people.dana);
+      try {
+        const started = await alex.projects.startProject("  Website  ");
+        assert.equal(started.name, "Website");
+        assert.deepEqual(started.owner, people.alex);
+        assert.deepEqual(started.guests, []);
+        const toBo = await alex.projects.invitePerson(
+          started.id,
+          people.bo.email!,
+        );
+        assert.equal(toBo.email, people.bo.email);
+        assert.equal(toBo.projectId, started.id);
+        const toDana = await alex.projects.invitePerson(
+          started.id,
+          people.dana.email!,
+        );
+        // A guest place is held by an open invitation: a third is refused.
+        await assert.rejects(
+          alex.projects.invitePerson(started.id, "third@example.com"),
+          refusedBy("guest_limit_reached"),
+        );
+        const cancelled = await alex.projects.cancelInvitation(
+          started.id,
+          toDana.id,
+        );
+        assert.deepEqual(
+          cancelled.openInvitations.map((invitation) => invitation.id),
+          [toBo.id],
+        );
+        await bo.projects.acceptInvitation(started.id, toBo.id);
+        // Only the owner invites and removes; the owner cannot leave.
+        await assert.rejects(
+          bo.projects.invitePerson(started.id, people.dana.email!),
+          refusedBy("only_the_owner_invites"),
+        );
+        await assert.rejects(
+          alex.projects.leaveProject(started.id),
+          refusedBy("the_owner_cannot_leave"),
+        );
+        await bo.projects.leaveProject(started.id);
+        assert.deepEqual(await bo.projects.listProjects(), []);
+        assert.deepEqual(
+          (await alex.projects.getProject(started.id)).guests,
+          [],
+        );
+        // Removed, a guest no longer sees the project.
+        const again = await alex.projects.invitePerson(
+          started.id,
+          people.dana.email!,
+        );
+        await dana.projects.acceptInvitation(started.id, again.id);
+        const without = await alex.projects.removeGuest(
+          started.id,
+          people.dana.accountId,
+        );
+        assert.deepEqual(without.guests, []);
+        assert.deepEqual(await dana.projects.listProjects(), []);
+      } finally {
+        alex.close();
+        bo.close();
+        dana.close();
+      }
+    },
+  );
+
   scenario("someone new has no projects and no invitations", async (world) => {
     const bo = signedInTo(world, cast().bo);
     try {

@@ -182,13 +182,6 @@ pub async fn host_call(app: AppHandle, method: &str, input: Value) -> Result<Val
                 .map_err(|e| e.to_string())??;
             Ok(Value::Null)
         }
-        // The MemCode tab of the Memtrace account: projects are started and people invited there.
-        "open_memcode_projects" => {
-            tauri::async_runtime::spawn_blocking(|| open_claim("https://www.memtrace.io/account?workspace=all&section=memcode"))
-                .await
-                .map_err(|e| e.to_string())??;
-            Ok(Value::Null)
-        }
         "open_path" => {
             let path = input["path"]
                 .as_str()

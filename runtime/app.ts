@@ -81,11 +81,11 @@ import { discoverOfficialTeamService } from "./team/discovery";
 import { createBetaAuthorization } from "./beta-auth";
 import { MemCodeBeta, nativeBetaStorage } from "./beta";
 import { Sharing } from "./sharing/sharing";
+import { sharingFinder } from "./sharing/discovery";
+import type { SharingSettings } from "../src/sharing";
 import { shareableFile } from "./sharing/cards/files";
 import {
   registerSharing,
-  sharingSettingsSchema,
-  sharingSettingsToKeep,
 } from "./sharing/routes";
 import { ManagedMemcodeEngine } from "./managed-engine";
 import { ManagedRetrievalAssistant } from "./context/managed-assistant";
@@ -161,7 +161,11 @@ export async function createRuntime(
   appPath: string,
   host: NativeHost,
   emit: Emit,
-  options?: { discoverHarnesses?: typeof discoverHarnesses },
+  options?: {
+    discoverHarnesses?: typeof discoverHarnesses;
+    /** Where sharing lives. Tests name a stand-in instead of asking memtrace.io. */
+    findSharing?: () => Promise<SharingSettings | undefined>;
+  },
 ) {
   const discover = options?.discoverHarnesses ?? discoverHarnesses;
   const store = new LocalStore(dataDir);
@@ -776,6 +780,25 @@ export async function createRuntime(
     state,
     changed,
     session: () => beta!.sessionProof(),
+    // memtrace.io lists where the sharing service is. No list entry: no sharing.
+    addresses: options?.findSharing ?? sharingFinder(),
+    makeProject: async (name) => {
+      const item: Project = {
+        id: randomUUID(),
+        name: name.slice(0, 80),
+        description: "",
+        // A shared board needs no folder. One is chosen when work starts here.
+        path: null,
+        branch: "main",
+        analysis: "idle",
+        createdAt: now(),
+      };
+      store.state.projects.push(item);
+      initializeCodeReviewWorkflow(store.state, item.id);
+      store.state.activeProjectId = item.id;
+      await changed();
+      return item;
+    },
     boardsFolder: join(store.dir, "shared-boards"),
     // The workspace is read at this very call, so a board change is saved whole or not at all.
     saveWorkspace: (first) => saved(() => store.save(first)),
@@ -789,7 +812,7 @@ export async function createRuntime(
       filesFolder: (taskId) => join(store.dir, "captures", taskId),
     },
   });
-  registerSharing(register, sharing, host);
+  registerSharing(register, sharing);
   register("beta:status", z.undefined(), () => beta!.status());
   register("beta:connect", z.undefined(), () => beta!.connect());
   register("beta:cancel", z.undefined(), () => beta!.cancel());
@@ -1344,7 +1367,6 @@ export async function createRuntime(
         workerPermissionDefaults: workerPermissionDefaults.optional(),
         handoffAttribution: handoffAttributionSchema.optional(),
         automaticUpdateDownloads: z.boolean().optional(),
-        sharing: sharingSettingsSchema.optional(),
         memtracePath: z.string().max(1000),
         speechEndpoint: z.string().max(1000),
         speech: speechSettingsSchema.optional(),
@@ -1367,10 +1389,6 @@ export async function createRuntime(
       .strict(),
     async (settings) => {
       localURL(settings.speechEndpoint);
-      const sharingSettings = sharingSettingsToKeep(
-        settings.sharing,
-        store.state.settings.sharing,
-      );
       if (settings.contextAssistant?.enabled) {
         const helper = settings.contextAssistant;
         if (!helper.model.trim())
@@ -1445,7 +1463,6 @@ export async function createRuntime(
         ...settings,
         dshProfile,
         speech: settings.speech ?? store.state.settings.speech,
-        sharing: sharingSettings,
         contextAssistant:
           settings.contextAssistant ?? store.state.settings.contextAssistant,
         workerPermissionDefaults: state().settings.workerPermissionDefaults,

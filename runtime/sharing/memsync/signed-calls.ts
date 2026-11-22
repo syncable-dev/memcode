@@ -34,7 +34,7 @@ const REFUSAL_HEADER = "memsync-refusal";
 function unavailable(failure: GrpcFailure): SharingUnavailable {
   const serviceAnswered = failure.metadata["grpc-status"] !== undefined;
   let sentence =
-    "The sharing address did not answer as a sharing service. Check it in Settings.";
+    "The address memtrace.io gave for sharing is not a sharing service. Try again later.";
   if (failure.code === grpcStatus.UNAUTHENTICATED)
     sentence =
       "The sharing service did not accept this sign-in. Try again in a few minutes.";

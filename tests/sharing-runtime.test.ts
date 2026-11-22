@@ -9,7 +9,7 @@ import { createRuntime } from "../runtime/app";
 import type { BetaCredentials, BetaStoredState } from "../runtime/beta";
 import type { AppState, Project, WorkItem } from "../src/shared";
 import type { StoryComment } from "../src/story-comments";
-import type { SharingOverview } from "../src/sharing";
+import type { SharingOverview, SharingSettings } from "../src/sharing";
 import { refusalSentences } from "../src/sharing-refusals";
 import { signedInBetaStore } from "./support/beta-session";
 import { actingAs } from "./support/memsync-owner";
@@ -102,6 +102,11 @@ async function fixture(
   );
   const native: string[] = [];
   const emitted: string[] = [];
+  /** What the stand-in memtrace.io lists for sharing. Missing: not offered. */
+  let offered: SharingSettings | undefined = {
+    memsyncUrl: service.address.href,
+    tokenUrl: tokens.url,
+  };
   const start = () =>
     createRuntime(
       join(root, "profile"),
@@ -110,11 +115,11 @@ async function fixture(
         async call<T>(method: string): Promise<T> {
           native.push(method);
           if (method === "beta_store_read") return structuredClone(stored) as T;
-          if (method === "open_memcode_projects") return null as T;
           throw Error("Unexpected native operation " + method);
         },
       },
       (event) => emitted.push(event),
+      { findSharing: async () => offered },
     );
   const runtime = { current: await start() };
   const project: Project = {
@@ -139,11 +144,9 @@ async function fixture(
     emitted,
     request,
     state: () => runtime.current.store.state,
-    saveAddresses: (sharing: { memsyncUrl: string; tokenUrl: string }) =>
-      request("settings:save", {
-        ...runtime.current.store.state.settings,
-        sharing,
-      }),
+    offer: (sharing: SharingSettings | undefined) => {
+      offered = sharing;
+    },
     website: (person: StandInPerson) =>
       actingAs(service.address, service.tokenFor(person)),
     async restart() {
@@ -159,43 +162,36 @@ async function fixture(
   };
 }
 
-test("sharing is absent until its two addresses are saved in Settings", async () => {
+test("sharing is there only while memtrace.io lists it, and nothing about it is typed or kept", async () => {
   const f = await fixture();
   try {
+    f.offer(undefined);
     assert.deepEqual(await f.request("sharing:overview"), { state: "not-set" });
-    assert.equal(f.state().settings.sharing, undefined);
     await assert.rejects(
-      f.saveAddresses({ memsyncUrl: f.service.address.href, tokenUrl: "" }),
-      /both addresses/,
+      f.request("sharing:share", { projectId: "local-web" }),
+      /not available/,
     );
-    await assert.rejects(
-      f.saveAddresses({
-        memsyncUrl: "http://sync.example.com",
-        tokenUrl: f.tokens.url,
-      }),
-      /https:\/\//,
-    );
-    await assert.rejects(
-      f.saveAddresses({
-        memsyncUrl: f.service.address.href,
-        tokenUrl: "https://tokens.example.com/token",
-      }),
-      /only to www\.memtrace\.io/,
-    );
-    assert.equal(f.state().settings.sharing, undefined);
     assert.equal(f.tokens.requests.length, 0);
-    await f.saveAddresses({
-      memsyncUrl: f.service.address.href,
-      tokenUrl: f.tokens.url,
-    });
+    f.offer({ memsyncUrl: "http://sync.example.com", tokenUrl: f.tokens.url });
+    const unsafe = await f.request<SharingOverview>("sharing:overview");
+    assert.equal(unsafe.state, "unavailable");
+    assert.match((unsafe as { detail: string }).detail, /https:\/\//);
+    assert.equal(f.tokens.requests.length, 0);
+    f.offer({ memsyncUrl: f.service.address.href, tokenUrl: f.tokens.url });
     assert.equal(
       (await f.request<SharingOverview>("sharing:overview")).state,
       "ready",
     );
-    // Emptying both fields takes sharing away again, and a later save of other settings keeps that.
-    await f.saveAddresses({ memsyncUrl: " ", tokenUrl: "" });
-    assert.equal(f.state().settings.sharing, undefined);
-    assert.deepEqual(await f.request("sharing:overview"), { state: "not-set" });
+    await assert.rejects(
+      f.request("settings:save", {
+        ...f.state().settings,
+        sharing: { memsyncUrl: "x", tokenUrl: "y" },
+      }),
+    );
+    const saved: AppState = JSON.parse(
+      await readFile(join(f.root, "profile", "workspace.json"), "utf8"),
+    );
+    assert.equal("sharing" in saved.settings, false);
   } finally {
     await f.close();
   }
@@ -205,10 +201,6 @@ test("a signed-in MemCode lists shared projects, accepts an invitation and conne
   const f = await fixture();
   const { dana } = f.people;
   try {
-    await f.saveAddresses({
-      memsyncUrl: f.service.address.href,
-      tokenUrl: f.tokens.url,
-    });
     const mine = await f.website(f.me).startProject("Launch plan");
     const theirs = await f.website(dana).startProject("Website");
     const invitation = await f.website(dana).invite(theirs, f.me.email!);
@@ -270,10 +262,7 @@ test("a signed-in MemCode lists shared projects, accepts an invitation and conne
       await readFile(join(f.root, "profile", "workspace.json"), "utf8"),
     );
     assert.equal(saved.sharedProjectLinks?.[0].sharedProjectId, mine);
-    assert.deepEqual(saved.settings.sharing, {
-      memsyncUrl: f.service.address.href,
-      tokenUrl: f.tokens.url,
-    });
+    assert.equal("sharing" in saved.settings, false);
     // Neither the session nor a token is written to the workspace file or sent to the window.
     const session = (await f.tokens.requests[0]) as { refresh_token: string };
     assert.ok(!JSON.stringify(saved).includes(session.refresh_token));
@@ -311,10 +300,6 @@ test("a signed-in MemCode lists shared projects, accepts an invitation and conne
 test("without a beta sign-in, sharing asks the person to sign in and contacts nobody", async () => {
   const f = await fixture(false);
   try {
-    await f.saveAddresses({
-      memsyncUrl: f.service.address.href,
-      tokenUrl: f.tokens.url,
-    });
     const overview = await f.request<SharingOverview>("sharing:overview");
     assert.equal(overview.state, "signed-out");
     assert.equal(f.tokens.requests.length, 0);
@@ -324,12 +309,19 @@ test("without a beta sign-in, sharing asks the person to sign in and contacts no
   }
 });
 
-test("managing projects opens memtrace.io in the browser, and requests are checked before they run", async () => {
+test("requests are checked before they run", async () => {
   const f = await fixture();
   try {
-    await f.request("sharing:manage");
-    assert.ok(f.native.includes("open_memcode_projects"));
     for (const [method, input] of [
+      ["sharing:manage", undefined],
+      ["sharing:share", {}],
+      ["sharing:invite", { projectId: "local-web", email: "" }],
+      ["sharing:invite", { projectId: "local-web" }],
+      ["sharing:cancel-invitation", { projectId: "local-web" }],
+      ["sharing:remove-person", { projectId: "local-web" }],
+      ["sharing:leave", { projectId: "" }],
+      ["sharing:open", {}],
+      ["sharing:join", { sharedProjectId: "x" }],
       ["sharing:connect", { projectId: "local-web" }],
       [
         "sharing:connect",
@@ -351,10 +343,6 @@ test("managing projects opens memtrace.io in the browser, and requests are check
 test("connecting through sharing makes no Team room, and Team's own requests are still there", async () => {
   const f = await fixture();
   try {
-    await f.saveAddresses({
-      memsyncUrl: f.service.address.href,
-      tokenUrl: f.tokens.url,
-    });
     const mine = await f.website(f.me).startProject("Launch plan");
     await f.request("sharing:connect", {
       projectId: "local-web",
@@ -377,11 +365,6 @@ test("a board connected on two computers of one person follows what is done in t
     f.state().tasks.filter((task) => task.projectId === "local-web");
   const boardOf = (f: typeof mac) => f.state().sharedBoards?.[0];
   try {
-    for (const f of [mac, pc])
-      await f.saveAddresses({
-        memsyncUrl: f.service.address.href,
-        tokenUrl: f.tokens.url,
-      });
     // The Mac has a goal with two tasks, made in the app.
     const goal = await mac.request<{ id: string }>("epic:create", {
       projectId: "local-web",
@@ -627,11 +610,6 @@ test("a worker run on the Mac is on the PC's card when it is opened there, and t
   const mac = await fixture();
   const pc = await fixture(true, mac);
   try {
-    for (const f of [mac, pc])
-      await f.saveAddresses({
-        memsyncUrl: f.service.address.href,
-        tokenUrl: f.tokens.url,
-      });
     const goal = await mac.request<{ id: string }>("epic:create", {
       projectId: "local-web",
       title: "Customers can export reports",

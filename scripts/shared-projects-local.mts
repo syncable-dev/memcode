@@ -337,7 +337,7 @@ createServer(async (request, response) => {
 }).listen(port, "127.0.0.1", () =>
   console.log(
     `MemCode is at ${origin}\n  profile: ${profile}\n  signs in at: ${site.origin} (stands in for ${BETA_ORIGIN})\n` +
-      `  token address to enter in Settings: ${new URL("/api/memcode/memsync/token", site).href}`,
+      `  finds sharing in: ${new URL("/api/memcode/services", site).href}`,
   ),
 );
 for (const signal of ["SIGINT", "SIGTERM"] as const)

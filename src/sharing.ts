@@ -3,7 +3,7 @@
  * What the app shows of it; nothing here is a credential.
  */
 
-/** Where shared projects live. Both empty: sharing is absent from the app. */
+/** Where shared projects live, as memtrace.io lists it. */
 export interface SharingSettings {
   /** The sharing service's address. */
   memsyncUrl: string;
@@ -11,12 +11,18 @@ export interface SharingSettings {
   tokenUrl: string;
 }
 
-export const sharingIsSet = (settings: SharingSettings | undefined): boolean =>
-  !!settings?.memsyncUrl.trim() && !!settings.tokenUrl.trim();
-
 export interface SharedPerson {
+  /** The account, as the sharing service names it. Only used to remove a guest. */
+  id: string;
   name: string;
   isYou: boolean;
+}
+/** An invitation nobody has accepted yet. */
+export interface OpenInvitation {
+  id: string;
+  /** Whom it is for. Empty for everyone but the project's owner. */
+  email: string;
+  sentAt: string;
 }
 
 /** A project as the sharing service knows it: a name and the people on it. */
@@ -27,7 +33,7 @@ export interface SharedProject {
   guests: SharedPerson[];
   youAreOwner: boolean;
   /** Invitations nobody has accepted yet. Each holds a guest place. */
-  openInvitations: number;
+  openInvitations: OpenInvitation[];
   guestLimit: number;
 }
 
