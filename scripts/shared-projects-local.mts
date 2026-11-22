@@ -11,9 +11,15 @@
 //   MEMCODE_LOCAL_SITE=http://127.0.0.1:3000 \
 //   MEMCODE_LOCAL_SITE_COOKIE=<better-auth.session_token of a signed-in person> \
 //   node --import tsx scripts/shared-projects-local.mts [--port 5310] [--profile <folder>]
+//     [--stand-in-worker]
+//
+// --stand-in-worker adds POST /dev/worker-turn, which plays a worker on a task:
+// it adds a turn of the conversation, sets the run's state and can save a file
+// the worker made. Nothing runs a model. Everything else in the app is as it is.
 import react from "@vitejs/plugin-react";
 import { build } from "vite";
 import { createServer } from "node:http";
+import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { extname, join, resolve } from "node:path";
@@ -197,6 +203,58 @@ await build({
   build: { outDir: built, emptyOutDir: true, target: "es2023" },
 });
 
+/** A worker's turn, played without a model, for trying card activity in two windows. */
+async function playWorker(turn: {
+  taskId: string;
+  role?: "user" | "assistant";
+  text?: string;
+  state?: "running" | "finished";
+  file?: { name: string; text: string };
+}) {
+  const state = runtime.store.state;
+  const task = state.tasks.find((item) => item.id === turn.taskId);
+  if (!task) throw new Error("No such task here.");
+  const now = new Date().toISOString();
+  if (!task.run.startedAt || task.run.state === "finished")
+    task.run = { state: "running", startedAt: now };
+  if (turn.state) task.run.state = turn.state;
+  if (turn.state === "finished") task.run.finishedAt = now;
+  task.run.activity =
+    turn.state === "finished"
+      ? undefined
+      : ({
+          phase: "editing",
+          label: "Editing project files",
+          at: now,
+        } as never);
+  if (turn.text)
+    task.messages.push({
+      id: randomUUID(),
+      role: turn.role ?? "assistant",
+      text: turn.text,
+      at: now,
+    });
+  if (turn.file) {
+    const folder = join(profile, "captures", task.id);
+    await mkdir(folder, { recursive: true });
+    const path = join(folder, turn.file.name);
+    await writeFile(path, turn.file.text);
+    state.artifacts.push({
+      id: randomUUID(),
+      projectId: task.projectId,
+      taskId: task.id,
+      name: turn.file.name,
+      kind: turn.file.name.endsWith(".html") ? "html" : "text",
+      path,
+      createdAt: now,
+      source: "Worker",
+      purpose: "report",
+    });
+  }
+  // Saved as any change is, so sharing hears of it.
+  await runtime.request("task:update", { id: task.id, patch: {} });
+}
+
 const types: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript",
@@ -235,6 +293,24 @@ createServer(async (request, response) => {
     })();
     response.writeHead(200, { "content-type": "application/json" });
     return void response.end(JSON.stringify(reply));
+  }
+  if (
+    process.argv.includes("--stand-in-worker") &&
+    request.method === "POST" &&
+    url.pathname === "/dev/worker-turn"
+  ) {
+    let body = "";
+    for await (const part of request) body += part;
+    try {
+      await playWorker(JSON.parse(body));
+      response.writeHead(200, { "content-type": "application/json" });
+      return void response.end("{}");
+    } catch (problem) {
+      response.writeHead(400, { "content-type": "application/json" });
+      return void response.end(
+        JSON.stringify({ error: (problem as Error).message }),
+      );
+    }
   }
   if (url.pathname === "/events") {
     response.writeHead(200, {
