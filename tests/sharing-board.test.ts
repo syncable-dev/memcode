@@ -538,3 +538,58 @@ test("what a comment points at is taken only when it is what MemCode would have 
   ])
     assert.equal(withReference(wrong), undefined, JSON.stringify(wrong));
 });
+
+test("a cycle started or finished on another computer has its starting baseline and closing count here, as if it had been started here", () => {
+  const mac_ = mac();
+  const board = boardOf(mac_, "mac-project");
+  const pc = workspace("pc-project");
+  board.cycles["cycle-1"].fields.state = "planned";
+  applyBoard(pc, "pc-project", emptyBoard(), board, { at });
+  assert.equal(pc.cycles[0].state, "planned");
+  assert.equal(pc.cycles[0].baseline, undefined);
+
+  // Started elsewhere, with a second task put in the cycle in the same change.
+  const started = structuredClone(board);
+  started.cycles["cycle-1"].fields.state = "active";
+  started.tasks["task-2"] = structuredClone(started.tasks["task-1"]);
+  started.tasks["task-2"].fields.identifier = "MC-002";
+  started.tasks["task-2"].fields.estimate = 5;
+  const startedAt = "2026-11-23T08:00:00.000Z";
+  applyBoard(pc, "pc-project", board, started, {
+    at: startedAt,
+    stampOf: (collection) =>
+      collection === "cycles" ? { changedAt: startedAt } : undefined,
+  });
+  const cycle = pc.cycles[0];
+  assert.equal(cycle.state, "active");
+  assert.equal(cycle.startedAt, startedAt);
+  assert.ok(cycle.baseline, "no starting baseline");
+  assert.equal(cycle.baseline!.at, startedAt);
+  assert.equal(cycle.baseline!.total, 2);
+  assert.equal(cycle.baseline!.points, 8);
+
+  // A later change to the board does not take the baseline again.
+  const later = structuredClone(started);
+  later.tasks["task-2"].fields.estimate = 1;
+  applyBoard(pc, "pc-project", started, later, {
+    at: "2026-11-24T08:00:00.000Z",
+  });
+  assert.equal(pc.cycles[0].baseline!.at, startedAt);
+  assert.equal(pc.cycles[0].baseline!.points, 8);
+
+  // Finished elsewhere: the closing count is recorded as finishing here records it.
+  const finished = structuredClone(later);
+  finished.cycles["cycle-1"].fields.state = "completed";
+  finished.tasks["task-1"].fields.stage = "done";
+  const completedAt = "2026-11-28T17:00:00.000Z";
+  applyBoard(pc, "pc-project", later, finished, {
+    at: completedAt,
+    stampOf: (collection) =>
+      collection === "cycles" ? { changedAt: completedAt } : undefined,
+  });
+  const closing = pc.cycles[0].snapshots.at(-1)!;
+  assert.equal(pc.cycles[0].completedAt, completedAt);
+  assert.equal(closing.at, completedAt);
+  assert.equal(closing.total, 2);
+  assert.equal(closing.completed, 1);
+});

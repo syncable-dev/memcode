@@ -7,6 +7,7 @@ import type {
 } from "../../../src/planning/types";
 import type { StoryComment } from "../../../src/story-comments";
 import { isActive } from "../../../src/domain";
+import { cycleSnapshot } from "../../../src/planning/history";
 import {
   emptyBoard,
   type Board,
@@ -481,13 +482,21 @@ function applyGoals(
   }
 }
 
+/** A cycle this computer saw start or finish on the board. */
+interface CycleTurn {
+  cycle: Cycle;
+  kind: "started" | "finished";
+  at: string;
+}
+
 function applyCycles(
   state: AppState,
   projectId: string,
   before: Board,
   after: Board,
   options: ApplyOptions,
-) {
+): CycleTurn[] {
+  const turns: CycleTurn[] = [];
   state.cycles = state.cycles.filter(
     (cycle) =>
       cycle.projectId !== projectId ||
@@ -530,16 +539,41 @@ function applyCycles(
       completedAt:
         state_ === "completed" ? (kept?.completedAt ?? changedAt) : undefined,
     };
-    if (kept) Object.assign(kept, read);
-    else
-      state.cycles.push({
-        id,
-        projectId,
-        createdAt: stamp?.createdAt ?? options.at,
-        snapshots: [],
-        ...read,
+    const was = kept?.state;
+    const cycle: Cycle = kept
+      ? Object.assign(kept, read)
+      : {
+          id,
+          projectId,
+          createdAt: stamp?.createdAt ?? options.at,
+          snapshots: [],
+          ...read,
+        };
+    if (!kept) state.cycles.push(cycle);
+    // Only a start or a finish seen here is recorded. A cycle that arrives
+    // already started has no baseline: what its scope was then is not known here.
+    if (was === "planned" && state_ !== "planned" && !cycle.baseline)
+      turns.push({ cycle, kind: "started", at: cycle.startedAt ?? changedAt });
+    if (was && was !== "completed" && state_ === "completed")
+      turns.push({
+        cycle,
+        kind: "finished",
+        at: cycle.completedAt ?? changedAt,
       });
   }
+  return turns;
+}
+
+/**
+ * What starting or finishing a cycle here records, for a cycle started or
+ * finished on another computer: its scope at the start, and its count at the
+ * end. Taken once the tasks that came with the change are in.
+ */
+function recordCycleTurns(state: AppState, turns: CycleTurn[]) {
+  for (const { cycle, kind, at } of turns)
+    if (kind === "started")
+      cycle.baseline ??= cycleSnapshot(state, cycle.id, at);
+    else cycle.snapshots.push(cycleSnapshot(state, cycle.id, at));
 }
 
 function applyComments(
@@ -703,7 +737,8 @@ export function applyBoard(
 ): void {
   applyProjectLists(state, projectId, before, after);
   applyGoals(state, projectId, before, after, options.at);
-  applyCycles(state, projectId, before, after, options);
+  const turns = applyCycles(state, projectId, before, after, options);
   applyTasks(state, projectId, before, after, options);
   applyComments(state, before, after, options);
+  recordCycleTurns(state, turns);
 }
