@@ -167,3 +167,28 @@ export const worldOn = (server: RealMemsync): SharingWorld => ({
   tokenFor: (person) => server.tokenFor(person),
   close: async () => {},
 });
+
+/** Why this memsync-server cannot run the Cards scenarios, or nothing when it can. */
+export async function cardsMissing(
+  server: RealMemsync,
+): Promise<string | undefined> {
+  const channel = grpcChannel(server.address);
+  try {
+    await channel.unary({
+      path: "/memsync.v1.Cards/ReadCardEntries",
+      request: new Uint8Array(),
+      metadata: {
+        authorization: `Bearer ${server.tokenFor({ accountId: "probe", name: "Probe" })}`,
+      },
+      timeoutMs: 2000,
+    });
+    return undefined;
+  } catch (failure) {
+    return failure instanceof GrpcFailure &&
+      failure.code === grpcStatus.UNIMPLEMENTED
+      ? "this memsync-server has no Cards service yet"
+      : undefined;
+  } finally {
+    channel.close();
+  }
+}
