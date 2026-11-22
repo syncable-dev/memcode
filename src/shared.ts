@@ -261,8 +261,6 @@ export interface Project {
   example?: boolean;
 }
 export interface Settings {
-  /** Where projects are shared. Not set: sharing through the sharing service is absent. */
-  sharing?: import("./sharing").SharingSettings;
   automaticUpdateDownloads?: boolean;
   workerPermissionDefaults?: Partial<
     Record<Harness, import("./permissions").PermissionMode>
@@ -484,8 +482,32 @@ export interface MemCodeAPI extends CodeReviewAPI {
     taskId: string;
     resultId: string;
   }): Promise<Artifact>;
-  /** Opens the page at memtrace.io where projects are started and people invited. */
-  openSharedProjectsPage(): Promise<void>;
+  /** Shares a project: the first time, a shared project of the same name is started for it. */
+  shareProject(
+    projectId: string,
+  ): Promise<import("./sharing").SharedProjectLink>;
+  /** Invites someone by email, sharing the project first if it is not shared yet. */
+  inviteToProject(input: {
+    projectId: string;
+    email: string;
+  }): Promise<import("./sharing").SharingOverview>;
+  cancelProjectInvitation(input: {
+    projectId: string;
+    invitationId: string;
+  }): Promise<import("./sharing").SharingOverview>;
+  removeFromProject(input: {
+    projectId: string;
+    personId: string;
+  }): Promise<import("./sharing").SharingOverview>;
+  /** A guest leaves a shared project. Its board stays on this computer, no longer shared. */
+  leaveProject(projectId: string): Promise<import("./sharing").SharingOverview>;
+  /** Opens a shared project on this computer, making a project for its board when there is none. */
+  openSharedProject(sharedProjectId: string): Promise<{ projectId: string }>;
+  /** Accepts an invitation and opens the shared project on this computer. */
+  joinSharedProject(input: {
+    sharedProjectId: string;
+    invitationId: string;
+  }): Promise<{ projectId: string }>;
   teamsList(): Promise<import("./team-space").TeamDirectory>;
   createTeamWorkspace(input: {
     name: string;

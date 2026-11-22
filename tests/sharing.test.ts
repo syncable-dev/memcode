@@ -9,10 +9,15 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import {
+  createServer as createHttp2Server,
+  type ServerHttp2Stream,
+} from "node:http2";
+import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { initialState } from "../src/seed";
 import type { AppState, Project } from "../src/shared";
-import type { SharingOverview } from "../src/sharing";
+import type { SharingOverview, SharingSettings } from "../src/sharing";
 import { refusalSentences } from "../src/sharing-refusals";
 import { Sharing, type CardHost } from "../runtime/sharing/sharing";
 import { shareableFile } from "../runtime/sharing/cards/files";
@@ -53,8 +58,10 @@ async function fixture(beside?: {
     localProject("local-app", "app"),
   );
   state.activeProjectId = "local-web";
-  state.settings.sharing = { memsyncUrl: service.address.href, tokenUrl };
   const world = {
+    /** Where memtrace.io says sharing lives. Missing: sharing is not offered. */
+    addresses: { memsyncUrl: service.address.href, tokenUrl } as
+      SharingSettings | undefined,
     signedIn: people.alex as StandInPerson | null,
     sessionId: "session-1234567890abcdef",
     saves: 0,
@@ -118,6 +125,16 @@ async function fixture(beside?: {
       },
     now: () => at,
     fetcher: issueToken,
+    addresses: async () => world.addresses,
+    makeProject: async (name) => {
+      const made: Project = {
+        ...localProject(`made-${++serial}`, name),
+        path: null,
+      };
+      state.projects.push(made);
+      state.activeProjectId = made.id;
+      return made;
+    },
   });
   const as = (person: StandInPerson) =>
     actingAs(service.address, service.tokenFor(person));
@@ -148,6 +165,7 @@ async function fixture(beside?: {
             accountId: world.signedIn.accountId,
           },
         fetcher: issueToken,
+        addresses: async () => world.addresses,
       }),
     close: async () => {
       await sharing.close();
@@ -181,17 +199,16 @@ const ready = (overview: SharingOverview): Ready => {
 const quiet = (context: test.TestContext) =>
   context.mock.method(console, "error", () => {});
 
-test("sharing that is not set up is absent: nobody is asked anything", async () => {
+test("sharing memtrace.io does not offer is absent: nobody is asked anything", async () => {
   const f = await fixture();
   try {
-    for (const unset of [undefined, { memsyncUrl: "", tokenUrl: "" }]) {
-      f.state.settings.sharing = unset;
-      assert.deepEqual(await f.sharing.overview(), { state: "not-set" });
-      await assert.rejects(
-        f.sharing.connect({ projectId: "local-web", sharedProjectId: "any" }),
-        /not set up/,
-      );
-    }
+    f.world.addresses = undefined;
+    assert.deepEqual(await f.sharing.overview(), { state: "not-set" });
+    await assert.rejects(
+      f.sharing.connect({ projectId: "local-web", sharedProjectId: "any" }),
+      /not available/,
+    );
+    await assert.rejects(f.sharing.shareProject("local-web"), /not available/);
     assert.equal(f.world.exchanges.length, 0);
     assert.equal(f.service.calls.length, 0);
   } finally {
@@ -214,7 +231,7 @@ test("the overview lists my projects and the invitations waiting for me", async 
     });
     f.world.signedIn = alex;
     f.world.sessionId = "session-1234567890abcdef";
-    await f.as(alex).invite(launch, chidiAddress);
+    const forChidi = await f.as(alex).invite(launch, chidiAddress);
     const website = await f.as(dana).startProject("Website");
     const forAlex = await f.as(dana).invite(website, alex.email!);
 
@@ -225,10 +242,10 @@ test("the overview lists my projects and the invitations waiting for me", async 
       {
         id: launch,
         name: "Launch plan",
-        owner: { name: alex.name, isYou: true },
-        guests: [{ name: bo.name, isYou: false }],
+        owner: { id: alex.accountId, name: alex.name, isYou: true },
+        guests: [{ id: bo.accountId, name: bo.name, isYou: false }],
         youAreOwner: true,
-        openInvitations: 1,
+        openInvitations: [{ id: forChidi, email: chidiAddress, sentAt: at }],
         guestLimit: 2,
       },
     ]);
@@ -244,15 +261,10 @@ test("the overview lists my projects and the invitations waiting for me", async 
       },
     );
     assert.ok(Date.parse(mine.invitations[0].expiresAt) > Date.parse(at));
-    // Nothing about other people but their names reaches the app's window.
+    // Other people's email addresses never reach the app's window. The owner
+    // sees the addresses they invited, to cancel an invitation.
     const shown = JSON.stringify(mine);
-    for (const hidden of [
-      bo.accountId,
-      bo.email!,
-      dana.accountId,
-      dana.email!,
-      chidiAddress,
-    ])
+    for (const hidden of [bo.email!, dana.email!])
       assert.ok(!shown.includes(hidden), hidden);
 
     f.world.signedIn = bo;
@@ -266,12 +278,18 @@ test("the overview lists my projects and the invitations waiting for me", async 
       ],
     );
     assert.deepEqual(asGuest.projects[1].guests, [
-      { name: bo.name, isYou: true },
+      { id: bo.accountId, name: bo.name, isYou: true },
     ]);
     assert.deepEqual(asGuest.projects[1].owner, {
+      id: alex.accountId,
       name: alex.name,
       isYou: false,
     });
+    // A guest sees that a place is taken by an invitation, not whose address it is.
+    assert.deepEqual(asGuest.projects[1].openInvitations, [
+      { id: forChidi, email: "", sentAt: at },
+    ]);
+    assert.ok(!JSON.stringify(asGuest).includes(chidiAddress));
   } finally {
     await f.close();
   }
@@ -361,14 +379,14 @@ test("a problem on the way is an overview that says what to do, never an excepti
       state: "unavailable",
       detail: refusalSentences.no_such_project,
     });
-    f.state.settings.sharing = {
+    f.world.addresses = {
       memsyncUrl: "http://sync.example.com",
       tokenUrl,
     };
     const mistyped = await f.sharing.overview();
     assert.equal(mistyped.state, "unavailable");
     assert.match((mistyped as { detail: string }).detail, /https:\/\//);
-    f.state.settings.sharing = { memsyncUrl: f.service.address.href, tokenUrl };
+    f.world.addresses = { memsyncUrl: f.service.address.href, tokenUrl };
     await f.service.close();
     const down = await f.sharing.overview();
     assert.equal(down.state, "unavailable");
@@ -552,7 +570,29 @@ test("disconnecting forgets the link on this computer and asks the service nothi
   }
 });
 
-test("a new sharing address in Settings is used from the next call on", async () => {
+test("an address memtrace.io lists that is not a sharing service says so, without sending anyone to Settings", async () => {
+  const f = await fixture();
+  const page = createHttp2Server().on("stream", (stream: ServerHttp2Stream) => {
+    stream.respond({ ":status": 200, "content-type": "text/html" });
+    stream.end("<h1>Welcome</h1>");
+  });
+  await new Promise<void>((resolve) => page.listen(0, "127.0.0.1", resolve));
+  try {
+    const { port } = page.address() as AddressInfo;
+    f.world.addresses = { memsyncUrl: `http://127.0.0.1:${port}`, tokenUrl };
+    const overview = await f.sharing.overview();
+    assert.equal(overview.state, "unavailable");
+    const { detail } = overview as { detail: string };
+    assert.match(detail, /not a sharing service/);
+    assert.match(detail, /Try again later/);
+    assert.doesNotMatch(detail, /Settings/);
+  } finally {
+    await f.close();
+    await new Promise((resolve) => page.close(resolve));
+  }
+});
+
+test("a new sharing address from memtrace.io is used from the next call on", async () => {
   const f = await fixture();
   const elsewhere = await startStandInMemsync();
   const { alex } = f.people;
@@ -565,7 +605,7 @@ test("a new sharing address in Settings is used from the next call on", async ()
       ready(await f.sharing.overview()).projects.map((project) => project.name),
       ["On the first service"],
     );
-    f.state.settings.sharing = { memsyncUrl: elsewhere.address.href, tokenUrl };
+    f.world.addresses = { memsyncUrl: elsewhere.address.href, tokenUrl };
     f.world.admitAt = elsewhere;
     const moved = ready(await f.sharing.overview());
     assert.deepEqual(
@@ -718,8 +758,8 @@ test("a board is synchronized only for the account that connected it, on the ser
     await boardsSynced(f, 1);
     assert.equal(f.service.boards.log(shared).length, logged + 1);
 
-    // The sharing addresses are taken out of Settings.
-    f.state.settings.sharing = undefined;
+    // memtrace.io stops offering sharing.
+    f.world.addresses = undefined;
     await f.sharing.syncBoards();
     assert.deepEqual(f.state.sharedBoards, []);
     assert.equal(f.state.sharedProjectLinks!.length, 1);
@@ -839,9 +879,9 @@ test("a board connected at one sharing service is not synchronized at another", 
     });
     await boardsSynced(f, 1);
 
-    // Settings now name another sharing service. The link still names the first.
+    // memtrace.io now names another sharing service. The link still names the first.
     f.world.admitAt = other;
-    f.state.settings.sharing = { memsyncUrl: other.address.href, tokenUrl };
+    f.world.addresses = { memsyncUrl: other.address.href, tokenUrl };
     await f.sharing.syncBoards();
     assert.deepEqual(f.state.sharedBoards, []);
     await until(
@@ -1136,5 +1176,213 @@ test("a file of 5 MB, the most a project shares, goes from one computer to the o
     assert.ok((await readFile(opened.path)).equals(bytes));
   } finally {
     await close();
+  }
+});
+
+// ── Sharing from inside MemCode: Share, Invite, Join and Open ─────────────
+
+const asked = (f: { service: StandInMemsync }, method: string) =>
+  f.service.calls.filter((call) => call.method === method).length;
+const signIn = (
+  f: Awaited<ReturnType<typeof fixture>>,
+  person: StandInPerson,
+) => {
+  f.world.signedIn = person;
+  f.world.sessionId = `session-${person.accountId}-1234567890abcdef`;
+};
+
+test("Share starts a shared project named after the local one and shares its board, once", async () => {
+  const f = await fixture();
+  try {
+    giveWork(f.state, "local-web");
+    const link = await f.sharing.shareProject("local-web");
+    assert.equal(link.projectId, "local-web");
+    assert.equal(link.sharedProjectName, "website");
+    const mine = ready(await f.sharing.overview());
+    assert.deepEqual(
+      mine.projects.map((one) => [one.name, one.youAreOwner, one.guests]),
+      [["website", true, []]],
+    );
+    await boardsSynced(f, 1);
+    assert.ok(f.service.boards.log(link.sharedProjectId).length > 0);
+    assert.deepEqual(await f.sharing.shareProject("local-web"), link);
+    assert.equal(asked(f, "StartProject"), 1);
+  } finally {
+    await f.close();
+  }
+});
+
+test("the example project and a Team project cannot be shared, and nothing is started for them", async () => {
+  const f = await fixture();
+  try {
+    f.state.team = [
+      { projectId: "local-app" } as NonNullable<AppState["team"]>[number],
+    ];
+    const exampleId = f.state.projects.find((one) => one.example)!.id;
+    for (const projectId of [exampleId, "local-app", "not-here"])
+      await assert.rejects(f.sharing.shareProject(projectId));
+    assert.equal(asked(f, "StartProject"), 0);
+  } finally {
+    await f.close();
+  }
+});
+
+test("inviting from a project not shared yet shares it first, and the owner sees whom they invited", async () => {
+  const f = await fixture();
+  const { dana, bo } = f.people;
+  try {
+    const after = ready(
+      await f.sharing.invite({
+        projectId: "local-app",
+        email: ` ${dana.email!} `,
+      }),
+    );
+    const app = after.projects.find((one) => one.name === "app")!;
+    assert.deepEqual(
+      app.openInvitations.map((one) => one.email),
+      [dana.email],
+    );
+    await f.sharing.invite({ projectId: "local-app", email: bo.email! });
+    assert.equal(asked(f, "StartProject"), 1);
+
+    const cancelled = ready(
+      await f.sharing.cancelInvitation({
+        projectId: "local-app",
+        invitationId: app.openInvitations[0].id,
+      }),
+    );
+    assert.deepEqual(
+      cancelled.projects[0].openInvitations.map((one) => one.email),
+      [bo.email],
+    );
+    signIn(f, dana);
+    assert.deepEqual(ready(await f.sharing.overview()).invitations, []);
+  } finally {
+    await f.close();
+  }
+});
+
+test("a guest joins from an invitation and gets the owner's board as a new project; opening it again selects it", async () => {
+  const owner = await fixture();
+  const guest = await fixture(owner);
+  const { dana } = owner.people;
+  try {
+    giveWork(owner.state, "local-web");
+    await owner.sharing.invite({ projectId: "local-web", email: dana.email! });
+    await boardsSynced(owner, 1);
+    signIn(guest, dana);
+    const waiting = ready(await guest.sharing.overview()).invitations;
+    assert.equal(waiting.length, 1);
+    const before = guest.state.projects.length;
+    const { projectId } = await guest.sharing.join({
+      sharedProjectId: waiting[0].projectId,
+      invitationId: waiting[0].id,
+    });
+    const made = guest.state.projects.find((one) => one.id === projectId)!;
+    assert.equal(made.name, "website");
+    assert.equal(made.path, null);
+    assert.equal(guest.state.activeProjectId, projectId);
+    await boardsSynced(guest, 1);
+    assert.deepEqual(
+      guest.state.tasks
+        .filter((one) => one.projectId === projectId)
+        .map((one) => one.title)
+        .sort(),
+      ["Export as CSV", "Export as PDF"],
+    );
+    guest.state.activeProjectId = "local-web";
+    assert.deepEqual(await guest.sharing.openShared(waiting[0].projectId), {
+      projectId,
+    });
+    assert.equal(guest.state.activeProjectId, projectId);
+    assert.equal(guest.state.projects.length, before + 1);
+    // The owner sees the guest, and may remove them.
+    const shared = ready(await owner.sharing.overview()).projects[0];
+    assert.deepEqual(
+      shared.guests.map((one) => one.name),
+      [dana.name],
+    );
+    const removed = ready(
+      await owner.sharing.removePerson({
+        projectId: "local-web",
+        personId: shared.guests[0].id,
+      }),
+    );
+    assert.deepEqual(removed.projects[0].guests, []);
+  } finally {
+    await guest.close();
+    await owner.close();
+  }
+});
+
+test("the person's other computer opens a shared project from the list and gets its board", async () => {
+  const mac = await fixture();
+  const pc = await fixture(mac);
+  try {
+    giveWork(mac.state, "local-web");
+    const link = await mac.sharing.shareProject("local-web");
+    await boardsSynced(mac, 1);
+    const listed = ready(await pc.sharing.overview()).projects;
+    assert.deepEqual(
+      listed.map((one) => one.id),
+      [link.sharedProjectId],
+    );
+    const { projectId } = await pc.sharing.openShared(link.sharedProjectId);
+    await boardsSynced(pc, 1);
+    assert.equal(
+      pc.state.tasks.filter((one) => one.projectId === projectId).length,
+      2,
+    );
+    assert.equal(asked(mac, "StartProject"), 1);
+  } finally {
+    await pc.close();
+    await mac.close();
+  }
+});
+
+test("a shared project that cannot be opened leaves no project behind", async () => {
+  const f = await fixture();
+  try {
+    const before = f.state.projects.length;
+    await assert.rejects(f.sharing.openShared("no-such-project"), {
+      message: refusalSentences.no_such_project,
+    });
+    assert.equal(f.state.projects.length, before);
+  } finally {
+    await f.close();
+  }
+});
+
+test("a guest who leaves keeps the board on this computer, no longer shared; the owner cannot leave", async () => {
+  const owner = await fixture();
+  const guest = await fixture(owner);
+  const { dana } = owner.people;
+  try {
+    giveWork(owner.state, "local-web");
+    await owner.sharing.invite({ projectId: "local-web", email: dana.email! });
+    await assert.rejects(owner.sharing.leave("local-web"), {
+      message: refusalSentences.the_owner_cannot_leave,
+    });
+    signIn(guest, dana);
+    const [waiting] = ready(await guest.sharing.overview()).invitations;
+    const { projectId } = await guest.sharing.join({
+      sharedProjectId: waiting.projectId,
+      invitationId: waiting.id,
+    });
+    await boardsSynced(guest, 1);
+    const left = ready(await guest.sharing.leave(projectId));
+    assert.deepEqual(left.projects, []);
+    assert.deepEqual(guest.state.sharedProjectLinks, []);
+    assert.equal(
+      guest.state.tasks.filter((one) => one.projectId === projectId).length,
+      2,
+    );
+    assert.deepEqual(
+      ready(await owner.sharing.overview()).projects[0].guests,
+      [],
+    );
+  } finally {
+    await guest.close();
+    await owner.close();
   }
 });

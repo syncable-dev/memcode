@@ -43,9 +43,15 @@ export const projectsContract = {
   ListInvitationsRequest: {},
   ListInvitationsResponse: { invitations: many(1, "Invitation") },
   AcceptInvitationRequest: { project_id: text(1), invitation_id: text(2) },
+  StartProjectRequest: { name: text(1) },
+  InvitePersonRequest: { project_id: text(1), email: text(2) },
+  CancelInvitationRequest: { project_id: text(1), invitation_id: text(2) },
+  RemoveGuestRequest: { project_id: text(1), account_id: text(2) },
+  LeaveProjectRequest: { project_id: text(1) },
+  LeaveProjectResponse: {},
 } satisfies Contract;
 
-/** The calls MemCode makes. Starting, renaming, deleting and inviting happen at memtrace.io. */
+/** The calls MemCode makes. Renaming and deleting a project happen at memtrace.io. */
 export const projectsCalls = {
   ListProjects: {
     request: "ListProjectsRequest",
@@ -57,5 +63,13 @@ export const projectsCalls = {
   },
   GetProject: { request: "GetProjectRequest", reply: "Project" },
   AcceptInvitation: { request: "AcceptInvitationRequest", reply: "Project" },
+  StartProject: { request: "StartProjectRequest", reply: "Project" },
+  InvitePerson: { request: "InvitePersonRequest", reply: "Invitation" },
+  CancelInvitation: { request: "CancelInvitationRequest", reply: "Project" },
+  RemoveGuest: { request: "RemoveGuestRequest", reply: "Project" },
+  LeaveProject: {
+    request: "LeaveProjectRequest",
+    reply: "LeaveProjectResponse",
+  },
 } as const;
 export type ProjectsCall = keyof typeof projectsCalls;

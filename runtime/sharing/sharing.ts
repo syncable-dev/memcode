@@ -5,6 +5,7 @@ import type { AppState, Artifact, Project } from "../../src/shared";
 import type { WorkerChanges } from "../../src/changes";
 import type { StoryReviewRun } from "../../src/code-review";
 import type {
+  SharingSettings,
   PendingInvitation,
   SharedPerson,
   SharedProject,
@@ -46,6 +47,10 @@ export interface SharingOptions {
   changed(): Promise<unknown>;
   /** The Memtrace sign-in to show memtrace.io. Null: nobody is signed in. */
   session(): Promise<BetaSessionProof | null>;
+  /** Where the sharing service is, as memtrace.io lists it. Nothing: sharing is not offered. */
+  addresses(): Promise<SharingSettings | undefined>;
+  /** Makes an empty project on this computer for a shared board, and opens it. */
+  makeProject?(name: string): Promise<Project>;
   /** Where each connected board keeps what it needs between runs. */
   boardsFolder: string;
   /**
@@ -107,28 +112,36 @@ const platformName = (): WritingDevice["name"] =>
       : "Linux";
 /** How long connecting waits for board sync to say how the two boards stand. */
 const FIRST_WORD_MS = 8000;
-const NOT_SET_UP =
-  "Sharing is not set up. Enter the sharing addresses in Settings first.";
+const NOT_OFFERED = "Sharing is not available right now. Try again later.";
 
 const shownPerson = (
   person: PersonRecord,
   accountId: string,
 ): SharedPerson => ({
+  id: person.accountId,
   name: person.name,
   isYou: person.accountId === accountId,
 });
-const shownProject = (
+function shownProject(
   project: ProjectRecord,
   accountId: string,
-): SharedProject => ({
-  id: project.id,
-  name: project.name,
-  owner: shownPerson(project.owner, accountId),
-  guests: project.guests.map((guest) => shownPerson(guest, accountId)),
-  youAreOwner: project.owner.accountId === accountId,
-  openInvitations: project.openInvitations.length,
-  guestLimit: project.guestLimit,
-});
+): SharedProject {
+  const youAreOwner = project.owner.accountId === accountId;
+  return {
+    id: project.id,
+    name: project.name,
+    owner: shownPerson(project.owner, accountId),
+    guests: project.guests.map((guest) => shownPerson(guest, accountId)),
+    youAreOwner,
+    // Only the owner, who sent them, sees whom the invitations are for.
+    openInvitations: project.openInvitations.map((invitation) => ({
+      id: invitation.id,
+      email: youAreOwner ? invitation.email : "",
+      sentAt: invitation.sentAt,
+    })),
+    guestLimit: project.guestLimit,
+  };
+}
 const shownInvitation = (invitation: InvitationRecord): PendingInvitation => ({
   id: invitation.id,
   projectId: invitation.projectId,
@@ -164,6 +177,8 @@ export class Sharing {
     // and what cards showed from other computers. Both are read again.
     const state = options.state();
     state.sharedBoards = [];
+    // Addresses typed in Settings by an earlier build: MemCode now finds the service itself.
+    delete (state.settings as { sharing?: unknown }).sharing;
     for (const task of state.tasks)
       if (task.sharedFromLog || task.sharedResults) {
         delete task.sharedSession;
@@ -172,10 +187,10 @@ export class Sharing {
       }
   }
 
-  /** What the Sharing view shows. A problem is part of the answer, with what to do about it. */
+  /** What the Share panel and the switcher show. A problem is part of the answer, with what to do about it. */
   async overview(): Promise<SharingOverview> {
     try {
-      const service = this.serviceInUse();
+      const service = await this.serviceInUse();
       if (!service) return { state: "not-set" };
       const [{ accountId }, projects, invitations] = await Promise.all([
         service.access.current(),
@@ -205,11 +220,122 @@ export class Sharing {
     projectId: string;
     invitationId: string;
   }): Promise<SharingOverview> {
-    await this.requiredService().projects.acceptInvitation(
-      input.projectId,
+    await (
+      await this.requiredService()
+    ).projects.acceptInvitation(input.projectId, input.invitationId);
+    return this.overview();
+  }
+
+  // ── Sharing a project from inside MemCode ─────────────────────────────────
+
+  /**
+   * Shares a project on this computer: the first time, a shared project of
+   * the same name is started for it and its board is written there. After
+   * that, it answers the link it has.
+   */
+  async shareProject(projectId: string): Promise<SharedProjectLink> {
+    const service = await this.requiredService();
+    const known = this.linkOf(projectId, service);
+    if (known) return known;
+    const state = this.options.state();
+    const local = state.projects.find((project) => project.id === projectId);
+    if (!local) throw new Error("Project not found.");
+    assertMayBeShared(local, state);
+    const started = await service.projects.startProject(local.name);
+    return this.connect({ projectId, sharedProjectId: started.id });
+  }
+
+  /** Invites someone by email, sharing the project first if it is not shared yet. */
+  async invite(input: { projectId: string; email: string }) {
+    const link = await this.shareProject(input.projectId);
+    const service = await this.requiredService();
+    await service.projects.invitePerson(
+      link.sharedProjectId,
+      input.email.trim(),
+    );
+    return this.overview();
+  }
+
+  async cancelInvitation(input: { projectId: string; invitationId: string }) {
+    const { service, link } = await this.linkedProject(input.projectId);
+    await service.projects.cancelInvitation(
+      link.sharedProjectId,
       input.invitationId,
     );
     return this.overview();
+  }
+
+  async removePerson(input: { projectId: string; personId: string }) {
+    const { service, link } = await this.linkedProject(input.projectId);
+    await service.projects.removeGuest(link.sharedProjectId, input.personId);
+    return this.overview();
+  }
+
+  /** A guest leaves a shared project. The board stays on this computer, no longer shared. */
+  async leave(projectId: string) {
+    const { service, link } = await this.linkedProject(projectId);
+    await service.projects.leaveProject(link.sharedProjectId);
+    await this.disconnect(projectId);
+    return this.overview();
+  }
+
+  /**
+   * Opens a shared project on this computer: the project that already holds
+   * its board, or a new, empty one that takes the board from the log.
+   */
+  async openShared(sharedProjectId: string): Promise<{ projectId: string }> {
+    const service = await this.requiredService();
+    const state = this.options.state();
+    const here = (state.sharedProjectLinks ?? []).find(
+      (link) =>
+        link.sharedProjectId === sharedProjectId &&
+        link.service === service.address &&
+        state.projects.some((project) => project.id === link.projectId),
+    );
+    if (here) {
+      state.activeProjectId = here.projectId;
+      await this.options.changed();
+      return { projectId: here.projectId };
+    }
+    if (!this.options.makeProject)
+      throw new Error("A shared project cannot be opened in this MemCode.");
+    const shared = await service.projects.getProject(sharedProjectId);
+    const made = await this.options.makeProject(shared.name);
+    try {
+      await this.connect({ projectId: made.id, sharedProjectId: shared.id });
+    } catch (problem) {
+      // Nothing was on the new project. It goes, and the reason is said.
+      state.projects = state.projects.filter(
+        (project) => project.id !== made.id,
+      );
+      await this.options.changed();
+      throw problem;
+    }
+    return { projectId: made.id };
+  }
+
+  /** Accepts an invitation and opens the shared project on this computer. */
+  async join(input: { sharedProjectId: string; invitationId: string }) {
+    await (
+      await this.requiredService()
+    ).projects.acceptInvitation(input.sharedProjectId, input.invitationId);
+    return this.openShared(input.sharedProjectId);
+  }
+
+  private linkOf(projectId: string, service: Service) {
+    return this.options
+      .state()
+      .sharedProjectLinks?.find(
+        (link) =>
+          link.projectId === projectId && link.service === service.address,
+      );
+  }
+
+  private async linkedProject(projectId: string) {
+    const service = await this.requiredService();
+    const link = this.linkOf(projectId, service);
+    if (!link) throw new Error("This project is not shared.");
+    return { service, link };
   }
 
   /** Records that a local project's board belongs to a shared project the person is on. */
@@ -217,7 +343,7 @@ export class Sharing {
     projectId: string;
     sharedProjectId: string;
   }): Promise<SharedProjectLink> {
-    const service = this.requiredService();
+    const service = await this.requiredService();
     const local = this.assertFree(input, service);
     const [{ accountId }, shared] = await Promise.all([
       service.access.current(),
@@ -549,11 +675,13 @@ export class Sharing {
   private async matchBoardsToLinks(): Promise<void> {
     const state = this.options.state();
     let service: Service | null = null;
-    try {
-      service = this.serviceInUse();
-    } catch {
-      // An address that cannot be used: nothing is synchronized, and the Sharing view says why.
-    }
+    // No shared project on this computer: the service is not even looked for.
+    if (state.sharedProjectLinks?.length)
+      try {
+        service = await this.serviceInUse();
+      } catch {
+        // An address that cannot be used: nothing is synchronized.
+      }
     const session = service
       ? await this.options.session().catch(() => null)
       : null;
@@ -661,15 +789,15 @@ export class Sharing {
     return local;
   }
 
-  private requiredService(): Service {
-    const service = this.serviceInUse();
-    if (!service) throw new Error(NOT_SET_UP);
+  private async requiredService(): Promise<Service> {
+    const service = await this.serviceInUse();
+    if (!service) throw new Error(NOT_OFFERED);
     return service;
   }
 
-  /** The service for the addresses in Settings now. A changed address starts a new one. */
-  private serviceInUse(): Service | null {
-    const settings = this.options.state().settings.sharing;
+  /** The service at the addresses memtrace.io lists now. Changed addresses start a new one. */
+  private async serviceInUse(): Promise<Service | null> {
+    const settings = await this.options.addresses();
     const settingsKey = JSON.stringify([
       settings?.memsyncUrl ?? "",
       settings?.tokenUrl ?? "",

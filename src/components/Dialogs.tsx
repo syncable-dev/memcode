@@ -39,7 +39,6 @@ import { estimateOptions } from "../planning/types";
 import { isBacklogStatus } from "../planning/workflow";
 import { ContextSettings } from "./ContextSettings";
 import { DictationSettings } from "./DictationSettings";
-import { SharingSettings } from "./SharingSettings";
 import { synchronizeSettingsDraft } from "../settings-draft";
 import type { MemtraceAccount } from "../connections";
 import { AppUpdates } from "./AppUpdates";
@@ -804,12 +803,6 @@ export function SettingsDialog({
                 </label>
               </div>
             </details>
-          )}
-          {section === "account" && (
-            <SharingSettings
-              value={draft.sharing}
-              change={(sharing) => setDraft((value) => ({ ...value, sharing }))}
-            />
           )}
           {section === "workers" && (
             <>
