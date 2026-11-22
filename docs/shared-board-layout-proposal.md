@@ -350,10 +350,9 @@ the project again does.
 
 ## Not built
 
-- **The next step: a card's conversation for everyone on the project.** How it was
-  solved, its artifacts, its changes and who did it. Only running the worker stays on
-  the computer it runs on. MemSync does not carry these yet. Its ADR-0005 plans them
-  as a log for each card, and it is not built.
+- **A card's conversation for everyone on the project** is no longer missing: it is in a
+  log of its own per card (MemSync ADR-0014), not in this document. See "What happens on
+  a card" in [Shared projects](shared-projects.md).
 - **A change to someone else's comment is shown.** MemCode itself lets only the author
   change a comment. Nothing stops a changed MemCode from writing one, and other computers
   would show it.

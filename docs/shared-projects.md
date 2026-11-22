@@ -19,14 +19,13 @@ beside it.
 - Keeps the board of a connected project in step with the shared project: goals, cycles,
   tasks with their runbooks, comments, lanes, custom fields and saved views. See
   [Keeping the board in step](#keeping-the-board-in-step).
+- Shows what happened on a card to everyone on the project: the worker's conversation,
+  what it is doing, its code review, and the files and changes someone shared from the
+  card, with who did each. See [What happens on a card](#what-happens-on-a-card).
 - Opens the MemCode tab of the Memtrace account, where projects are started, renamed and
   deleted and people are invited.
 
-A card's conversation, its artifacts and its changes are not carried yet. They are meant
-to be: someone on the project who opens a card is to see how it was solved and by whom,
-as it happens, and only running the worker stays on the computer it runs on. MemSync has
-no calls for that yet (its ADR-0005 is accepted and not built). Today a card on another
-computer has its brief, its runbook and its comments. Source changes travel through Git.
+Workers run only on the computer that started them. Source changes travel through Git.
 
 A project is the thing people share. There is no team. A person's own computers are never
 invited: signing in to MemCode on each is enough, and each then connects its own local
@@ -170,6 +169,45 @@ Below that line, when there is something to say: "2 changes from Dana Ek on 21 N
 could not be read and were left out.", "Some changes are set aside until one they build on
 arrives." and "1 value is too large for the sharing service and stays on this computer."
 
+## What happens on a card
+
+Each card of a shared project has an activity log at MemSync (its ADR-0014). MemSync never
+reads it; what an entry holds is MemCode's (`runtime/sharing/cards/entries.ts`).
+
+On the computer that runs a worker on a card, MemCode writes the run to the card's log as
+it happens, at most once a second: its state, what it is doing, the models, the person's
+and the worker's turns, and its code review. That is what Team Sync shares, and nothing
+more: tool output, local references and review notes stay on the computer, and paths in a
+home folder and tokens are blotted out of the text.
+
+On every other computer, a card that is opened is read from its log and followed while it
+is open. A run from another computer is shown with the views MemCode has for a worker
+elsewhere:
+
+- the card header says "On Mac";
+- the conversation shows the person's turns as "Alex Holm · Mac" and the worker's turns;
+- the status line above the message box says "Alex Holm · Mac" and what the worker is doing;
+- the worker panel says SHARED, the harness, whose computer, and "Conversation and review
+  shared with the project. It runs on Mac.";
+- the Code review tab shows the run's review;
+- the message box says "This worker runs on Alex Holm's Mac. Comment on the card to reach
+  them." and sends nothing. Starting a review or asking the review a question is refused
+  the same way. Comments reach everyone.
+
+A run shows only what the account that started it wrote. A turn or a review that someone
+else on the project writes into it is not shown. A computer never shows its own run back
+to itself, and a run started here takes over the card.
+
+**Files and changes are shared on purpose**, as in Team Sync. On the computer that ran the
+worker, the Artifacts tab lists the card's files with a **Share** button each, and the
+Changes tab has **Share changes**. A file is at most 5 MB, and a project keeps at most 50 MB.
+On other computers, a shared file is listed among the card's files with who shared it, and
+opening it fetches it beside the card; shared changes show in the Changes tab.
+
+What a computer sent and what still waits is in `cards.json` in the board's folder, so a
+restart sends only what is new and nothing is lost offline. The computer's own id for card
+logs is in `shared-boards/computer.json`.
+
 ## What a person is told
 
 MemSync names the rule that turned a request down in `memsync-refusal` metadata. The
@@ -195,6 +233,11 @@ sentence.
 | `empty_update` | MemCode sent an empty board change. This is a fault in MemCode, not something you did. |
 | `update_too_large` | One change to the board was too large to share. Shorten the text you just added and try again. |
 | `too_many_updates` | MemCode sent too many board changes at once. This is a fault in MemCode, not something you did. |
+| `invalid_card_id` | MemCode named a card the sharing service cannot use. This is a fault in MemCode, not something you did. |
+| `invalid_file` | That file cannot be shared. An empty file is not kept. |
+| `file_too_large` | That file is larger than 5 MB, which is the most a project can share in one file. |
+| `project_storage_full` | This project already shares 50 MB of files, which is all it can keep. The file stays on this computer. |
+| `no_such_file` | That file is no longer kept for this project. Ask whoever shared it to share it again. |
 
 The last four belong to the board log. MemCode is written so that it never meets them:
 ids are made from the bytes, nothing empty is sent, a change is cut into pieces well under
@@ -241,6 +284,12 @@ with `[sharing]`.
 | Who keeps an identifier two tasks share | `runtime/sharing/board/identifiers.ts` |
 | What a connected project keeps on disk | `runtime/sharing/board/store.ts` |
 | How a board stands, in words | `src/sharing-board.ts` |
+| What MemCode writes into a card's log | `runtime/sharing/cards/entries.ts` |
+| Writing this computer's runs, following an open card | `runtime/sharing/cards/activity.ts` |
+| Which of a task's files may be shared | `runtime/sharing/cards/files.ts` |
+| MemSync's Cards API as MemCode uses it | `runtime/sharing/memsync/cards-api.ts`, `cards-contract.ts`, `cards.proto` |
+| A run from a card's log, in the shape the card's views take | `src/sharing-cards.ts` |
+| The Share buttons on a card's files | `src/components/ShareFromCard.tsx` |
 | gRPC over Node's own HTTP/2 | `runtime/sharing/memsync/grpc.ts` |
 | Protocol Buffers on the wire | `runtime/sharing/memsync/wire.ts` |
 | The contract, and the part of it MemCode uses | `runtime/sharing/memsync/projects.proto`, `projects-contract.ts`, `boards.proto`, `boards-contract.ts` |
@@ -250,8 +299,9 @@ with `[sharing]`.
 | The page that opens at memtrace.io | `open_memcode_projects` in `src-tauri/src/native.rs` |
 
 MemCode makes four of the Projects calls, `ListProjects`, `ListInvitations`, `GetProject`
-and `AcceptInvitation`, and all three Boards calls, `AppendUpdates`, `ReadUpdates` and
-`WatchUpdates`.
+and `AcceptInvitation`, all three Boards calls, `AppendUpdates`, `ReadUpdates` and
+`WatchUpdates`, and all five Cards calls. A Cards reply can be 6 MiB, so the client takes
+replies that large.
 
 One package was added: `yjs` 13.6.33, with `lib0` and `isomorphic.js` that it needs. They
 are in the lock file and in the third-party notices. The gRPC client is still MemCode's
@@ -311,6 +361,15 @@ One is not caught: the line in `runtime/app.ts` that hands board sync the worksp
 What that line relies on, that `LocalStore.save` reads the workspace at the call and
 writes it after the step it is given, is covered in `tests/sharing-workspace-save.test.ts`.
 
+What happens on a card has five Cards client scenarios and eight card activity scenarios,
+which run against the stand-in and against a real `memsync-server` that serves Cards
+(the one built on 22 November does): entries numbered and signed per card, a watched card,
+a 5 MB file in one reply, every refusal by its rule name, the 50 MB limit; a run shown live
+on the other computer with who runs it, only what changed sent again, the review, a turn
+and a review forged by a guest not shown, the same person on two computers, offline and a
+restart, a shared file, and a task whose id is not a UUID. Two whole runtimes check that a
+card opened on the PC shows the Mac's run and that nothing can be sent to it.
+
 ## Trying it on one computer
 
 `scripts/shared-projects-local.mts` runs the real runtime and the real app window in a
@@ -348,6 +407,13 @@ cookie is a guest's computer, once that person has accepted an invitation.
 
 Stopping `memsync-server` shows the offline line and the count of changes that wait.
 Starting it again sends them, within a minute.
+
+To try what happens on a card without running a model, start the computer that runs the
+worker with `--stand-in-worker`. It adds `POST /dev/worker-turn`, which plays a worker on a
+task: `{ "taskId": "…", "text": "…", "state": "running" | "finished", "file": { "name":
+"report.html", "text": "…" } }`. Open the card on the other computer and watch it follow.
+In this browser run an HTML file shows a blank preview on both computers: the native shell
+draws HTML previews, and the script stands in for it.
 
 ## Choices that are not confirmed
 
@@ -392,13 +458,26 @@ For board sync, beside what the [layout page](shared-board-layout-proposal.md) h
     someone else deletes it. It is back for everyone once it changes here.
 22. **Every sentence** in the table of states above.
 
+For what happens on a card:
+
+23. **A card is read when it is opened and followed while open**, not for every card all
+    the time. The board does not show who is running what across the project.
+24. **Files and changes are shared with one click each**, not on their own, as in Team Sync.
+    Shared changes are a file of the Changes tab's own format, not a Git patch.
+25. **A run's turns and review count only from the account that wrote its first entry.**
+26. **The person's turns of a run from elsewhere carry the run owner's name.**
+27. **This computer is named by its kind, "Mac", "Windows" or "Linux"**, never its host name.
+28. **A run is written at most once a second**, so a long streamed answer is sent a few
+    times over as it grows.
+
 ## Not built
 
-- **The next step: a card's conversation, artifacts and changes on other computers,** with
-  who did what. This is the largest gap against what sharing is meant to be. It waits
-  for MemSync's log for each card (ADR-0005). Until then the second computer continues a
-  task from its brief, its runbook and its comments, with a worker that starts fresh, not
-  from the first computer's conversation.
+- **Messages to a worker on another computer, claims, and who is running what across the
+  project.** The next step, with MemSync's ADR-0006. Until then a person continues a task
+  on another computer with a worker that starts fresh there, from the card's brief,
+  runbook, comments and shared changes, not from the first computer's conversation.
+- **Hiding a review or a file that someone else on the project shared into a card.** A
+  file shows who shared it; it is not refused.
 - What the [layout page](shared-board-layout-proposal.md#not-built) lists for the board.
 - Running a worker on someone else's computer. MemSync has nothing for it.
 - Leaving a shared project from MemCode.
