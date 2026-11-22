@@ -541,22 +541,24 @@ export class CardActivity {
   }
 
   private sessionFor(taskId: string, run: RunElsewhere): TeamSession {
-    const turns = [...run.turns.values()].sort((left, right) =>
-      left.at.localeCompare(right.at),
-    );
+    const owner = {
+      // The window is given names, not account ids.
+      memberId: fingerprint(["owner", run.account]).slice(0, 32),
+      name: this.options.nameOf(run.account) ?? SOMEONE,
+      deviceId: run.device.id,
+      device: run.device.name,
+    };
+    // A person's turn in a run is by whoever started the run, on that computer.
+    const turns = [...run.turns.values()]
+      .sort((left, right) => left.at.localeCompare(right.at))
+      .map((turn) => (turn.role === "user" ? { ...turn, actor: owner } : turn));
     return {
       ...(run.head as Omit<TeamSession, "messages">),
       storyId: taskId,
       epoch: 1,
       revision: run.entries,
       sequence: run.sequence,
-      owner: {
-        // The window is given names, not account ids.
-        memberId: fingerprint(["owner", run.account]).slice(0, 32),
-        name: this.options.nameOf(run.account) ?? SOMEONE,
-        deviceId: run.device.id,
-        device: run.device.name,
-      },
+      owner,
       updatedAt: run.updatedAt,
       messages: turns,
       ...(run.review ? { review: { ...run.review, taskId } } : {}),

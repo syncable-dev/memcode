@@ -128,6 +128,12 @@ export function cardActivityScenarios(
           "Reading <local-home>/work/website/src/export.ts now.",
         ],
       );
+      // The person's turn is shown as theirs, on their computer; a worker's turn is the worker's.
+      assert.deepEqual(
+        shown.messages.map((message) => message.actor?.name ?? null),
+        [people.alex.name, null],
+      );
+      assert.equal(shown.messages[0].actor?.device, "Mac");
       // The laptop's own task is not touched: no worker runs there.
       assert.equal(onLaptop().run.state, "idle");
       assert.deepEqual(onLaptop().messages, []);
