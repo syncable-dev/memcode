@@ -1,55 +1,69 @@
 # Shared projects
 
-MemCode can sign in to MemSync, the service that is to replace Team Sync, show the
-projects a person shares, and keep the board of a connected project the same on every
-computer that connects to it. This page says what exists, how to turn it on and how to
-try it on one computer.
+MemCode can share a project through MemSync, the service that is to replace Team Sync:
+start it, invite people, and keep its board the same on every computer that has it. This
+page says what exists, how MemCode finds the service and how to try it on one computer.
 
-Nothing is deployed. Until two addresses are entered in Settings, none of this is in the
-app: no sidebar entry, no request to anyone. Team Sync is unchanged and keeps working
-beside it.
+Nothing is deployed. MemCode finds MemSync in memtrace.io's list of MemCode services.
+Until that list names it, none of this is in the app: no Share button, no request to
+MemSync. Team Sync is unchanged and keeps working beside it.
 
 ## What it does today
 
 - Signs in to MemSync with the Memtrace account MemCode is already connected to.
-- Lists the shared projects the person owns or is a guest on, and the invitations waiting
-  for them.
-- Accepts an invitation.
-- Connects the open project to one shared project, and disconnects it.
+- Shares the open project from a **Share** button at the top right of the project. The
+  first Share or Invite starts a shared project of the same name and writes the board to
+  it. Nobody is sent to a website, and nothing is set up first.
+- Invites people by email, cancels an invitation, and removes a guest, for the owner.
+  A guest sees who is on the project and can leave it.
+- Lists, in the project switcher, the shared projects not on this computer yet and the
+  invitations waiting for the person. **Open** and **Join** make a project here and give
+  it the shared board.
 - Keeps the board of a connected project in step with the shared project: goals, cycles,
   tasks with their runbooks, comments, lanes, custom fields and saved views. See
   [Keeping the board in step](#keeping-the-board-in-step).
 - Shows what happened on a card to everyone on the project: the worker's conversation,
   what it is doing, its code review, and the files and changes someone shared from the
   card, with who did each. See [What happens on a card](#what-happens-on-a-card).
-- Opens the MemCode tab of the Memtrace account, where projects are started, renamed and
-  deleted and people are invited.
 
-Workers run only on the computer that started them. Source changes travel through Git.
+Renaming and deleting a shared project happen at memtrace.io. Workers run only on the
+computer that started them. Source changes travel through Git.
 
 A project is the thing people share. There is no team. A person's own computers are never
-invited: signing in to MemCode on each is enough, and each then connects its own local
-project to the same shared project.
+invited: signing in to MemCode on each is enough, and the project is then in the switcher
+on each, ready to open.
 
-## Turning it on
+## Where MemCode finds sharing
 
-Settings → Account → **Advanced · sharing service** has two fields.
+MemCode reads `https://www.memtrace.io/api/memcode/services`, the list Team Sync reads too,
+and takes sharing from its `sharing` entry:
 
-| Field | What goes in it |
-| --- | --- |
-| Sharing service address | Where MemSync is. `https://` anywhere. Plain `http://` only for `127.0.0.1`, `localhost` or `[::1]`, because MemSync speaks unencrypted HTTP/2 and every call carries an access token. A path is kept, for a proxy that serves MemSync under one. |
-| Sign-in address for sharing | Where MemCode exchanges its Memtrace sign-in for a MemSync access token. It must be at `https://www.memtrace.io` or on this computer. |
+```json
+{
+  "version": 1,
+  "sharing": {
+    "endpoint": "https://sync.memtrace.io",
+    "tokenEndpoint": "https://www.memtrace.io/api/memcode/memsync/token"
+  }
+}
+```
 
-Both empty: sharing is absent. One without the other, or an address that cannot be used,
-is refused when Settings is saved, with a sentence that says why. Once both are saved,
-**Sharing** appears in the sidebar.
+- No `sharing` entry: sharing is not offered, and there is no Share button.
+- The list is asked for without the person's sign-in, at most once a minute. When it
+  cannot be read, sharing is treated as not offered until the next try, and the reason
+  goes to the runtime's log on a line that starts with `[sharing]`.
+- The two addresses are still checked before use. MemSync's address must be `https://`,
+  or plain `http://` on this computer, because every call carries an access token. The
+  token address must be at `https://www.memtrace.io` or on this computer, because the
+  request carries the session's refresh token and the only session MemCode holds is a
+  memtrace.io one. A self-hosted MemSync will need its own way to sign in before this rule
+  can widen.
+- Nothing about sharing is kept in Settings or in `workspace.json`. An earlier build kept
+  two addresses there; they are dropped when MemCode starts.
 
-The sign-in address is limited to memtrace.io because the request carries the session's
-refresh token, and the only session MemCode holds is a memtrace.io one. A self-hosted
-MemSync will need its own way to sign in before this rule can widen.
-
-When MemSync is deployed, the hosted addresses should become the default, so nobody has to
-type them.
+For tests and a local run only, two environment variables name a MemSync and a token
+address instead of the list: `MEMCODE_DEV_SHARING_SERVICE` and
+`MEMCODE_DEV_SHARING_TOKEN_ADDRESS`. Both must be set. No screen offers them.
 
 ## How MemCode signs in
 
@@ -80,20 +94,48 @@ sequenceDiagram
   signing key published in the last five minutes looks like.
 - Neither the session nor a token is written to `workspace.json` or sent to the window.
 
-## Connecting a project
+## Sharing, joining and opening a project
 
-A link is kept on this computer, in `sharedProjectLinks` in `workspace.json`: the local
-project, the shared project and its name when last seen, the account that connected it,
-the sharing service it lives on and when.
+**The Share panel.** The Share button opens a small panel on the project:
 
-- A local project is connected to one shared project, and a shared project to one local
+- An email field and **Invite**, for the owner. A project that is not shared yet is
+  shared by the first Invite, or by Share itself on the next call that needs it.
+- **People with access**: the owner, each guest, and each open invitation. The owner can
+  remove a guest from the guest's menu and cancel an invitation. A guest sees the same
+  people, sees how many invitations are open but not whom they are for, and can leave.
+- A quiet line: "Free projects hold you and 2 guests. Your own computers don't count."
+  The number is MemSync's. With every place taken, the email field is disabled.
+- How the board stands, as in the table below.
+
+The button is on every project of the person's own when sharing is offered, and not on
+the example project or a project in Team Sync. Signed out, the panel asks the person to
+sign in; when MemSync cannot be asked, it says why and keeps naming the shared project.
+
+**The project switcher.** Projects shared on this computer are listed under **Shared
+projects**, with a people icon. Below them come the shared projects the person is on that
+are not on this computer yet, each with **Open**, and the invitations waiting for them,
+each with **Join**. Join accepts the invitation and opens the project. Open and Join make
+a new project here with the shared project's name and no folder, and give it the board.
+Opening a shared project that is already here selects it.
+
+**A folder.** A project made by Open or Join has no folder on this computer. Its board
+says so, with **Work on this computer**, which offers the same choices as a Team project
+without a folder: an existing checkout, or a clone. Workers need one; the board does not.
+
+**Leaving.** A guest who leaves stays with the board on this computer, no longer shared.
+The owner cannot leave; a project is deleted at memtrace.io.
+
+**What is kept.** A link on this computer, in `sharedProjectLinks` in `workspace.json`:
+the local project, the shared project and its name when last seen, the account that made
+the link, the sharing service it lives on and when.
+
+- A local project belongs to one shared project, and a shared project to one local
   project on a computer.
-- The example project cannot be connected, and neither can a project that is shared
-  through Team Sync. Two services must not both keep one board in step.
-- Connecting asks MemSync whether the person is on that shared project. Disconnecting
-  asks nothing: it forgets the link here, and the person stays on the shared project.
+- The example project cannot be shared, and neither can a project in Team Sync. Two
+  services must not both keep one board in step.
 - A link whose shared project was deleted, or that was made under another account or on
-  another sharing service, is shown as such and can be disconnected.
+  another sharing service, is shown as such in the panel, with **Stop sharing on this
+  computer**. That forgets the link here and asks MemSync nothing.
 
 ## Keeping the board in step
 
@@ -118,14 +160,15 @@ sequenceDiagram
 ```
 
 - **Starting.** Sync runs for a project when its link belongs to the account that is
-  signed in and to the sharing service in Settings. It starts with MemCode, after
-  connecting, and when the sign-in or the addresses change.
+  signed in and to the sharing service memtrace.io lists. It starts with MemCode, after
+  sharing or opening a project, and when the sign-in or the service changes.
 - **The first time.** You either share your own project or join someone else's and get
   their board. A computer whose board has work on it writes the board to a log that has
   none, one entry an update. A computer whose project has no work takes the board from the
   log as it is, lanes, custom fields and saved views included. When both have work,
-  nothing is merged: Connect answers with one sentence that says so, and the project stays
-  unconnected. One board on two computers, with the same ids, is one board.
+  nothing is merged: one sentence says so, and the project stays unshared. Share and Open
+  never meet this: Share starts a new shared project for the board, and Open makes a new,
+  empty project. One board on two computers, with the same ids, is one board.
   Two computers that both find the log empty in the same seconds both write their board.
   That gap is known and stays for now. Closing it needs a field in MemSync.
 - **Changes made here** are found after every save of the workspace, and once when sync
@@ -144,15 +187,15 @@ sequenceDiagram
 - **Two tasks with one identifier**, as when two computers both made MC-014 while apart:
   the one that reached the log first keeps it, and the other gets the next free number.
 - **A newer layout.** A board written by a newer MemCode is shown and not changed.
-- **Disconnecting** ends sync for that project and deletes what was kept for it. The
-  board stays on the computer.
+- **Leaving, or stopping sharing on this computer,** ends sync for that project and
+  deletes what was kept for it. The board stays on the computer.
 
-What is kept is in the profile, under `shared-boards/`, one folder per connected project:
+What is kept is in the profile, under `shared-boards/`, one folder per shared project:
 `log.bin`, the document as the log has built it, and `sync.json`, with the log position,
 the board as last seen, the changes not sent yet and the entries left out. Neither holds
 a token or anything a worker wrote.
 
-The Sharing view says how the open project's board stands:
+The Share panel says how the open project's board stands, under the people:
 
 | State | What the person reads |
 | --- | --- |
@@ -160,7 +203,7 @@ The Sharing view says how the open project's board stands:
 | Nothing waits | The board is in sync. |
 | Changes on their way | Sending 3 changes to the shared board… |
 | The service cannot be reached | The reason, and "3 changes made here are kept on this computer and sent when it works again." |
-| The project has work, and so has the shared board | "website already has work of its own, so it cannot join Website board: connect a project that has none yet." Connect answers with it and connects nothing. It is on this line only when the service could not be asked while connecting. |
+| The project has work, and so has the shared board | "website already has work of its own, so it cannot join Website board: connect a project that has none yet." The panel offers **Stop sharing on this computer**. |
 | A newer MemCode laid the board out | A newer MemCode laid this board out. Update MemCode to change it from this computer. Until then it is shown here and what you change stays on this computer. |
 | The shared project is gone for this person | This shared project no longer exists, or you are no longer on it. |
 | The workspace cannot be saved | The workspace could not be saved, so changes from the shared board are waiting. Free disk space, and they are taken up again. |
@@ -256,7 +299,8 @@ Other problems have a sentence each as well:
 | MemSync is too slow | The sharing service did not answer in time. Try again in a moment. |
 | MemSync answers with trouble of its own | The sharing service is having trouble right now. Try again in a few minutes. |
 | MemSync refuses the token twice | The sharing service did not accept this sign-in. Try again in a few minutes. |
-| The address is not a MemSync | The sharing address did not answer as a sharing service. Check it in Settings. |
+| memtrace.io answers anything else, or not with a token | The sign-in for sharing answered HTTP 500. Try again later. / The sign-in for sharing did not answer with an access token. Try again later. |
+| The address memtrace.io lists is not a MemSync | The address memtrace.io gave for sharing is not a sharing service. Try again later. |
 | A reply cannot be read | The sharing service sent a reply MemCode could not read. Updating MemCode may help. |
 | A rule MemCode does not know | The sharing service turned this down for a reason this version of MemCode does not know. Updating MemCode may help. |
 
@@ -267,8 +311,9 @@ with `[sharing]`.
 
 | Piece | File |
 | --- | --- |
-| The use cases: overview, accept, connect, disconnect, and which boards sync | `runtime/sharing/sharing.ts` |
-| Requests the window may make, and what Settings may save | `runtime/sharing/routes.ts` |
+| The use cases: overview, share, invite, cancel, remove, leave, open, join, and which boards sync | `runtime/sharing/sharing.ts` |
+| Requests the window may make | `runtime/sharing/routes.ts` |
+| Finding MemSync in memtrace.io's list, and the developer override | `runtime/sharing/discovery.ts` |
 | The two addresses and their rules | `runtime/sharing/addresses.ts` |
 | The access token: exchange, renewal, one retry | `runtime/sharing/access.ts` |
 | The session shown to memtrace.io | `sessionProof` in `runtime/beta.ts` |
@@ -294,11 +339,12 @@ with `[sharing]`.
 | The contract, and the part of it MemCode uses | `runtime/sharing/memsync/projects.proto`, `projects-contract.ts`, `boards.proto`, `boards-contract.ts` |
 | Rule names and sentences | `src/sharing-refusals.ts` |
 | What the window knows of sharing | `src/sharing.ts` |
-| The Sharing view, and the fields in Settings | `src/components/SharedProjects.tsx`, `SharingSettings.tsx` |
-| The page that opens at memtrace.io | `open_memcode_projects` in `src-tauri/src/native.rs` |
+| The Share button and panel, the switcher's shared projects, the folder notice | `src/components/ShareProject.tsx` |
 
-MemCode makes four of the Projects calls, `ListProjects`, `ListInvitations`, `GetProject`
-and `AcceptInvitation`, all three Boards calls, `AppendUpdates`, `ReadUpdates` and
+MemCode makes nine of the eleven Projects calls: `StartProject`, `ListProjects`,
+`GetProject`, `InvitePerson`, `ListInvitations`, `AcceptInvitation`, `CancelInvitation`,
+`RemoveGuest` and `LeaveProject`. Renaming and deleting stay at memtrace.io. It makes all
+three Boards calls, `AppendUpdates`, `ReadUpdates` and
 `WatchUpdates`, and all five Cards calls. A Cards reply can be 6 MiB, so the client takes
 replies that large.
 
@@ -339,9 +385,9 @@ it, so nothing that already exists there is touched. Never point it at a server 
 real data. `MEMSYNC_TEST_PSQL` names another `psql` when the one on the PATH will not do.
 
 The same scenarios run against a stand-in service in `tests/support/memsync-stand-in.ts`
-on every `npm test`. Eleven of the thirteen project rules are reached against the real
+on every `npm test`. Twelve of the thirteen project rules are reached against the real
 server. `invitation_expired` is reached only on the stand-in, where days can be made to
-pass, and `the_owner_cannot_leave` nowhere, because MemCode never asks to leave.
+pass.
 
 Board sync has nine scenarios with two computers that run against both: a board written
 out and taken by a second computer, a goal, a cycle and a task made on one showing on the
@@ -396,13 +442,19 @@ and no installed Memtrace is touched.
    MEMCODE_LOCAL_SITE=http://127.0.0.1:3000 MEMCODE_LOCAL_SITE_COOKIE=<cookie value> node --import tsx scripts/shared-projects-local.mts --port 5310
    ```
 
-6. Open the address it prints. Choose **Connect Memtrace beta** under Account in Settings,
-   then enter the sharing service address and the token address the script printed.
+6. Open the address it prints and choose **Connect Memtrace beta** under Account in
+   Settings.
 
-A second run on another port, with another `--profile` folder, is a second computer. Sign
-it in as the same person, connect its project to the same shared project in the Sharing
-view, and what is done on one board shows on the other. A run with another person's
-cookie is a guest's computer, once that person has accepted an invitation.
+The script sends MemCode's requests to memtrace.io to the local site, so MemCode finds
+MemSync in the site's `/api/memcode/services`. Give that list a `sharing` entry with the
+local MemSync and `http://localhost:<site port>/api/memcode/memsync/token`. Or start the
+script with `MEMCODE_DEV_SHARING_SERVICE` and `MEMCODE_DEV_SHARING_TOKEN_ADDRESS` set.
+
+Click **Share** and invite someone. A second run on another port, with another
+`--profile` folder, is a second computer: sign it in as the same person and **Open** the
+project from the switcher, and what is done on one board shows on the other. A run with
+another person's cookie is a guest's computer: the invitation is in its switcher, with
+**Join**.
 
 Stopping `memsync-server` shows the offline line and the count of changes that wait.
 Starting it again sends them, within a minute.
@@ -416,42 +468,43 @@ draws HTML previews, and the script stands in for it.
 
 ## Choices that are not confirmed
 
-1. **Where sharing sits.** Its own sidebar entry, shown only once the addresses are set.
-   It is next to Team until Team Sync goes.
-2. **The addresses are typed in Settings**, under an Advanced section of Account. Until
-   MemSync is deployed there is no default to ship.
+1. **Where sharing sits.** A Share button at the top right of a project, with the
+   people on it beside it, and shared projects and invitations in the project switcher.
+   No sidebar entry and no Settings fields.
+2. **MemCode finds MemSync in memtrace.io's list of services**, asked at most once a
+   minute. A list that cannot be read means no Share button until the next try.
 3. **The sign-in address must be at www.memtrace.io or on this computer.**
 4. **No new package.** gRPC and Protocol Buffers are written against Node's own HTTP/2,
    and checked against the `.proto` file. The website uses Connect.
 5. **One local project per shared project on a computer, and one shared project per local
    project.**
-6. **A project in Team Sync cannot be connected** until it has left its team.
-7. **Disconnecting is local.** It does not leave the shared project. MemCode has no leave.
-8. **The window is given names only.** Account ids and email addresses of other people
-   stay in the runtime.
+6. **A project in Team Sync cannot be shared** until it has left its team.
+7. **Share starts a shared project with the local project's name.** There is no step to
+   name it, and nothing to confirm before the first invitation goes.
+8. **The window is given names and account ids**, the ids so the owner can remove a
+   guest. Whom an invitation is for is shown to the owner only; a guest sees how many are
+   open.
 9. **Every sentence** on this page and on the screens.
 10. **Ten seconds** of patience for a MemSync call and fifteen for the token exchange.
 11. **A token is renewed a minute before it expires**, or at half its life when it lives
     under two minutes.
-12. **The page that opens at memtrace.io** is `/account?workspace=all&section=memcode`,
-    which is where the MemCode tab was put on its own branch. The address is fixed in the
-    native shell.
+12. **Open and Join make a project with no folder.** The board works at once; a folder is
+    chosen when someone wants workers here.
 13. **The local-run script is in the repository**, with a stand-in for the native shell.
 
 For board sync, beside what the [layout page](shared-board-layout-proposal.md) holds:
 
-14. **Sync starts by itself** for every connected project. There is no switch per project
-    other than Disconnect.
+14. **Sync starts by itself** for every shared project. There is no switch per project.
 15. **Where the board is kept on disk**: `shared-boards/` in the profile.
 16. **Where a project and the log hold an entry with the same id, the log's is taken.**
     That is one board on two computers, or a project that is connected again.
-17. **Connect waits up to eight seconds** for board sync to say how the two boards stand,
+17. **Sharing waits up to eight seconds** for board sync to say how the two boards stand,
     and takes the link back when both have work. When the service cannot be asked in
-    that time, the link stays and the Sharing view says it later.
+    that time, the link stays and the Share panel says it later.
 18. **A project that joins takes the board's lanes, custom fields and saved views** in
     place of its own.
 19. **How long MemCode waits before trying again**: 1, 2, 5, 15, 30, then 60 seconds.
-20. **A comment in a connected project is by the Memtrace account**, with the name the
+20. **A comment in a shared project is by the Memtrace account**, with the name the
     sharing service has for it. Before, it was by "You".
 21. **A task that a worker on this computer is on is not taken off the board here** when
     someone else deletes it. It is back for everyone once it changes here.
@@ -479,8 +532,9 @@ For what happens on a card:
   file shows who shared it; it is not refused.
 - What the [layout page](shared-board-layout-proposal.md#not-built) lists for the board.
 - Running a worker on someone else's computer. MemSync has nothing for it.
-- Leaving a shared project from MemCode.
 - Anything for organization projects. MemSync has none yet.
 - Moving a Team Sync project to a shared project.
-- A default address. It needs a deployed MemSync.
-- A notice in the app when an invitation arrives. The Sharing view shows it when opened.
+- Renaming or deleting a shared project from MemCode. Both are at memtrace.io.
+- A notice in the app when an invitation arrives. The switcher shows it when opened.
+- Taking back a shared project that Share started when writing its board then failed. It
+  stays at MemSync, empty, and the next Share starts another.
