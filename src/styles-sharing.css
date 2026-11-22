@@ -308,3 +308,64 @@
   margin-left: 8px;
   white-space: nowrap;
 }
+
+/* A message someone else sent to a worker run here, waiting for this person. */
+.worker-asks {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.worker-ask {
+  padding: 12px 14px;
+  border: 1px solid #f0dcb0;
+  border-radius: 10px;
+  background: #fffbf1;
+  color: var(--ink);
+}
+.worker-ask header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.worker-ask header svg {
+  color: #b7832a;
+  flex-shrink: 0;
+}
+.worker-ask header strong {
+  flex: 1;
+  font-weight: 550;
+}
+.worker-ask header time {
+  font-size: 11px;
+  color: var(--muted);
+}
+.worker-ask blockquote {
+  margin: 8px 0 10px;
+  padding: 8px 10px;
+  border-left: 2px solid #e6c98a;
+  background: #fff;
+  border-radius: 0 6px 6px 0;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+.worker-ask footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.worker-ask footer > div {
+  display: flex;
+  gap: 6px;
+}
+.worker-ask footer .button {
+  padding: 6px 12px;
+  gap: 6px;
+}
+.board-asks {
+  color: #a26f17;
+}

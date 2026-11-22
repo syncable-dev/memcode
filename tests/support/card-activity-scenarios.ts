@@ -1,8 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import type { StoryReviewRun } from "../../src/code-review";
 import { cardIdOf } from "../../runtime/sharing/cards/activity";
+import { idOf } from "../../runtime/sharing/board/updates";
 import { until } from "./board-computers";
 import { at, cardComputer, turn } from "./card-computers";
 import { cast, signedInTo, type SharingWorld } from "./projects-api-scenarios";
@@ -385,6 +388,354 @@ export function cardActivityScenarios(
       await until(() => !!laptop.find("task-7").sharedSession, "the card");
       assert.equal(cardIdOf("task-7"), cardIdOf("task-7"));
       assert.match(cardIdOf("task-7"), /^[0-9a-f-]{36}$/);
+    },
+  );
+
+  // ── Messages to a worker on another computer (ADR-0015) ────────────────
+
+  /** Alex runs a worker on the Mac; `other` has the card open and may write to it. */
+  async function running(
+    world: SharingWorld,
+    later: (close: () => unknown) => void,
+    other: "pc" | "guest",
+  ) {
+    const made = await project(world, later);
+    const { people, shared, mac } = made;
+    const sender =
+      other === "guest"
+        ? made.laptop
+        : await cardComputer(world, people.alex, shared, {
+            device: "Windows",
+            names: [people.alex, people.dana],
+          });
+    if (other === "pc") later(() => sender.close());
+    if (other === "pc") sender.addTask(made.id);
+    const onMac = mac.find(made.id);
+    onMac.run = { state: "running", startedAt: at(1) } as never;
+    onMac.messages.push(turn("m1", "Export the report as CSV.", "user"));
+    await mac.activity.capture();
+    sender.activity.follow(made.id);
+    await until(
+      () => !!sender.find(made.id).sharedSession,
+      "the sender to see the Mac's run",
+    );
+    const sent = (messageId: string) =>
+      sender
+        .find(made.id)
+        .sharedSession?.messages.find((message) => message.id === messageId);
+    return { ...made, sender, onMac, sent };
+  }
+
+  scenario(
+    "a follow-up from the person's other computer continues their worker at once, and both see the answer",
+    async (world, later) => {
+      const { people, mac, sender, onMac, id, sent } = await running(
+        world,
+        later,
+        "pc",
+      );
+      assert.equal(sender.find(id).sharedRunIsYours, true);
+      const messageId = await sender.activity.messageWorker(
+        id,
+        "Also export as PDF.",
+      );
+      assert.match(sent(messageId)!.deliveryLine!, /Sending…|Sent to your Mac/);
+      await until(() => mac.delivered.length === 1, "the Mac to take it");
+      const [{ message }] = mac.delivered;
+      assert.equal(message.id, messageId);
+      assert.equal(message.text, "Also export as PDF.");
+      assert.equal(message.actor?.name, people.alex.name);
+      assert.equal(message.actor?.device, "Windows");
+      assert.equal(mac.find(id).sharedAsks, undefined);
+      await until(
+        () => sent(messageId)?.deliveryLine === "Queued on your Mac",
+        "the PC to see it queued on the Mac",
+      );
+
+      // The worker on the Mac picks it up and answers.
+      const taken = onMac.messages.find((one) => one.id === messageId)!;
+      taken.promptedAt = at(5);
+      taken.followupState = "included";
+      onMac.messages.push(turn("m2", "Added the PDF export.", "assistant", 6));
+      await mac.activity.capture();
+      await until(
+        () =>
+          !!sender
+            .find(id)
+            .sharedSession?.messages.some(
+              (one) => one.text === "Added the PDF export.",
+            ) && sent(messageId)?.followupState === "included",
+        "the PC to see the answer",
+      );
+      const shown = sent(messageId)!;
+      assert.equal(shown.followupState, "included");
+      assert.equal(shown.deliveryLine, undefined);
+      // The follow-up is the PC's, in the Mac's conversation too.
+      assert.equal(shown.actor?.device, "Windows");
+      assert.equal(mac.delivered.length, 1);
+    },
+  );
+
+  scenario(
+    "a message from someone else waits on the computer running the worker until its person allows it",
+    async (world, later) => {
+      const { people, mac, sender, id, sent } = await running(
+        world,
+        later,
+        "guest",
+      );
+      assert.equal(sender.find(id).sharedRunIsYours, false);
+      const messageId = await sender.activity.messageWorker(
+        id,
+        "Could you add a total row?",
+      );
+      await until(
+        () => mac.find(id).sharedAsks?.length === 1,
+        "the Mac to ask Alex",
+      );
+      const [ask] = mac.find(id).sharedAsks!;
+      assert.deepEqual(
+        { ...ask, sentAt: "" },
+        {
+          id: messageId,
+          from: people.dana.name,
+          device: "Windows",
+          kind: "message",
+          text: "Could you add a total row?",
+          sentAt: "",
+        },
+      );
+      assert.equal(
+        mac.delivered.length,
+        0,
+        "nothing runs before Alex allows it",
+      );
+      await until(
+        () =>
+          sent(messageId)?.deliveryLine ===
+          `Waiting for ${people.alex.name} to allow it`,
+        "Dana to see it wait",
+      );
+
+      await mac.activity.decide(id, messageId, true);
+      assert.equal(mac.delivered.length, 1);
+      assert.equal(mac.delivered[0].message.actor?.name, people.dana.name);
+      assert.equal(mac.find(id).sharedAsks, undefined);
+      await until(
+        () =>
+          sent(messageId)?.deliveryLine === `${people.alex.name} allowed it`,
+        "Dana to see it allowed",
+      );
+      await assert.rejects(
+        mac.activity.decide(id, messageId, false),
+        /no longer waiting/,
+      );
+    },
+  );
+
+  scenario(
+    "a declined message is shown as declined to whoever sent it, and nothing runs",
+    async (world, later) => {
+      const { people, mac, sender, id, sent } = await running(
+        world,
+        later,
+        "guest",
+      );
+      const messageId = await sender.activity.messageWorker(
+        id,
+        "Delete the tests.",
+      );
+      await until(() => !!mac.find(id).sharedAsks, "the Mac to ask Alex");
+      await mac.activity.decide(id, messageId, false);
+      await until(
+        () => sent(messageId)?.deliveryLine === `${people.alex.name} declined`,
+        "Dana to see it declined",
+      );
+      assert.equal(sent(messageId)!.followupState, "cancelled");
+      assert.equal(mac.delivered.length, 0);
+    },
+  );
+
+  scenario(
+    "what became of a message counts only when the worker's own account wrote it",
+    async (world, later) => {
+      const { people, sender, id, sent, dana, shared } = await running(
+        world,
+        later,
+        "guest",
+      );
+      const messageId = await sender.activity.messageWorker(id, "Ship it.");
+      await until(
+        () => sent(messageId)?.deliveryLine?.startsWith("Waiting for") === true,
+        "Dana to see it wait",
+      );
+      // Dana writes, in her own name, that her message was picked up.
+      const forged = new TextEncoder().encode(
+        JSON.stringify({
+          format: "memcode-card",
+          version: 1,
+          device: sender.device,
+          kind: "delivery",
+          delivery: {
+            messageId,
+            sessionId: sent(messageId) && sender.find(id).sharedSession!.id,
+            state: "picked-up",
+            at: at(9),
+          },
+        }),
+      );
+      await dana.cards.append(shared, cardIdOf(id), [
+        { id: idOf(forged), payload: forged },
+      ]);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      assert.equal(
+        sent(messageId)!.deliveryLine,
+        `Waiting for ${people.alex.name} to allow it`,
+      );
+    },
+  );
+
+  scenario(
+    "a message sent while the computer running the worker is away is taken when it comes back, once",
+    async (world, later) => {
+      const { mac, sender, id } = await running(world, later, "pc");
+      await mac.activity.stop();
+      const messageId = await sender.activity.messageWorker(
+        id,
+        "When you are back: add a README.",
+      );
+      await until(() => sender.activity.unsent === 0, "the PC to send it");
+      assert.equal(mac.delivered.length, 0);
+      mac.start();
+      await mac.activity.capture();
+      await until(
+        () => mac.delivered.length === 1,
+        "the Mac to take it on return",
+      );
+      assert.equal(mac.delivered[0].message.id, messageId);
+      // The Mac remembers how far it read the card for messages.
+      const kept = join(mac.folder, "cards.json");
+      const readUpTo = async () =>
+        JSON.parse(await readFile(kept, "utf8")).hosted?.[id] as
+          number | undefined;
+      for (let tries = 0; !(await readUpTo()) && tries < 100; tries++)
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      assert.ok((await readUpTo())! > 0, "the Mac keeps how far it read");
+      await mac.restart();
+      await mac.activity.capture();
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      assert.equal(
+        mac.delivered.length,
+        1,
+        "taken once, not again after a restart",
+      );
+      // Even read again from the start, a message is taken once.
+      const file = JSON.parse(await readFile(kept, "utf8"));
+      delete file.hosted;
+      await writeFile(kept, JSON.stringify(file));
+      await mac.restart();
+      await mac.activity.capture();
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      assert.equal(mac.delivered.length, 1, "taken once when read again");
+    },
+  );
+
+  scenario(
+    "what the worker waits for is answered from the person's other computer; a secret is answered on the worker's",
+    async (world, later) => {
+      const { mac, sender, id, onMac } = await running(world, later, "pc");
+      const ask = (inputId: string, secret = false) => ({
+        id: inputId,
+        taskId: id,
+        runId: "run-1",
+        harness: onMac.harness,
+        kind: "question" as const,
+        title: "Which format first?",
+        questions: [
+          {
+            id: "q1",
+            question: secret ? "Paste the API key" : "Which format first?",
+            options: [
+              { id: "csv", label: "CSV" },
+              { id: "pdf", label: "PDF" },
+            ],
+            ...(secret ? { secret: true, allowText: true } : {}),
+          },
+        ],
+        createdAt: at(2),
+        status: "pending" as const,
+      });
+      mac.state.workerInputs = [ask("input-1"), ask("input-2", true)];
+      await mac.activity.capture();
+      const shownInputs = () => sender.find(id).sharedInputs ?? [];
+      await until(() => shownInputs().length === 2, "the PC to see both");
+      const [plain, secret] = ["input-1", "input-2"].map((inputId) =>
+        shownInputs().find((one) => one.id === inputId)!,
+      );
+      assert.deepEqual(plain.elsewhere, { answerable: true });
+      assert.deepEqual(secret.elsewhere, {
+        line: "Answer this on your Mac",
+        answerable: false,
+      });
+      await assert.rejects(
+        sender.activity.answerWorker(id, "input-2", { answers: { q1: "x" } }),
+        /Answer this on your Mac/,
+      );
+      await sender.activity.answerWorker(id, "input-1", {
+        answers: { q1: "pdf" },
+      });
+      assert.equal(
+        shownInputs().find((one) => one.id === "input-1")!.elsewhere!
+          .answerable,
+        false,
+      );
+      await until(
+        () => mac.answered.length === 1,
+        "the Mac to answer the worker",
+      );
+      assert.deepEqual(mac.answered[0].response, { answers: { q1: "pdf" } });
+      await mac.activity.capture();
+      await until(
+        () => !shownInputs().some((one) => one.id === "input-1"),
+        "the answered question to leave the PC's card",
+      );
+    },
+  );
+
+  scenario(
+    "someone who joined after the worker's computer last looked is named, not called someone",
+    async (world, later) => {
+      const people = cast();
+      const alex = signedInTo(world, people.alex),
+        dana = signedInTo(world, people.dana);
+      later(() => alex.close());
+      later(() => dana.close());
+      const shared = await alex.website.startProject("Website");
+      await dana.projects.acceptInvitation(
+        shared,
+        await alex.website.invite(shared, people.dana.email!),
+      );
+      // The Mac knows only Alex: Dana joined after it read who is on the project.
+      const mac = await cardComputer(world, people.alex, shared, {
+        later: [people.dana],
+      });
+      later(() => mac.close());
+      const laptop = await cardComputer(world, people.dana, shared, {
+        device: "Windows",
+        names: [people.alex, people.dana],
+      });
+      later(() => laptop.close());
+      const id = randomUUID();
+      mac.addTask(id);
+      laptop.addTask(id);
+      mac.find(id).run = { state: "running", startedAt: at(1) } as never;
+      mac.find(id).messages.push(turn("m1", "Working on it."));
+      await mac.activity.capture();
+      laptop.activity.follow(id);
+      await until(() => !!laptop.find(id).sharedSession, "Dana to see the run");
+      await laptop.activity.messageWorker(id, "Add a total row?");
+      await until(() => !!mac.find(id).sharedAsks, "the Mac to ask Alex");
+      assert.equal(mac.find(id).sharedAsks![0].from, people.dana.name);
     },
   );
 }

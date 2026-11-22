@@ -4,12 +4,13 @@ import type { Message } from "../../../src/shared";
 import type { StoryReviewRun } from "../../../src/code-review";
 import { sessionPayload } from "../../team/session-protocol";
 import { LARGEST_UPDATE } from "../board/document";
+import { workerResponseSchema } from "../../worker-input";
 
 /**
  * What MemCode writes into a card's activity log at the sharing service
  * (MemSync ADR-0014). MemSync never reads an entry; this file is the format.
  *
- * Three kinds of entry, each with the computer that wrote it:
+ * Kinds of entry, each with the computer that wrote it:
  * - `session`: one worker run on that computer, as Team Sync shares it: its
  *   state, what it is doing, its models, and the person's and the worker's
  *   turns of the conversation. An entry holds the run's latest state and the
@@ -17,6 +18,13 @@ import { LARGEST_UPDATE } from "../board/document";
  * - `review`: the code review report of that run.
  * - `result`: a file someone shared from the card, kept at the service by its
  *   SHA-256.
+ * - `message`: something for a worker run on another computer, written by the
+ *   computer it is sent from (MemSync ADR-0015): a follow-up, or an answer to
+ *   what the worker waits for.
+ * - `delivery`: what became of a message, written by the computer running the
+ *   worker. It counts only from the account that started the worker.
+ * - `input`: a question or an approval the worker waits for, written by the
+ *   computer running it, so the person can answer from another computer.
  */
 
 export const CARD_FORMAT = "memcode-card",
@@ -26,10 +34,20 @@ export const CARD_FORMAT = "memcode-card",
 export type SessionPart = z.infer<typeof sessionPart>;
 /** A file shared from a card. The bytes are kept at the service by `sha256`. */
 export type SharedResultRecord = z.infer<typeof resultRecord>;
+/** A follow-up for a worker run on another computer, or an answer to what it waits for. */
+export type WorkerMessageRecord = z.infer<typeof messageRecord>;
+/** What the computer running a worker did with a message. */
+export type DeliveryRecord = z.infer<typeof deliveryRecord>;
+export type DeliveryState = DeliveryRecord["state"];
+/** A question or an approval a worker waits for, as other computers see it. */
+export type InputRecord = z.infer<typeof inputRecord>;
 export type CardRecord =
   | { kind: "session"; session: SessionPart }
   | { kind: "review"; sessionId: string; review: StoryReviewRun }
-  | { kind: "result"; result: SharedResultRecord };
+  | { kind: "result"; result: SharedResultRecord }
+  | { kind: "message"; message: WorkerMessageRecord }
+  | { kind: "delivery"; delivery: DeliveryRecord }
+  | { kind: "input"; input: InputRecord };
 export interface WritingDevice {
   id: string;
   /** "Mac", "Windows" or "Linux", as Team Sync names a device. Never a host name. */
@@ -79,6 +97,77 @@ const resultRecord = z
     description: z.string().max(2000).optional(),
   })
   .strict();
+const moment = z.string().datetime();
+/** The longest follow-up a card carries; the app's own message box holds as much. */
+export const LONGEST_WORKER_MESSAGE = 20_000;
+const messageRecord = z
+  .object({
+    id: uuid,
+    sessionId: uuid,
+    sentAt: moment,
+    text: z.string().trim().min(1).max(LONGEST_WORKER_MESSAGE).optional(),
+    answer: z
+      .object({
+        inputId: z.string().min(1).max(200),
+        response: workerResponseSchema,
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+const deliveryRecord = z
+  .object({
+    messageId: uuid,
+    sessionId: uuid,
+    /**
+     * `queued`: the worker takes it when it is ready. `asking`: it waits for the
+     * worker's person to allow it. `picked-up`: the worker has it. `declined`:
+     * the worker's person said no. `failed`: it could not reach the worker.
+     */
+    state: z.enum(["queued", "asking", "picked-up", "declined", "failed"]),
+    at: moment,
+    detail: z.string().max(500).optional(),
+  })
+  .strict();
+const choice = z
+  .object({
+    id: z.string().min(1).max(1000),
+    label: z.string().max(500),
+    description: z.string().max(2000).optional(),
+    kind: z.enum(["allow-once", "allow-session", "deny", "other"]).optional(),
+  })
+  .strict();
+const inputRecord = z
+  .object({
+    sessionId: uuid,
+    id: z.string().min(1).max(200),
+    kind: z.enum(["approval", "question", "plan"]),
+    title: z.string().max(4000),
+    description: z.string().max(8000).optional(),
+    toolName: z.string().max(200).optional(),
+    details: z.string().max(8000).optional(),
+    options: z.array(choice).max(40).optional(),
+    questions: z
+      .array(
+        z
+          .object({
+            id: z.string().min(1).max(1000),
+            question: z.string().max(4000),
+            options: z.array(choice).max(40),
+            multiple: z.boolean().optional(),
+            allowText: z.boolean().optional(),
+            secret: z.boolean().optional(),
+          })
+          .strict(),
+      )
+      .max(20)
+      .optional(),
+    createdAt: moment,
+    status: z.enum(["pending", "answered", "cancelled"]),
+    /** It asks for something secret: it is answered on the worker's computer only. */
+    answerHere: z.boolean().optional(),
+  })
+  .strict();
 const envelope = {
   format: z.literal(CARD_FORMAT),
   version: z.literal(CARD_VERSION),
@@ -99,7 +188,23 @@ const entryShape = z.discriminatedUnion("kind", [
   z
     .object({ ...envelope, kind: z.literal("result"), result: resultRecord })
     .strict(),
+  z
+    .object({ ...envelope, kind: z.literal("message"), message: messageRecord })
+    .strict(),
+  z
+    .object({
+      ...envelope,
+      kind: z.literal("delivery"),
+      delivery: deliveryRecord,
+    })
+    .strict(),
+  z
+    .object({ ...envelope, kind: z.literal("input"), input: inputRecord })
+    .strict(),
 ]);
+/** A message is a follow-up or an answer, never both and never neither. */
+const sensible = (entry: CardEntry) =>
+  entry.kind !== "message" || !entry.message.text !== !entry.message.answer;
 
 /** A local path or a credential never leaves this computer in a shared text. */
 export const publicText = (value: string) =>
@@ -235,7 +340,7 @@ export function readCardEntry(payload: Uint8Array): ReadEntry {
     return { readable: false, newer: false };
   }
   const read = entryShape.safeParse(value);
-  if (read.success)
+  if (read.success && sensible(read.data as unknown as CardEntry))
     return { readable: true, entry: read.data as unknown as CardEntry };
   const version = (value as { format?: unknown; version?: unknown } | null)
     ?.version;

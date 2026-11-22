@@ -235,6 +235,20 @@ function BoardContent({
       </span>
     ) : null;
   };
+  // Someone else asked to continue a worker run here: it waits for this person.
+  const asked = (task: WorkItem) => {
+    const count = task.sharedAsks?.length ?? 0;
+    return count > 0 ? (
+      <span
+        className="board-asks"
+        title={`${count} message${count === 1 ? "" : "s"} to allow`}
+        aria-label={`${count} message${count === 1 ? "" : "s"} to allow`}
+      >
+        <MessageSquare size={11} />
+        {count} to allow
+      </span>
+    ) : null;
+  };
   const lanes: BoardGroup[] =
     groups ??
     stages.map((stage) => ({
@@ -601,6 +615,7 @@ function BoardContent({
                       </div>
                       <div className="card-meta">
                         {queued(task)}
+                        {asked(task)}
                         {discussion(task)}
                         {task.stage === "done" ? (
                           <Check size={13} className="mint-ink" />

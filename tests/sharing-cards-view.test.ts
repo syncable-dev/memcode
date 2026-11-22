@@ -6,6 +6,7 @@ import {
   cardRunElsewhere,
   isUnfetchedSharedFile,
   runElsewhereNote,
+  sendElsewhereLabel,
   sharedFilesToFetch,
 } from "../src/sharing-cards";
 import { task } from "./support/board-computers";
@@ -53,9 +54,15 @@ test("a run from another computer's card log is shown as a worker elsewhere, by 
   assert.equal(owner.session?.state, "running");
   assert.equal(owner.claim.attemptId, "run-1");
   assert.equal(
-    runElsewhereNote(owner),
-    "This worker runs on Alex Holm's Mac. Comment on the card to reach them.",
+    runElsewhereNote(owner, true),
+    "Continue the worker on your Mac…",
   );
+  assert.equal(
+    runElsewhereNote(owner, false),
+    "Message the worker on Alex Holm's Mac. Alex Holm allows it first.",
+  );
+  assert.equal(sendElsewhereLabel(owner, true), "Send to your Mac");
+  assert.equal(sendElsewhereLabel(owner, false), "Send to Alex Holm's Mac");
   // A card without a run from elsewhere, or a Team Sync session, is not one.
   assert.equal(cardRunElsewhere(task("local-web", "task-2")), undefined);
   assert.equal(
