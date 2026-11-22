@@ -194,6 +194,114 @@ export function boardSyncScenarios(
   );
 
   scenario(
+    "a goal, a cycle and a task made on one computer while both are connected show on the other, and so does moving the task",
+    async (world, later) => {
+      const { shared, mac, pc } = await twoComputers(world, later);
+      mac.connect(shared);
+      await mac.synced();
+      pc.connect(shared);
+      await agree(mac, pc);
+      const goalOn = (on: Computer) =>
+        on.state.epics.find((one) => one.id === "goal-2");
+      const cycleOn = (on: Computer) =>
+        on.state.cycles.find((one) => one.id === "cycle-2");
+
+      await pc.edit((state) => {
+        state.epics.push({
+          id: "goal-2",
+          projectId: pc.projectId,
+          identifier: "EP-02",
+          title: "Exports can be scheduled",
+          description: "Weekly, to an email address.",
+          phase: "next",
+          color: "cyan",
+          order: 1,
+        });
+        state.cycles.push({
+          id: "cycle-2",
+          projectId: pc.projectId,
+          name: "Week 48",
+          goal: "Schedule the first export",
+          startDate: "2026-11-23",
+          endDate: "2026-11-29",
+          timeZone: "Europe/Copenhagen",
+          state: "planned",
+          capacity: 12,
+          calendar: "weekdays",
+          createdAt: "2026-11-21T14:00:00.000Z",
+          snapshots: [],
+        });
+        state.tasks.push(
+          task(pc.projectId, "task-5", {
+            title: "Schedule a weekly export",
+            epicId: "goal-2",
+            cycleId: "cycle-2",
+          }),
+        );
+      });
+      // No restart, no click: the Mac has all three.
+      await until(
+        () => !!goalOn(mac) && !!cycleOn(mac) && !!find(mac, "task-5"),
+        "the Mac to show the goal, the cycle and the task made on the PC",
+      );
+      const goal = goalOn(mac)!;
+      assert.deepEqual(
+        [
+          goal.projectId,
+          goal.identifier,
+          goal.title,
+          goal.description,
+          goal.phase,
+          goal.color,
+          goal.order,
+        ],
+        [
+          mac.projectId,
+          "EP-02",
+          "Exports can be scheduled",
+          "Weekly, to an email address.",
+          "next",
+          "cyan",
+          1,
+        ],
+      );
+      assert.equal(cycleOn(mac)!.projectId, mac.projectId);
+      assert.equal(cycleOn(mac)!.name, "Week 48");
+      assert.equal(cycleOn(mac)!.startDate, "2026-11-23");
+      assert.equal(cycleOn(mac)!.capacity, 12);
+      assert.equal(cycleOn(mac)!.state, "planned");
+      assert.equal(find(mac, "task-5").epicId, "goal-2");
+      assert.equal(find(mac, "task-5").cycleId, "cycle-2");
+      assert.equal(find(mac, "task-5").statusId, "mac-project:planned");
+
+      // The Mac starts the cycle and moves the task. The PC sees both.
+      await mac.edit(() => {
+        cycleOn(mac)!.state = "active";
+        cycleOn(mac)!.startedAt = "2026-11-23T08:00:00.000Z";
+        find(mac, "task-5").stage = "working";
+        find(mac, "task-5").statusId = "mac-project:working";
+      });
+      await until(
+        () =>
+          cycleOn(pc)?.state === "active" &&
+          find(pc, "task-5").stage === "working",
+        "the PC to see the cycle start and the task move",
+      );
+      assert.equal(find(pc, "task-5").statusId, "pc-project:working");
+      assert.ok(cycleOn(pc)!.startedAt);
+
+      // Renaming the goal and taking the task out of the cycle travel too.
+      await pc.edit(() => {
+        goalOn(pc)!.title = "Exports run on a schedule";
+        find(pc, "task-5").cycleId = null;
+      });
+      await agree(mac, pc);
+      assert.equal(goalOn(mac)!.title, "Exports run on a schedule");
+      assert.equal(find(mac, "task-5").cycleId, null);
+    },
+  );
+
+  scenario(
     "changes made while the service cannot be reached wait, survive a restart, and are sent when it is back",
     async (world, later) => {
       const { shared, mac, pc } = await twoComputers(world, later);
