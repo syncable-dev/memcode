@@ -473,6 +473,95 @@ test("a board connected on two computers of one person follows what is done in t
       "the PC to see the comment change",
     );
 
+    // A goal, a cycle and a task made on the PC are on the Mac without a restart.
+    const scheduled = await pc.request<{ id: string }>("epic:create", {
+      projectId: "local-web",
+      title: "Exports can be scheduled",
+      description: "",
+      phase: "next",
+    });
+    const week = await pc.request<{ id: string }>("cycle:create", {
+      projectId: "local-web",
+      name: "Week 48",
+      goal: "Schedule the first export",
+      startDate: "2026-11-23",
+      endDate: "2026-11-29",
+      timeZone: "Europe/Copenhagen",
+      capacity: null,
+      calendar: "weekdays",
+    });
+    const weekly = await pc.request<WorkItem>("task:create", {
+      projectId: "local-web",
+      title: "Schedule a weekly export",
+      description: "",
+      priority: "medium",
+      harness: pc.state().settings.defaultHarness,
+      epicId: scheduled.id,
+      cycleId: week.id,
+    });
+    await until(
+      () =>
+        mac.state().epics.some((goal) => goal.id === scheduled.id) &&
+        mac.state().cycles.some((cycle) => cycle.id === week.id) &&
+        tasksOf(mac).some((task) => task.id === weekly.id),
+      "the Mac to show the goal, the cycle and the task made on the PC",
+    );
+    const arrived = tasksOf(mac).find((task) => task.id === weekly.id)!;
+    assert.equal(arrived.identifier, weekly.identifier);
+    assert.equal(arrived.epicId, scheduled.id);
+    assert.equal(arrived.cycleId, week.id);
+    // The Mac starts the cycle and moves the task; the PC follows.
+    await mac.request("cycle:start", week.id);
+    await mac.request("task:update", {
+      id: weekly.id,
+      patch: { stage: "working" },
+    });
+    await until(
+      () =>
+        pc.state().cycles.find((cycle) => cycle.id === week.id)?.state ===
+          "active" &&
+        tasksOf(pc).find((task) => task.id === weekly.id)?.stage === "working",
+      "the PC to see the cycle start and the task move",
+    );
+
+    // A project that is not shared is as it always was: nothing of it is sent.
+    const unshared: Project = {
+      id: "local-private",
+      name: "private notes",
+      description: "",
+      path: join(mac.root, "private"),
+      branch: "main",
+      analysis: "idle",
+      createdAt: "2026-11-21T12:00:00.000Z",
+    };
+    mac.state().projects.push(unshared);
+    const sentBefore = mac.service.boards.log(shared).length;
+    const mine = await mac.request<WorkItem>("task:create", {
+      projectId: "local-private",
+      title: "Only on this computer",
+      description: "",
+      priority: "medium",
+      harness: mac.state().settings.defaultHarness,
+    });
+    await mac.request("task:update", {
+      id: mine.id,
+      patch: { stage: "working" },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    assert.equal(mac.service.boards.log(shared).length, sentBefore);
+    assert.equal(
+      pc.state().tasks.some((task) => task.id === mine.id),
+      false,
+    );
+    assert.deepEqual(
+      mac.state().sharedBoards!.map((board) => board.projectId),
+      ["local-web"],
+    );
+    assert.equal(
+      mac.state().tasks.find((task) => task.id === mine.id)?.stage,
+      "working",
+    );
+
     // The PC is restarted. What the Mac does meanwhile is there afterwards.
     await pc.restart();
     await mac.request("task:update", {
@@ -489,7 +578,7 @@ test("a board connected on two computers of one person follows what is done in t
     // Disconnecting on the PC leaves the board there and the Mac alone.
     await pc.request("sharing:disconnect", { projectId: "local-web" });
     assert.deepEqual(pc.state().sharedBoards, []);
-    assert.equal(tasksOf(pc).length, 2);
+    assert.equal(tasksOf(pc).length, 3);
     // The same board, connected again, is still one board: nothing is added to the log.
     const logged = mac.service.boards.log(shared).length;
     await pc.request("sharing:connect", {
@@ -498,7 +587,7 @@ test("a board connected on two computers of one person follows what is done in t
     });
     await until(() => boardOf(pc)?.state === "synced", "the PC to be back");
     assert.equal(mac.service.boards.log(shared).length, logged);
-    assert.equal(tasksOf(pc).length, 2);
+    assert.equal(tasksOf(pc).length, 3);
 
     // A project with tasks of its own is not connected to a board that has work.
     const other: Project = {
@@ -524,7 +613,7 @@ test("a board connected on two computers of one person follows what is done in t
         projectId: "local-other",
         sharedProjectId: shared,
       }),
-      /Two boards are never made into one/,
+      /: another project already has work of its own, so it cannot join Website: connect a project that has none yet\.$/,
     );
     assert.deepEqual(pc.state().sharedProjectLinks, []);
     assert.equal(mac.service.boards.log(shared).length, logged);

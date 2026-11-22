@@ -66,8 +66,8 @@ export interface SharedBoardStatus {
    * `starting`: reading what the shared board holds.
    * `synced`: both hold the same. `sending`: changes made here are on their way.
    * `offline`: the sharing service cannot be reached; changes wait on this computer.
-   * `apart`: both boards have work on them. Two boards are never made into one,
-   *   so nothing is exchanged.
+   * `apart`: both boards have work on them. Boards are never merged, so nothing
+   *   is exchanged.
    * `newer`: a newer MemCode laid the board out; it is shown here and not changed.
    * `gone`: the shared project is not there for this person any more.
    * `stopped`: sync cannot go on, and `detail` says why.

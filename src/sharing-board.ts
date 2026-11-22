@@ -11,11 +11,11 @@ export interface BoardStanding {
 
 /**
  * Why a project with work of its own is not connected to a shared project that
- * already has a board, and what to do. Alex's rule: you share your own project
- * or you join someone else's and get their board. Nothing is ever merged.
+ * already has a board. Alex's rule: you share your own project, or you join
+ * someone else's and get their board. Nothing is ever merged.
  */
 export const twoBoards = (names: { local: string; shared: string }) =>
-  `${names.local} has tasks of its own, and ${names.shared} already has a board. Two boards are never made into one. To join ${names.shared}, connect a project that has no tasks yet. To share ${names.local}, start a new shared project for it at memtrace.io.`;
+  `${names.local} already has work of its own, so it cannot join ${names.shared}: connect a project that has none yet.`;
 
 const some = (count: number, one: string, many = `${one}s`) =>
   `${count} ${count === 1 ? one : many}`;
