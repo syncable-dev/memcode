@@ -285,6 +285,10 @@ export function standInCards(the: {
     get watching() {
       return watchers.size;
     },
+    /** Ends every watcher's stream with UNAVAILABLE, as MemSync does when it stops. */
+    cutWatchers() {
+      for (const watcher of [...watchers]) watcher.stream.end();
+    },
     recheckWatchers() {
       watchers.forEach(feed);
     },
