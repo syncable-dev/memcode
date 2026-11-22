@@ -7,6 +7,7 @@ import { actingAs } from "./support/memsync-owner";
 import { boardSyncScenarios } from "./support/board-sync-scenarios";
 import { boardsApiScenarios } from "./support/boards-api-scenarios";
 import { cardsApiScenarios } from "./support/cards-api-scenarios";
+import { cardActivityScenarios } from "./support/card-activity-scenarios";
 import {
   cast,
   projectsApiScenarios,
@@ -46,14 +47,16 @@ boardsApiScenarios("real memsync-server", async () => worldOn(await server()), {
 boardSyncScenarios("real memsync-server", async () => worldOn(await server()), {
   skip: realMemsyncMissing,
 });
-cardsApiScenarios(
-  "real memsync-server",
-  async () => {
-    const real = await server();
-    return { ...worldOn(real), lacks: await cardsMissing(real) };
-  },
-  { skip: realMemsyncMissing },
-);
+const cardsWorld = async () => {
+  const real = await server();
+  return { ...worldOn(real), lacks: await cardsMissing(real) };
+};
+cardsApiScenarios("real memsync-server", cardsWorld, {
+  skip: realMemsyncMissing,
+});
+cardActivityScenarios("real memsync-server", cardsWorld, {
+  skip: realMemsyncMissing,
+});
 
 test(
   "real memsync-server: a token it has no reason to trust is turned away",
