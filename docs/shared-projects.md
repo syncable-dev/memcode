@@ -294,8 +294,9 @@ on every `npm test`. Eleven of the thirteen project rules are reached against th
 server. `invitation_expired` is reached only on the stand-in, where days can be made to
 pass, and `the_owner_cannot_leave` nowhere, because MemCode never asks to leave.
 
-Board sync has eight scenarios with two computers that run against both: a board written
-out and taken by a second computer, changes in both directions, offline and a restart,
+Board sync has nine scenarios with two computers that run against both: a board written
+out and taken by a second computer, a goal, a cycle and a task made on one showing on the
+other while both run, changes in both directions, offline and a restart,
 changes made while sync was not running, two boards that stay two, two tasks numbered
 alike, and a guest who is taken off the project. Sixteen more run against the stand-in only,
 most because they need a service that can be made to misbehave: an answer that is lost,

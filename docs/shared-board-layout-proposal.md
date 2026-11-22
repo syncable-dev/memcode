@@ -358,7 +358,10 @@ the project again does.
   change a comment. Nothing stops a changed MemCode from writing one, and other computers
   would show it.
 - **The delivery history is not read off the log.** Burn-down and cycle snapshots stay
-  each computer's own, drawn from what that computer saw and when.
+  each computer's own, drawn from what that computer saw and when. A cycle that a
+  computer sees start or finish gets the same starting baseline and closing count it
+  would get if it had been started or finished there. A computer that joins after a cycle
+  started shows no baseline for it.
 - **A change made on this computer keeps this computer's clock.** Other computers date it
   by the log. Sorting by "updated" can differ by seconds between computers.
 - **Nobody repairs a computer that alone could not read an update.** See above.
