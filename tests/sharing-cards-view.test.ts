@@ -9,6 +9,9 @@ import {
   sharedFilesToFetch,
 } from "../src/sharing-cards";
 import { task } from "./support/board-computers";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { RemoteWorker } from "../src/components/RemoteWorker";
 
 const at = "2026-11-22T10:00:00.000Z";
 const result = (changes: Partial<SharedCardResult> = {}): SharedCardResult => ({
@@ -92,5 +95,26 @@ test("files shared from elsewhere are listed until fetched; shared changes and t
   assert.deepEqual(
     sharedFilesToFetch(card, [fetched]).map((file) => file.name),
     ["shot.png"],
+  );
+});
+
+test("the panel for a run from a shared project's card speaks of the project, and Team Sync's keeps its words", () => {
+  const owner = cardRunElsewhere(withRun())!;
+  const text = (scope?: "project") =>
+    renderToStaticMarkup(
+      createElement(RemoteWorker, { owner, offline: false, scope }),
+    ).replace(/<[^>]+>/g, " ");
+  const project = text("project");
+  assert.match(project, /SHARED/);
+  assert.match(
+    project,
+    /Conversation and review shared with the project\. It runs on Mac\./,
+  );
+  assert.doesNotMatch(project, /\bteam\b/i);
+  const team = text();
+  assert.match(team, /TEAM/);
+  assert.match(
+    team,
+    /Conversation and review shared with the team\. Execution stays on\s+Mac\./,
   );
 });
