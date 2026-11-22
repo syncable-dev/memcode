@@ -65,7 +65,6 @@ const refusals = {
   update_too_large: grpcStatus.INVALID_ARGUMENT,
   too_many_updates: grpcStatus.INVALID_ARGUMENT,
   invalid_card_id: grpcStatus.INVALID_ARGUMENT,
-  invalid_file: grpcStatus.INVALID_ARGUMENT,
   file_too_large: grpcStatus.INVALID_ARGUMENT,
   project_storage_full: grpcStatus.RESOURCE_EXHAUSTED,
   no_such_file: grpcStatus.NOT_FOUND,

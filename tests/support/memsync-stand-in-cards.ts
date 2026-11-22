@@ -31,7 +31,6 @@ type CardRule =
   | "empty_update"
   | "update_too_large"
   | "too_many_updates"
-  | "invalid_file"
   | "file_too_large"
   | "project_storage_full"
   | "no_such_file";
@@ -173,8 +172,9 @@ export function standInCards(the: {
 
   function upload(request: WireMessage, caller: StandInPerson): WireMessage {
     const project = allowed(request.project_id, caller);
-    const content = request.content as Uint8Array;
-    if (!content?.length) the.refuse("invalid_file");
+    // An empty file is kept like any other, as MemSync keeps it.
+    const content =
+      (request.content as Uint8Array | undefined) ?? new Uint8Array();
     if (content.length > LARGEST_FILE) the.refuse("file_too_large");
     const sha256 = createHash("sha256").update(content).digest("hex");
     const kept = filesOf(project);

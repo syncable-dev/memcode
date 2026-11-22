@@ -54,6 +54,8 @@ export async function shareableFile(
     throw new Error("Only files this task saved can be shared.");
   const info = await stat(path);
   if (!info.isFile()) throw new Error("Only a file can be shared.");
+  if (!info.size)
+    throw new Error("That file is empty, so there is nothing in it to share.");
   if (info.size > LARGEST_SHARED_FILE)
     throw new Error(
       "That file is larger than 5 MB, which is the most a project can share in one file.",
