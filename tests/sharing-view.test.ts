@@ -276,22 +276,14 @@ test("while the service cannot be reached, the page says so and how many changes
   assert.doesNotMatch(nothingWaiting, /kept on this computer/);
 });
 
-test("two boards that both have work are said to stay two, with what to do about it", () => {
+test("a project with work of its own that cannot join a board says so in one plain sentence", () => {
   const page = connected({ state: "apart" });
   assert.match(
     page,
-    /website has tasks of its own, and Launch plan already has a board\. Two boards are never made into one\./,
-  );
-  assert.match(
-    page,
-    /To join Launch plan, connect a project that has no tasks yet\./,
-  );
-  assert.match(
-    page,
-    /To share website, start a new shared project for it at memtrace\.io\./,
+    /website already has work of its own, so it cannot join Launch plan: connect a project that has none yet\./,
   );
   assert.match(page, /Disconnect/);
-  assert.doesNotMatch(page, /Keep both|The board is in sync/);
+  assert.doesNotMatch(page, /Keep both|The board is in sync|merged/);
 });
 
 test("changes that could not be read are named by person and day, and never stop the rest", () => {

@@ -762,7 +762,7 @@ test("a project with tasks cannot be connected to a shared project that already 
       (refusal: Error) => {
         assert.equal(
           refusal.message,
-          "app has tasks of its own, and Website already has a board. Two boards are never made into one. To join Website, connect a project that has no tasks yet. To share app, start a new shared project for it at memtrace.io.",
+          "app already has work of its own, so it cannot join Website: connect a project that has none yet.",
         );
         return true;
       },
