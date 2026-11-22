@@ -1072,6 +1072,21 @@ test("only a task's own saved file, at most 5 MB, can be shared, and only from a
       mac.sharing.shareResult({ taskId: "task-1", artifactId: "big" }),
       /larger than 5 MB/,
     );
+    await writeFile(join(folder, "empty.txt"), "");
+    mac.state.artifacts.push({
+      id: "empty",
+      projectId: "local-web",
+      taskId: "task-1",
+      name: "empty.txt",
+      kind: "text",
+      path: join(folder, "empty.txt"),
+      createdAt: at,
+      source: "Worker",
+    });
+    await assert.rejects(
+      mac.sharing.shareResult({ taskId: "task-1", artifactId: "empty" }),
+      /^Error: That file is empty, so there is nothing in it to share\.$/,
+    );
     await assert.rejects(
       mac.sharing.shareChanges("task-1"),
       /no recorded changes to share yet/,

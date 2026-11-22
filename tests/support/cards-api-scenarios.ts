@@ -141,7 +141,8 @@ export function cardsApiScenarios(
         assert.equal(stored.size, content.length);
         assert.equal(stored.uploadedBy, people.alex.accountId);
         const again = await dana.cards.upload(project, content);
-        assert.equal(again.uploadedBy, people.alex.accountId);
+        // Sent again, by anyone: the record of the first upload comes back.
+        assert.deepEqual(again, stored);
         const fetched = await dana.cards.download(project, stored.sha256);
         assert.equal(fetched.file.sha256, stored.sha256);
         assert.ok(Buffer.from(fetched.content).equals(content));
@@ -181,10 +182,16 @@ export function cardsApiScenarios(
           alex.cards.upload(project, randomBytes(5 * 1024 * 1024 + 1)),
           refusedBy("file_too_large"),
         );
-        await assert.rejects(
-          alex.cards.download(project, "0".repeat(64)),
-          refusedBy("no_such_file"),
-        );
+        // A hash the project does not keep, and text that is not a hash, are both no file.
+        for (const hash of ["0".repeat(64), "A".repeat(64), "not-a-hash"])
+          await assert.rejects(
+            alex.cards.download(project, hash),
+            refusedBy("no_such_file"),
+          );
+        // An empty file is kept like any other. MemCode never shares one.
+        const empty = await alex.cards.upload(project, new Uint8Array());
+        assert.equal(empty.size, 0);
+        assert.equal(empty.sha256, sha(new Uint8Array()));
         // Someone who is not on the project sees no card of it.
         await assert.rejects(
           bo.cards.readAfter(project, card, 0),
