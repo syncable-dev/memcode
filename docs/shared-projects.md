@@ -303,11 +303,10 @@ answers, MemCode stopped before and after the workspace file was written, a full
 a stream that is cut. `tests/sharing-runtime.test.ts` runs two whole runtimes against the
 stand-in, through the same requests the window makes.
 
-42 deliberate breakages of board sync were run against these tests. 40 make a test fail.
-One removed a check that turned out to be dead code. One is not caught: the line in
-`runtime/app.ts` that hands board sync the workspace save. What that line relies on, that
-`LocalStore.save` reads the workspace at the call and writes it after the step it is
-given, is covered in `tests/sharing-workspace-save.test.ts`.
+43 deliberate breakages of board sync were run against these tests. 42 make a test fail.
+One is not caught: the line in `runtime/app.ts` that hands board sync the workspace save.
+What that line relies on, that `LocalStore.save` reads the workspace at the call and
+writes it after the step it is given, is covered in `tests/sharing-workspace-save.test.ts`.
 
 ## Trying it on one computer
 
