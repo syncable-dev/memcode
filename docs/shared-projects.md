@@ -233,9 +233,9 @@ elsewhere:
 - the worker panel says SHARED, the harness, whose computer, and "Conversation and review
   shared with the project. It runs on Mac.";
 - the Code review tab shows the run's review;
-- the message box says "This worker runs on Alex Holm's Mac. Comment on the card to reach
-  them." and sends nothing. Starting a review or asking the review a question is refused
-  the same way. Comments reach everyone.
+- the message box sends to that worker, as the next section says. Starting a review or
+  asking the review a question is still done on the computer that runs the worker.
+  Comments reach everyone.
 
 A run shows only what the account that started it wrote. A turn or a review that someone
 else on the project writes into it is not shown. A computer never shows its own run back
@@ -250,6 +250,48 @@ opening it fetches it beside the card; shared changes show in the Changes tab.
 What a computer sent and what still waits is in `cards.json` in the board's folder, so a
 restart sends only what is new and nothing is lost offline. The computer's own id for card
 logs is in `shared-boards/computer.json`.
+
+## Continuing a worker from another computer
+
+A message to a worker travels in its card's log (MemSync's ADR-0015). The computer that
+runs the worker, the host, decides what happens to it (ADR-0006).
+
+**Sending.** On a card whose worker runs elsewhere, the message box works as it does for a
+worker here. It says "Continue the worker on your Mac…" when the worker runs under the
+person's own account, and "Message the worker on Alex Holm's Mac. Alex Holm allows it
+first." when it is someone else's. What is sent shows in the conversation, by the person who
+sent it, with one line for where it stands:
+
+| Where it stands | The line |
+| --- | --- |
+| Not at MemSync yet | Sending… |
+| In the log, the host has not read it | Sent to your Mac / Sent to Alex Holm's Mac |
+| Waiting for the host's person | Waiting for Alex Holm to allow it |
+| Queued for the worker | Queued on your Mac / Alex Holm allowed it |
+| The worker took it | No line: it is part of the conversation, and the answer follows on every computer. |
+| Declined | Alex Holm declined |
+| It could not reach the worker | Not delivered: the reason the host gave |
+
+The same lines are in the Queue tab, where such a message cannot be edited or cancelled.
+
+**On the host.** MemCode reads the card of every worker run here that runs now or ended in
+the last three days, from where it last read, so a message sent while the host was closed
+is read when it opens again, once. A message from the account that started the worker is
+handled exactly as a follow-up typed on the host. From anyone else it waits: the card shows
+"Dana Ek on Windows wants to continue this worker" with what they wrote, "Nothing runs
+until you allow it.", and Decline and Allow. The board card shows "1 to allow". The host
+writes what became of each message into the log: queued, waiting to be allowed, picked up,
+declined or not delivered.
+
+**Answering what the worker waits for.** A question, an approval or a plan the worker waits
+for is written to the card as well, and shows on the other computer in the same panel, to
+answer there. The same rules hold: the worker's own account straight through, anyone else
+after the host's person allows it. A question that asks for something secret is answered
+on the host only: the panel says "Answer this on your Mac".
+
+**Trust.** What became of a message, and what the worker waits for, count only when the
+account that started the worker wrote them. A message is handled once, whatever the log
+holds. Messages to a run on another computer are left alone.
 
 ## What a person is told
 
@@ -329,7 +371,9 @@ with `[sharing]`.
 | What a connected project keeps on disk | `runtime/sharing/board/store.ts` |
 | How a board stands, in words | `src/sharing-board.ts` |
 | What MemCode writes into a card's log | `runtime/sharing/cards/entries.ts` |
-| Writing this computer's runs, following an open card | `runtime/sharing/cards/activity.ts` |
+| Writing this computer's runs, following an open card, sending and hosting messages to workers | `runtime/sharing/cards/activity.ts` |
+| Where a message to a worker stands, in words; what a worker waits for, as shared | `runtime/sharing/cards/worker-messages.ts` |
+| Allow and Decline on the host's card | `src/components/WorkerAsks.tsx` |
 | Which of a task's files may be shared | `runtime/sharing/cards/files.ts` |
 | MemSync's Cards API as MemCode uses it | `runtime/sharing/memsync/cards-api.ts`, `cards-contract.ts`, `cards.proto` |
 | A run from a card's log, in the shape the card's views take | `src/sharing-cards.ts` |
@@ -412,8 +456,16 @@ which run against the stand-in and against a real `memsync-server` that serves C
 a 5 MB file in one reply, every refusal by its rule name, the 50 MB limit; a run shown live
 on the other computer with who runs it, only what changed sent again, the review, a turn
 and a review forged by a guest not shown, the same person on two computers, offline and a
-restart, a shared file, and a task whose id is not a UUID. Two whole runtimes check that a
-card opened on the PC shows the Mac's run and that nothing can be sent to it.
+restart, a shared file, and a task whose id is not a UUID.
+
+Continuing a worker from another computer has seven more card activity scenarios, against
+both: the person's own follow-up taken at once and answered on both computers, someone
+else's waiting until allowed, one declined, a delivery forged by a guest not believed, a
+message sent while the host was closed taken once when it opens (and once again even when
+read from the start), a question answered from the other computer with a secret one kept
+to the host, and a sender who joined after the host last looked named rather than called
+"someone". Two whole runtimes check that a follow-up typed on the PC is queued for the
+Mac's worker and shown on the PC as "Queued on your Mac".
 
 ## Trying it on one computer
 
@@ -460,8 +512,9 @@ Stopping `memsync-server` shows the offline line and the count of changes that w
 Starting it again sends them, within a minute.
 
 To try what happens on a card without running a model, start the computer that runs the
-worker with `--stand-in-worker`. It adds `POST /dev/worker-turn`, which plays a worker on a
-task: `{ "taskId": "…", "text": "…", "state": "running" | "finished", "file": { "name":
+worker with `--stand-in-worker`. It answers follow-ups by itself, from this computer or
+another, a couple of seconds after they are picked up. It also adds `POST /dev/worker-turn`,
+which plays a worker on a task: `{ "taskId": "…", "text": "…", "state": "running" | "finished", "file": { "name":
 "report.html", "text": "…" } }`. Open the card on the other computer and watch it follow.
 In this browser run an HTML file shows a blank preview on both computers: the native shell
 draws HTML previews, and the script stands in for it.
@@ -522,16 +575,27 @@ For what happens on a card:
 28. **A run is written at most once a second**, so a long streamed answer is sent a few
     times over as it grows.
 
+For continuing a worker from another computer:
+
+29. **The host reads the cards of workers that run now or ended in the last three days.**
+    A message to an older run waits until it is run again.
+30. **No one-time approval for a person's own second computer.** Signing in to the same
+    account on both is the approval, as ADR-0015 says.
+31. **A message from someone else is allowed or declined once.** Allowing it is for that
+    message, not for the person.
+32. **A message sent from another computer cannot be edited or cancelled**: the log keeps
+    what was written.
+33. **A secret answer never travels.** The question shows; it is answered on the host.
+
 ## Not built
 
-- **Messages to a worker on another computer, claims, and who is running what across the
-  project.** The next step, with MemSync's ADR-0006. Until then a person continues a task
-  on another computer with a worker that starts fresh there, from the card's brief,
-  runbook, comments and shared changes, not from the first computer's conversation.
+- **Claims, and who is running what across the project.** A person sees who runs a worker
+  on a card when they open it.
+- **Starting a new worker on someone else's computer.** A message continues a worker that
+  ran there; it does not start one.
 - **Hiding a review or a file that someone else on the project shared into a card.** A
   file shows who shared it; it is not refused.
 - What the [layout page](shared-board-layout-proposal.md#not-built) lists for the board.
-- Running a worker on someone else's computer. MemSync has nothing for it.
 - Anything for organization projects. MemSync has none yet.
 - Moving a Team Sync project to a shared project.
 - Renaming or deleting a shared project from MemCode. Both are at memtrace.io.
