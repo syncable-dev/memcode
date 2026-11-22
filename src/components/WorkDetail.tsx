@@ -1326,6 +1326,7 @@ export function WorkDetail({
             {remote ? (
               <RemoteWorker
                 owner={remote}
+                scope={elsewhere ? "project" : "team"}
                 offline={
                   team?.connection === "offline" ||
                   team?.connection === "connecting"
