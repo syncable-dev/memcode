@@ -10,6 +10,8 @@ import {
   type AccessTokens,
 } from "../../runtime/sharing/memsync/signed-calls";
 import { MemsyncBoards } from "../../runtime/sharing/memsync/boards-api";
+import { MemsyncCards } from "../../runtime/sharing/memsync/cards-api";
+import { LARGEST_CARDS_MESSAGE } from "../../runtime/sharing/memsync/cards-contract";
 import { MemsyncProjects } from "../../runtime/sharing/memsync/projects-api";
 import { SharingRefused } from "../../runtime/sharing/problems";
 import type { RefusalRule } from "../../src/sharing-refusals";
@@ -33,6 +35,8 @@ export interface SharingWorld {
   tokenFor(person: StandInPerson): string;
   /** Only a world that can move its clock has this. */
   daysPass?(days: number): void;
+  /** Why this service cannot run a scenario of a newer contract, if it cannot. */
+  lacks?: string;
   close(): Promise<void>;
 }
 
@@ -58,7 +62,9 @@ export function cast() {
 
 export function signedInTo(world: SharingWorld, person: StandInPerson) {
   const token = world.tokenFor(person);
-  const channel = grpcChannel(world.address);
+  const channel = grpcChannel(world.address, {
+    maxReplyBytes: LARGEST_CARDS_MESSAGE,
+  });
   const access = {
     current: async () => ({ token, accountId: person.accountId }),
     forget() {},
@@ -68,6 +74,7 @@ export function signedInTo(world: SharingWorld, person: StandInPerson) {
     /** MemCode's own clients. */
     projects: projectsOver(channel, access),
     boards: new MemsyncBoards(new SignedCalls(channel, access)),
+    cards: new MemsyncCards(new SignedCalls(channel, access, 60_000)),
     /** What the same person does at memtrace.io. */
     website: actingAs(world.address, token),
     close: () => channel.close(),

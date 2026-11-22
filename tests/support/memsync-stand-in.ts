@@ -10,6 +10,8 @@ import { grpcStatus } from "../../runtime/sharing/memsync/grpc";
 import { boardsCalls } from "../../runtime/sharing/memsync/boards-contract";
 import { ownerCalls, ownerContract } from "./memsync-owner";
 import { standInBoardLogs } from "./memsync-stand-in-boards";
+import { cardsCalls } from "../../runtime/sharing/memsync/cards-contract";
+import { standInCards } from "./memsync-stand-in-cards";
 
 /** Someone a token signs in. `email` is their verified address, if they have one. */
 export interface StandInPerson {
@@ -62,6 +64,11 @@ const refusals = {
   empty_update: grpcStatus.INVALID_ARGUMENT,
   update_too_large: grpcStatus.INVALID_ARGUMENT,
   too_many_updates: grpcStatus.INVALID_ARGUMENT,
+  invalid_card_id: grpcStatus.INVALID_ARGUMENT,
+  invalid_file: grpcStatus.INVALID_ARGUMENT,
+  file_too_large: grpcStatus.INVALID_ARGUMENT,
+  project_storage_full: grpcStatus.RESOURCE_EXHAUSTED,
+  no_such_file: grpcStatus.NOT_FOUND,
 } as const;
 const refuse = (rule: keyof typeof refusals): never => {
   throw new Refused(refusals[rule], rule);
@@ -133,6 +140,15 @@ export async function startStandInMemsync() {
   };
 
   const boards = standInBoardLogs({
+    isOnProject: (id, person) => {
+      const project = projects.get(id);
+      return !!project && isOn(project, person);
+    },
+    now: () => now,
+    refuse,
+  });
+
+  const cards = standInCards({
     isOnProject: (id, person) => {
       const project = projects.get(id);
       return !!project && isOn(project, person);
@@ -237,6 +253,7 @@ export async function startStandInMemsync() {
         (guest) => guest.accountId !== account_id,
       );
       boards.recheckWatchers();
+      cards.recheckWatchers();
       return projectMessage(project);
     },
     DeleteProject({ project_id }, caller) {
@@ -245,6 +262,8 @@ export async function startStandInMemsync() {
       // A board goes with its project, and whoever watched it is told it is gone.
       boards.recheckWatchers();
       boards.forget(deleted);
+      cards.recheckWatchers();
+      cards.forget(deleted);
       return {};
     },
   };
@@ -282,6 +301,13 @@ export async function startStandInMemsync() {
       const caller = signedIn.get(token);
       if (!caller || !bearer.startsWith("Bearer "))
         throw new Refused(grpcStatus.UNAUTHENTICATED);
+      if (method in cardsCalls)
+        return cards.answer(
+          stream,
+          method as keyof typeof cardsCalls,
+          caller,
+          body,
+        );
       if (method in boardsCalls)
         return boards.answer(
           stream,
@@ -375,6 +401,8 @@ export async function startStandInMemsync() {
     },
     /** The board logs, with what a test may do to them. */
     boards,
+    /** The card logs and files, with what a test may do to them. */
+    cards,
     async close() {
       sessions.forEach((session) => session.destroy());
       await new Promise<void>((resolve) => server.close(() => resolve()));

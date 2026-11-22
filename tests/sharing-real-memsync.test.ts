@@ -6,6 +6,7 @@ import { refusalRules } from "../src/sharing-refusals";
 import { actingAs } from "./support/memsync-owner";
 import { boardSyncScenarios } from "./support/board-sync-scenarios";
 import { boardsApiScenarios } from "./support/boards-api-scenarios";
+import { cardsApiScenarios } from "./support/cards-api-scenarios";
 import {
   cast,
   projectsApiScenarios,
@@ -13,6 +14,7 @@ import {
   signedInTo,
 } from "./support/projects-api-scenarios";
 import {
+  cardsMissing,
   realMemsyncMissing,
   startRealMemsync,
   worldOn,
@@ -44,6 +46,14 @@ boardsApiScenarios("real memsync-server", async () => worldOn(await server()), {
 boardSyncScenarios("real memsync-server", async () => worldOn(await server()), {
   skip: realMemsyncMissing,
 });
+cardsApiScenarios(
+  "real memsync-server",
+  async () => {
+    const real = await server();
+    return { ...worldOn(real), lacks: await cardsMissing(real) };
+  },
+  { skip: realMemsyncMissing },
+);
 
 test(
   "real memsync-server: a token it has no reason to trust is turned away",

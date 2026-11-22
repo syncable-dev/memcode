@@ -17,6 +17,12 @@ import {
   boardsContract,
   boardsService,
 } from "../runtime/sharing/memsync/boards-contract";
+import {
+  cardsCalls,
+  cardsContract,
+  cardsService,
+  LARGEST_CARDS_MESSAGE,
+} from "../runtime/sharing/memsync/cards-contract";
 import { ownerCalls, ownerContract } from "./support/memsync-owner";
 
 const hex = (bytes: Uint8Array) => Buffer.from(bytes).toString("hex");
@@ -295,6 +301,39 @@ test("what MemCode reads and writes of a board's log is what the contract says",
   for (const [name, call] of Object.entries(boardsCalls))
     assert.deepEqual(contract.calls[name], call, `call ${name}`);
   assert.deepEqual(written(boardsContract), contract.messages);
+});
+
+test("what MemCode reads and writes of a card's log and its files is what the contract says", async () => {
+  const contract = await contractIn("cards.proto");
+  const boards = await contractIn("boards.proto");
+  assert.equal(`${contract.package}.${contract.service}`, cardsService);
+  assert.deepEqual(
+    Object.keys(contract.calls).sort(),
+    Object.keys(cardsCalls).sort(),
+  );
+  for (const [name, call] of Object.entries(cardsCalls))
+    assert.deepEqual(contract.calls[name], call, `call ${name}`);
+  // A receipt is the board log's own, imported by cards.proto.
+  assert.deepEqual(written(cardsContract), {
+    ...contract.messages,
+    UpdateReceipt: boards.messages.UpdateReceipt,
+  });
+});
+
+test("a file travels in one message, at the largest size the service allows", () => {
+  const content = new Uint8Array(5 * 1024 * 1024).fill(7);
+  const sent = encodeMessage(cardsContract, "DownloadFileResponse", {
+    file: {
+      sha256: "a".repeat(64),
+      size: content.length,
+      uploaded_by_account_id: "acct-1",
+      uploaded_at: { seconds: 1795300000, nanos: 0 },
+    },
+    content,
+  });
+  assert.ok(sent.length <= LARGEST_CARDS_MESSAGE);
+  const read = decodeMessage(cardsContract, "DownloadFileResponse", sent);
+  assert.equal((read.content as Uint8Array).length, content.length);
 });
 
 test("a logged update travels with its bytes, its number and its time intact", () => {
