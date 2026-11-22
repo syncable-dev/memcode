@@ -165,3 +165,17 @@ export function localProjectOf(
   );
   return link && projects.find((project) => project.id === link.projectId);
 }
+
+/** A file someone shared from a card of a shared project. */
+export interface SharedCardResult {
+  id: string;
+  name: string;
+  mime: string;
+  sha256: string;
+  size: number;
+  kind: "report" | "artifact" | "patch";
+  description?: string;
+  /** The name of whoever shared it, as the sharing service has it. */
+  sharedBy: string;
+  sharedAt: string;
+}
