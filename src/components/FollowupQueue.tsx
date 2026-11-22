@@ -177,7 +177,8 @@ export function FollowupQueue({
       <div className="followup-queue-list">
         {pending.map((message, index) => {
           const attached = notes(message),
-            locked = !!message.pickedUpAt;
+            // Sent to a worker on another computer: it stands as that computer says.
+            locked = !!message.pickedUpAt || !!message.deliveryLine;
           return (
             <article
               className="followup-queue-item"
@@ -187,13 +188,15 @@ export function FollowupQueue({
               <header>
                 <span className="queue-position">{index + 1}</span>
                 <strong>
-                  {locked
-                    ? "Picked up"
-                    : message.followupState === "paused"
-                      ? "Paused for attention"
-                      : message.deliveryState === "received"
-                        ? "Received on worker's device"
-                        : "Queued for worker"}
+                  {message.deliveryLine
+                    ? message.deliveryLine
+                    : locked
+                      ? "Picked up"
+                      : message.followupState === "paused"
+                        ? "Paused for attention"
+                        : message.deliveryState === "received"
+                          ? "Received on worker's device"
+                          : "Queued for worker"}
                 </strong>
                 <Time at={message.queuedAt ?? message.at} />
                 {message.actor && (

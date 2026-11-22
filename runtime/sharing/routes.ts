@@ -43,6 +43,11 @@ export function registerSharing(register: Register, sharing: Sharing) {
     sharing.shareChanges(taskId),
   );
   register(
+    "sharing:decide-message",
+    z.object({ taskId: id, messageId: id, allow: z.boolean() }).strict(),
+    (input) => sharing.decideMessage(input),
+  );
+  register(
     "sharing:open-result",
     z.object({ taskId: id, resultId: id }).strict(),
     (input) => sharing.openSharedResult(input),

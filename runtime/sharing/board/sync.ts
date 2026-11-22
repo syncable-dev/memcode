@@ -207,6 +207,13 @@ export class BoardSync {
     return this.names.get(accountId);
   }
 
+  /** Asks once who is on the project, for someone not known yet: they may have joined since. */
+  async learnName(accountId: string): Promise<void> {
+    if (this.names.has(accountId) || this.askedAbout.has(accountId)) return;
+    this.askedAbout.add(accountId);
+    await this.learn();
+  }
+
   status(): SharedBoardStatus {
     const waiting = this.kept.unsent.length;
     const leftOut = new Map<

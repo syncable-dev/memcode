@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { initialState } from "../../src/seed";
 import type { AppState, Message, WorkItem } from "../../src/shared";
 import type { StoryReviewRun } from "../../src/code-review";
+import type { WorkerInputResponse } from "../../src/worker-input";
 import { CardActivity } from "../../runtime/sharing/cards/activity";
 import type { CardsApi } from "../../runtime/sharing/memsync/cards-api";
 import { SharingUnavailable } from "../../runtime/sharing/problems";
@@ -29,7 +30,12 @@ export async function cardComputer(
   world: SharingWorld,
   person: StandInPerson,
   sharedProjectId: string,
-  options: { device?: "Mac" | "Windows"; names?: StandInPerson[] } = {},
+  options: {
+    device?: "Mac" | "Windows";
+    names?: StandInPerson[];
+    /** People whose names the service gives when asked, and not before. */
+    later?: StandInPerson[];
+  } = {},
 ) {
   const folder = await mkdtemp(join(tmpdir(), "memcode-cards-"));
   const signedIn = signedInTo(world, person);
@@ -51,8 +57,16 @@ export async function cardComputer(
     folder,
     isOffline: false,
     appends: 0,
+    asksForNames: 0,
     shown: 0,
     reviews,
+    /** What other computers handed to a worker here, as the runtime would take it. */
+    delivered: [] as Array<{ taskId: string; message: Message }>,
+    answered: [] as Array<{
+      taskId: string;
+      inputId: string;
+      response: WorkerInputResponse;
+    }>,
     device: { id: randomUUID(), name: options.device ?? "Mac" } as const,
     activity: undefined as unknown as CardActivity,
     /** The same task on this computer, as the shared board would have made it. */
@@ -101,8 +115,29 @@ export async function cardComputer(
         cards,
         reviewOf: async (taskId) => reviews.get(taskId) ?? null,
         nameOf: (account) => names.get(account),
+        learnName: async (account) => {
+          self.asksForNames++;
+          for (const one of options.later ?? [])
+            if (one.accountId === account) names.set(one.accountId, one.name);
+        },
         shown: () => void self.shown++,
         waitBeforeRetry: () => 15,
+        me: person.accountId,
+        deliver: async (taskId, message) => {
+          self.delivered.push({ taskId, message });
+          const item = self.find(taskId);
+          item.messages.push({ ...message, followupState: "queued" });
+        },
+        answer: async (taskId, inputId, response) => {
+          self.answered.push({ taskId, inputId, response });
+          const input = state.workerInputs?.find((one) => one.id === inputId);
+          if (!input || input.status !== "pending")
+            throw new Error(
+              "This request is no longer waiting. Your answer was not sent.",
+            );
+          input.status = "answered";
+          input.response = response;
+        },
       });
     },
     async restart() {

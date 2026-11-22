@@ -18,6 +18,7 @@ import { ReviewNotes } from "./ReviewNotes";
 import { FollowupQueue, pendingFollowups } from "./FollowupQueue";
 import { StoryComments } from "./StoryComments";
 import { WorkerInputPanel, WorkerActivityView } from "./WorkerInputPanel";
+import { WorkerAsks } from "./WorkerAsks";
 import { DeleteAction } from "./DeleteAction";
 import { workerReadiness } from "../worker-availability";
 import {
@@ -41,6 +42,7 @@ import {
   cardRunElsewhere,
   isUnfetchedSharedFile,
   runElsewhereNote,
+  sendElsewhereLabel,
   sharedFilesToFetch,
 } from "../sharing-cards";
 import { StoryTabBar, type StoryTab, type StoryTabItem } from "./StoryTabBar";
@@ -189,11 +191,15 @@ export function WorkDetail({
   const teamBlock = teamStartBlocked(team, task.id);
   const blockers = pendingPrerequisites(task, tasks);
   const prerequisitesRef = useRef<HTMLDivElement>(null);
-  const pendingInputs = remote
-    ? []
-    : (state.workerInputs ?? []).filter(
-        (input) => input.taskId === task.id && input.status === "pending",
-      );
+  // What a worker on another computer waits for comes from the card's log, to answer from here.
+  const pendingInputs = elsewhere
+    ? (localTask.sharedInputs ?? [])
+    : remote
+      ? []
+      : (state.workerInputs ?? []).filter(
+          (input) => input.taskId === task.id && input.status === "pending",
+        );
+  const yours = !!localTask.sharedRunIsYours;
   const [tab, setTab] = useState<StoryTab>(
     () =>
       initialTab ?? (isCodeReviewTask(state, task) ? "review" : "conversation"),
@@ -398,7 +404,8 @@ export function WorkDetail({
         attachedComments.length ? attachedComments : undefined,
       );
       clearSubmitted(submitted);
-      if (isActive(task))
+      // Sent to another computer: the message shows how it stands instead.
+      if (isActive(task) && !elsewhere)
         notify(
           "Follow-up queued. The worker will pick it up automatically when ready.",
         );
@@ -849,7 +856,12 @@ export function WorkDetail({
                       {pending.length} follow-up
                       {pending.length === 1 ? "" : "s"} waiting
                     </strong>
-                    <span>View, edit or cancel</span>
+                    {/* Sent to a worker on another computer: they can only be viewed. */}
+                    <span>
+                      {pending.every((message) => message.deliveryLine)
+                        ? "View"
+                        : "View, edit or cancel"}
+                    </span>
                     <ArrowRight size={13} />
                   </button>
                 )}
@@ -931,6 +943,13 @@ export function WorkDetail({
                     </p>
                   )}
                   {!remote && startupProgress}
+                  {!!localTask.sharedAsks?.length && (
+                    <WorkerAsks
+                      taskId={localTask.id}
+                      asks={localTask.sharedAsks}
+                      act={act}
+                    />
+                  )}
                   {pendingInputs.length > 0 && (
                     <div className="worker-input-stack">
                       {pendingInputs.map((request) => (
@@ -971,10 +990,9 @@ export function WorkDetail({
                     )}
                     <textarea
                       aria-label="Message to worker"
-                      disabled={!!elsewhere}
                       placeholder={
                         elsewhere
-                          ? runElsewhereNote(elsewhere)
+                          ? runElsewhereNote(elsewhere, yours)
                           : task.example
                             ? "Explore the conversation, or add a note…"
                             : active
@@ -1032,23 +1050,24 @@ export function WorkDetail({
                           title={
                             !health.available
                               ? "Reopen MemCode to reconnect before sending"
-                              : !remote && !active && teamBlock
-                                ? teamBlock
-                                : !remote &&
-                                    !task.example &&
-                                    !active &&
-                                    !connection.canStart
-                                  ? "Connect in Workers before sending this task"
-                                  : active
-                                    ? `Queue follow-up · ${shortcutLabel("Enter")}`
-                                    : `Send follow-up · ${shortcutLabel("Enter")}`
+                              : elsewhere
+                                ? sendElsewhereLabel(elsewhere, yours)
+                                : !remote && !active && teamBlock
+                                  ? teamBlock
+                                  : !remote &&
+                                      !task.example &&
+                                      !active &&
+                                      !connection.canStart
+                                    ? "Connect in Workers before sending this task"
+                                    : active
+                                      ? `Queue follow-up · ${shortcutLabel("Enter")}`
+                                      : `Send follow-up · ${shortcutLabel("Enter")}`
                           }
                           aria-label={
                             active ? "Queue follow-up" : "Send follow-up"
                           }
                           disabled={
                             !health.available ||
-                            !!elsewhere ||
                             !draft.trim() ||
                             (!remote && !active && !!teamBlock) ||
                             (!remote &&

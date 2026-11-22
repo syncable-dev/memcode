@@ -28,9 +28,26 @@ export function cardRunElsewhere(task: WorkItem): RunOwner | undefined {
   };
 }
 
-/** What the message box says on a card whose worker runs on another computer. */
-export const runElsewhereNote = (owner: { name: string; device: string }) =>
-  `This worker runs on ${owner.name}'s ${owner.device}. Comment on the card to reach them.`;
+/**
+ * What the message box says on a card whose worker runs on another computer.
+ * `yours`: it runs under the person's own account, on another of their computers.
+ */
+export const runElsewhereNote = (
+  owner: { name: string; device: string },
+  yours: boolean,
+) =>
+  yours
+    ? `Continue the worker on your ${owner.device}…`
+    : `Message the worker on ${owner.name}'s ${owner.device}. ${owner.name} allows it first.`;
+
+/** Where the send button sends to, on a card whose worker runs on another computer. */
+export const sendElsewhereLabel = (
+  owner: { name: string; device: string },
+  yours: boolean,
+) =>
+  yours
+    ? `Send to your ${owner.device}`
+    : `Send to ${owner.name}'s ${owner.device}`;
 
 /** An id the card's file list uses for a shared file this computer has not fetched yet. */
 export const sharedFileId = (resultId: string) => `shared:${resultId}`;

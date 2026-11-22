@@ -1,9 +1,14 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { AppState, Message, WorkItem } from "../../../src/shared";
 import type { StoryReviewRun } from "../../../src/code-review";
-import type { TeamSession } from "../../../src/team-session";
+import type { SessionActor, TeamSession } from "../../../src/team-session";
+import type {
+  WorkerInputRequest,
+  WorkerInputResponse,
+} from "../../../src/worker-input";
+import type { SharedAsk } from "../../../src/sharing";
 import { replaceWorkspace } from "../../persistence";
 import type { CardsApi, LoggedCardEntry } from "../memsync/cards-api";
 import type { GrpcStream } from "../memsync/grpc";
@@ -18,10 +23,21 @@ import {
   sessionIdOf,
   type CardEntry,
   type CardRecord,
+  type DeliveryRecord,
+  type DeliveryState,
+  type InputRecord,
   type SessionPart,
   type SharedResultRecord,
+  type WorkerMessageRecord,
   type WritingDevice,
 } from "./entries";
+import {
+  answerStanding,
+  answerSummary,
+  inputRecordOf,
+  messageStanding,
+  type Host,
+} from "./worker-messages";
 
 export interface CardActivityOptions {
   /** The project on this computer. */
@@ -38,8 +54,20 @@ export interface CardActivityOptions {
   reviewOf(taskId: string): Promise<StoryReviewRun | null>;
   /** The name of someone on the shared project, when it is known. */
   nameOf(accountId: string): string | undefined;
+  /** Asks the sharing service for the name of someone not known yet: they may have joined since. */
+  learnName?(accountId: string): Promise<void>;
   /** What a card shows changed. Nothing needs saving. */
   shown(): void;
+  /** The account signed in here. Its own other computers may continue its workers. */
+  me: string;
+  /** Continues a worker run here with a follow-up from another computer, as one typed here. */
+  deliver?(taskId: string, message: Message): Promise<void>;
+  /** Answers what a worker run here waits for, as if it was answered here. */
+  answer?(
+    taskId: string,
+    inputId: string,
+    response: WorkerInputResponse,
+  ): Promise<void>;
   waitBeforeRetry?: (failures: number) => number;
 }
 
@@ -53,11 +81,32 @@ interface Sent {
   head?: string;
   turns: Record<string, string>;
   review?: string;
+  inputs?: Record<string, string>;
+}
+/** A message from another computer to a worker run here, and what became of it. */
+interface Handled {
+  taskId: string;
+  sessionId: string;
+  state: DeliveryState;
+  author: string;
+  device: WritingDevice;
+  sentAt: string;
+  text?: string;
+  answer?: WorkerMessageRecord["answer"];
+}
+/** A message written here, shown on its card until the card's log has it. */
+interface Outgoing {
+  taskId: string;
+  message: WorkerMessageRecord;
 }
 interface KeptFile {
   version: 1;
   sent: Record<string, Sent>;
   waiting: Array<{ cardId: string; id: string; payload: string }>;
+  /** How far the log of each card with a worker run here has been read for messages. */
+  hosted?: Record<string, number>;
+  handled?: Record<string, Handled>;
+  outgoing?: Outgoing[];
 }
 
 /** A run of a worker on another computer, as its log entries tell it. */
@@ -78,17 +127,32 @@ type KnownResult = SharedResultRecord & {
   sharedAt: string;
   sharedHere: boolean;
 };
-interface Followed {
-  followers: number;
+/** One card's log, read from `cursor` on and watched. */
+interface Reader {
   cursor: number;
-  runs: Map<string, RunElsewhere>;
-  results: KnownResult[];
   stream?: GrpcStream;
   reading?: Promise<void>;
   stopped: boolean;
 }
+interface LoggedMessage {
+  record: WorkerMessageRecord;
+  author: string;
+  device: WritingDevice;
+}
+interface Followed extends Reader {
+  followers: number;
+  runs: Map<string, RunElsewhere>;
+  results: KnownResult[];
+  messages: Map<string, LoggedMessage>;
+  /** Per message, the latest delivery by each account that wrote one. */
+  deliveries: Map<string, Map<string, DeliveryRecord>>;
+  /** Per input, the latest of it by each account that wrote one. */
+  inputs: Map<string, Map<string, InputRecord>>;
+}
 
 const WAITS = [1000, 2000, 5000, 15000, 30000, 60000];
+/** How long after a run here ends its card is still read for messages to it. */
+export const CONTINUABLE_FOR_MS = 3 * 24 * 60 * 60 * 1000;
 const SOMEONE = "Someone on this project";
 const progressLabels: Record<string, string> = {
   preparing: "Preparing the worker",
@@ -180,6 +244,11 @@ export class CardActivity {
   private sending?: Promise<void>;
   private capturing?: Promise<void>;
   private followed = new Map<string, Followed>();
+  /** The cards of workers run here, read for messages to them. */
+  private hosting = new Map<string, Reader>();
+  private hosted: Record<string, number> = {};
+  private handled: Record<string, Handled> = {};
+  private outgoing: Array<Outgoing & { waitingId: string }> = [];
   private stopped = false;
   private pauses = new Set<() => void>();
 
@@ -193,21 +262,22 @@ export class CardActivity {
       this.capturing = undefined;
       await this.load();
       if (this.stopped) return;
-      const records: Array<{ cardId: string; records: CardRecord[] }> = [];
+      let fresh = 0;
       for (const task of this.tasksRunHere()) {
-        records.push({
-          cardId: cardIdOf(task.id),
-          records: await this.changesOf(task),
-        });
+        const made = [
+          ...(await this.changesOf(task)),
+          ...this.inputsOf(task),
+          ...this.deliveriesOf(task),
+        ];
+        for (const record of made) this.queue(cardIdOf(task.id), record);
+        fresh += made.length;
         // A run that starts here takes over an open card from one elsewhere.
         const open = this.followed.get(task.id);
         if (open && !open.stopped && task.sharedSession)
           this.show(task.id, open);
       }
-      const fresh = records.filter((card) => card.records.length);
-      if (!fresh.length) return;
-      for (const { cardId, records: made } of fresh)
-        for (const record of made) this.queue(cardId, record);
+      this.host();
+      if (!fresh) return;
       await this.keep();
       this.send();
     });
@@ -292,9 +362,70 @@ export class CardActivity {
     return records;
   }
 
-  private queue(cardId: string, record: CardRecord): void {
-    for (const payload of cardPayloads(record, this.options.device))
-      this.waiting.push({ cardId, id: idOf(payload), payload });
+  /** What a run here waits for, when it is new or has changed since it was written. */
+  private inputsOf(task: WorkItem): CardRecord[] {
+    const startedAt = task.run.startedAt!;
+    const sessionId = sessionIdOf(this.options.device.id, task.id, startedAt);
+    const written = ((this.sent[sessionId] ??= { turns: {} }).inputs ??= {});
+    return (this.options.state().workerInputs ?? [])
+      .filter(
+        (input) => input.taskId === task.id && input.createdAt >= startedAt,
+      )
+      .flatMap((input): CardRecord[] => {
+        const record = inputRecordOf(input, sessionId);
+        const print = fingerprint(record);
+        if (written[input.id] === print) return [];
+        written[input.id] = print;
+        return [{ kind: "input", input: record }];
+      });
+  }
+
+  /** What became of follow-ups from other computers that waited for a worker here. */
+  private deliveriesOf(task: WorkItem): CardRecord[] {
+    const records: CardRecord[] = [];
+    for (const [messageId, handled] of Object.entries(this.handled)) {
+      if (handled.taskId !== task.id || handled.state !== "queued") continue;
+      const turn = task.messages.find((message) => message.id === messageId);
+      const state: DeliveryState | undefined =
+        !turn || turn.followupState === "cancelled"
+          ? "declined"
+          : turn.promptedAt || turn.pickedUpAt
+            ? "picked-up"
+            : turn.followupState === "paused"
+              ? "failed"
+              : undefined;
+      if (state) records.push(this.delivery(messageId, handled, state));
+    }
+    return records;
+  }
+
+  private delivery(
+    messageId: string,
+    handled: Handled,
+    state: DeliveryState,
+    detail?: string,
+  ): CardRecord {
+    handled.state = state;
+    return {
+      kind: "delivery",
+      delivery: {
+        messageId,
+        sessionId: handled.sessionId,
+        state,
+        at: new Date().toISOString(),
+        ...(detail ? { detail: publicText(detail).slice(0, 500) } : {}),
+      },
+    };
+  }
+
+  private queue(cardId: string, record: CardRecord): string[] {
+    const ids: string[] = [];
+    for (const payload of cardPayloads(record, this.options.device)) {
+      const id = idOf(payload);
+      this.waiting.push({ cardId, id, payload });
+      ids.push(id);
+    }
+    return ids;
   }
 
   private send(): void {
@@ -350,15 +481,41 @@ export class CardActivity {
           ...entry,
           payload: Buffer.from(entry.payload, "base64"),
         }));
+        this.hosted = kept.hosted ?? {};
+        this.handled = kept.handled ?? {};
+        this.outgoing = (kept.outgoing ?? []) as typeof this.outgoing;
       } catch {
         // Nothing kept yet, or nothing usable: what runs here is written again in full.
       }
       if (this.waiting.length) this.send();
+      const asking = Object.values(this.handled).filter(
+        (handled) => handled.state === "asking",
+      );
+      const showAll = () => {
+        for (const taskId of new Set(
+          Object.values(this.handled).map((handled) => handled.taskId),
+        ))
+          this.showAsks(taskId);
+      };
+      showAll();
+      if (asking.length)
+        void this.learnNames(asking.map((handled) => handled.author)).then(
+          showAll,
+        );
     })();
     return this.loaded;
   }
 
   private async keep(): Promise<void> {
+    // Stopped: a send that ends now writes nothing. What still waited is kept from before.
+    if (this.stopped) return;
+    // A message written here is kept until it is sent and its card has read it back.
+    this.outgoing = this.outgoing.filter(
+      (sent) =>
+        this.waiting.some((entry) => entry.id === sent.waitingId) ||
+        (this.followed.get(sent.taskId)?.stopped === false &&
+          !this.followed.get(sent.taskId)!.messages.has(sent.message.id)),
+    );
     const kept: KeptFile = {
       version: 1,
       sent: this.sent,
@@ -367,6 +524,9 @@ export class CardActivity {
         id: entry.id,
         payload: Buffer.from(entry.payload).toString("base64"),
       })),
+      hosted: this.hosted,
+      handled: this.handled,
+      outgoing: this.outgoing,
     };
     await mkdir(this.options.folder, { recursive: true });
     const path = join(this.options.folder, "cards.json");
@@ -390,10 +550,15 @@ export class CardActivity {
       cursor: 0,
       runs: new Map(),
       results: [],
+      messages: new Map(),
+      deliveries: new Map(),
+      inputs: new Map(),
       stopped: false,
     };
     this.followed.set(taskId, card);
-    card.reading = this.read(taskId, card);
+    card.reading = this.readLog(taskId, card, (entries) =>
+      this.take(taskId, card, entries),
+    );
   }
 
   /** The card was closed. What it showed stays on it until MemCode is closed. */
@@ -404,32 +569,37 @@ export class CardActivity {
     card.stream?.cancel();
   }
 
-  private async read(taskId: string, card: Followed): Promise<void> {
+  /** Reads a card's log from the reader's cursor on, then watches it, until stopped. */
+  private async readLog(
+    taskId: string,
+    reader: Reader,
+    take: (entries: LoggedCardEntry[]) => void,
+  ): Promise<void> {
     const cardId = cardIdOf(taskId);
-    for (let failures = 0; !card.stopped && !this.stopped;) {
+    for (let failures = 0; !reader.stopped && !this.stopped;) {
       try {
         for (;;) {
           const page = await this.options.cards.readAfter(
             this.options.sharedProjectId,
             cardId,
-            card.cursor,
+            reader.cursor,
           );
-          if (card.stopped || !page.length) break;
-          this.take(taskId, card, page);
+          if (reader.stopped || !page.length) break;
+          take(page);
         }
-        if (card.stopped) return;
+        if (reader.stopped) return;
         failures = 0;
         const stream = this.options.cards.watchAfter(
           this.options.sharedProjectId,
           cardId,
-          card.cursor,
-          (entry) => this.take(taskId, card, [entry]),
+          reader.cursor,
+          (entry) => take([entry]),
         );
-        card.stream = stream;
+        reader.stream = stream;
         await stream.finished;
         failures = 1;
       } catch (problem) {
-        if (card.stopped || this.stopped) return;
+        if (reader.stopped || this.stopped) return;
         if (
           problem instanceof SharingRefused &&
           problem.rule === "no_such_project"
@@ -450,7 +620,30 @@ export class CardActivity {
       if (!read.readable) continue;
       changed = this.apply(card, read.entry, logged) || changed;
     }
-    if (changed) this.show(taskId, card);
+    if (!changed) return;
+    this.show(taskId, card);
+    // Someone who joined since this computer last looked: named once it has asked.
+    const unknown = [
+      ...[...card.runs.values()].map((run) => run.account),
+      ...[...card.messages.values()].map((message) => message.author),
+    ].filter((account) => !this.options.nameOf(account));
+    if (unknown.length)
+      void this.learnNames(unknown).then(() => {
+        if (!card.stopped) this.show(taskId, card);
+      });
+  }
+
+  private readonly askedNames = new Set<string>();
+  /** Asks once for the names of people this computer does not know yet. */
+  private async learnNames(accounts: string[]): Promise<void> {
+    const fresh = [...new Set(accounts)].filter(
+      (account) =>
+        !this.options.nameOf(account) && !this.askedNames.has(account),
+    );
+    for (const account of fresh) this.askedNames.add(account);
+    await Promise.all(
+      fresh.map((account) => this.options.learnName?.(account).catch(() => {})),
+    );
   }
 
   /** Takes one entry into what a card shows. Says whether it changed anything. */
@@ -468,6 +661,27 @@ export class CardActivity {
         sharedAt: logged.loggedAt,
         sharedHere: entry.device.id === this.options.device.id,
       });
+      return true;
+    }
+    if (entry.kind === "message") {
+      card.messages.set(entry.message.id, {
+        record: entry.message,
+        author: logged.author,
+        device: entry.device,
+      });
+      return true;
+    }
+    if (entry.kind === "delivery" || entry.kind === "input") {
+      const [kept, id, value] =
+        entry.kind === "delivery"
+          ? [card.deliveries, entry.delivery.messageId, entry.delivery]
+          : [card.inputs, entry.input.id, entry.input];
+      const byAccount = (kept.get(id) ?? new Map()) as Map<
+        string,
+        typeof value
+      >;
+      byAccount.set(logged.author, value);
+      (kept as Map<string, Map<string, typeof value>>).set(id, byAccount);
       return true;
     }
     // A run of this computer's own is shown from the task itself.
@@ -515,13 +729,7 @@ export class CardActivity {
       ...result,
       sharedBy: this.options.nameOf(account) ?? SOMEONE,
     }));
-    const latest = [...card.runs.values()]
-      .sort((left, right) =>
-        String(left.head.startedAt ?? "").localeCompare(
-          String(right.head.startedAt ?? ""),
-        ),
-      )
-      .at(-1);
+    const latest = this.latestRun(card);
     const localStart = task.run.startedAt ?? "";
     const runsHere = ["preparing", "running", "stopping"].includes(
       task.run.state,
@@ -533,14 +741,139 @@ export class CardActivity {
     ) {
       delete task.sharedSession;
       delete task.sharedFromLog;
+      delete task.sharedRunIsYours;
+      delete task.sharedInputs;
     } else {
-      task.sharedSession = this.sessionFor(task.id, latest);
+      task.sharedSession = this.sessionFor(task.id, latest, card);
       task.sharedFromLog = true;
+      task.sharedRunIsYours = latest.account === this.options.me;
+      const inputs = this.inputsFor(task.id, latest, card);
+      if (inputs.length) task.sharedInputs = inputs;
+      else delete task.sharedInputs;
     }
     this.options.shown();
   }
 
-  private sessionFor(taskId: string, run: RunElsewhere): TeamSession {
+  private latestRun(card: Followed): RunElsewhere | undefined {
+    return [...card.runs.values()]
+      .sort((left, right) =>
+        String(left.head.startedAt ?? "").localeCompare(
+          String(right.head.startedAt ?? ""),
+        ),
+      )
+      .at(-1);
+  }
+
+  private hostOf(run: RunElsewhere): Host {
+    return {
+      name: this.options.nameOf(run.account) ?? SOMEONE,
+      device: run.device.name,
+      isYou: run.account === this.options.me,
+    };
+  }
+
+  private actorOf(author: string, device: WritingDevice): SessionActor {
+    return {
+      memberId: fingerprint(["owner", author]).slice(0, 32),
+      name: this.options.nameOf(author) ?? SOMEONE,
+      deviceId: device.id,
+      device: device.name,
+    };
+  }
+
+  /** The messages to a run: those in the card's log, and those written here that it has not read back yet. */
+  private messagesTo(
+    taskId: string,
+    run: RunElsewhere,
+    card: Followed,
+  ): Array<LoggedMessage & { sending: boolean }> {
+    // A worker that takes a follow-up may start a new run: messages to the host's earlier runs count too.
+    const hosts = new Set(
+      [...card.runs.values()]
+        .filter(
+          (one) =>
+            one.account === run.account && one.device.id === run.device.id,
+        )
+        .map((one) => one.head.id),
+    );
+    const logged = [...card.messages.values()].filter((message) =>
+      hosts.has(message.record.sessionId),
+    );
+    const known = new Set(logged.map((message) => message.record.id));
+    const mine = this.outgoing
+      .filter(
+        (sent) =>
+          sent.taskId === taskId &&
+          hosts.has(sent.message.sessionId) &&
+          !known.has(sent.message.id),
+      )
+      .map((sent) => ({
+        record: sent.message,
+        author: this.options.me,
+        device: this.options.device,
+        sending: this.waiting.some((entry) => entry.id === sent.waitingId),
+      }));
+    return [
+      ...logged.map((message) => ({ ...message, sending: false })),
+      ...mine,
+    ];
+  }
+
+  /** A delivery counts only when the account that started the worker wrote it. */
+  private deliveryOf(card: Followed, run: RunElsewhere, messageId: string) {
+    return card.deliveries.get(messageId)?.get(run.account);
+  }
+
+  /** What the run waits for, from its own account's entries, with where an answer from here stands. */
+  private inputsFor(
+    taskId: string,
+    run: RunElsewhere,
+    card: Followed,
+  ): WorkerInputRequest[] {
+    const host = this.hostOf(run);
+    const answers = this.messagesTo(taskId, run, card).filter(
+      (message) => message.record.answer,
+    );
+    return [...card.inputs.values()].flatMap((byAccount) => {
+      const input = byAccount.get(run.account);
+      if (
+        !input ||
+        input.sessionId !== run.head.id ||
+        input.status !== "pending"
+      )
+        return [];
+      const answer = answers
+        .filter((message) => message.record.answer!.inputId === input.id)
+        .at(-1);
+      const { sessionId, answerHere, ...shown } = input;
+      return [
+        {
+          ...shown,
+          taskId,
+          runId: sessionId,
+          harness: run.head.harness,
+          elsewhere: answerHere
+            ? {
+                line: `Answer this on ${host.isYou ? "your" : `${host.name}'s`} ${host.device}`,
+                answerable: false,
+              }
+            : answer
+              ? answerStanding(
+                  this.deliveryOf(card, run, answer.record.id),
+                  host,
+                  answer.sending,
+                )
+              : { answerable: true },
+        } as WorkerInputRequest,
+      ];
+    });
+  }
+
+  private sessionFor(
+    taskId: string,
+    run: RunElsewhere,
+    card: Followed,
+  ): TeamSession {
     const owner = {
       // The window is given names, not account ids.
       memberId: fingerprint(["owner", run.account]).slice(0, 32),
@@ -549,9 +882,33 @@ export class CardActivity {
       device: run.device.name,
     };
     // A person's turn in a run is by whoever started the run, on that computer.
-    const turns = [...run.turns.values()]
-      .sort((left, right) => left.at.localeCompare(right.at))
-      .map((turn) => (turn.role === "user" ? { ...turn, actor: owner } : turn));
+    const turns = [...run.turns.values()].map((turn) =>
+      turn.role === "user" ? { ...turn, actor: owner } : turn,
+    );
+    // A follow-up sent from another computer is by whoever sent it, wherever it stands.
+    const host = this.hostOf(run);
+    for (const sent of this.messagesTo(taskId, run, card)) {
+      if (!sent.record.text) continue;
+      const actor = this.actorOf(sent.author, sent.device);
+      const delivered = turns.find((turn) => turn.id === sent.record.id);
+      if (delivered) {
+        delivered.actor = actor;
+        continue;
+      }
+      turns.push({
+        id: sent.record.id,
+        role: "user",
+        text: sent.record.text,
+        at: sent.record.sentAt,
+        actor,
+        ...messageStanding(
+          this.deliveryOf(card, run, sent.record.id),
+          host,
+          sent.sending,
+        ),
+      });
+    }
+    turns.sort((left, right) => left.at.localeCompare(right.at));
     return {
       ...(run.head as Omit<TeamSession, "messages">),
       storyId: taskId,
@@ -565,13 +922,283 @@ export class CardActivity {
     } as TeamSession;
   }
 
+  // ── Messages to workers (MemSync ADR-0015) ───────────────────────────────
+
+  /** Sends a follow-up to the worker an open card shows from another computer. */
+  messageWorker(taskId: string, text: string): Promise<string> {
+    return this.sendToRun(taskId, { text });
+  }
+
+  /** Answers what the worker an open card shows from another computer waits for. */
+  async answerWorker(
+    taskId: string,
+    inputId: string,
+    response: WorkerInputResponse,
+  ): Promise<string> {
+    const input = this.options
+      .state()
+      .tasks.find((task) => task.id === taskId)
+      ?.sharedInputs?.find((one) => one.id === inputId);
+    if (!input?.elsewhere?.answerable)
+      throw new Error(
+        input?.elsewhere?.line ??
+          "The worker is no longer waiting for this. Your answer was not sent.",
+      );
+    return this.sendToRun(taskId, { answer: { inputId, response } });
+  }
+
+  private async sendToRun(
+    taskId: string,
+    body: Pick<WorkerMessageRecord, "text" | "answer">,
+  ): Promise<string> {
+    await this.load();
+    const card = this.followed.get(taskId);
+    const run = card && !card.stopped ? this.latestRun(card) : undefined;
+    if (!card || !run)
+      throw new Error(
+        "The worker this card shows is not known here yet. Open the card again and send it once more.",
+      );
+    const message: WorkerMessageRecord = {
+      id: randomUUID(),
+      sessionId: run.head.id,
+      sentAt: new Date().toISOString(),
+      ...body,
+    };
+    await this.inTurn(async () => {
+      const [waitingId] = this.queue(cardIdOf(taskId), {
+        kind: "message",
+        message,
+      });
+      this.outgoing.push({ taskId, message, waitingId });
+      await this.keep();
+    });
+    this.show(taskId, card);
+    this.send();
+    return message.id;
+  }
+
+  /** Reads, for messages, the cards of the workers run here that can still be continued. */
+  private host(): void {
+    if (this.stopped) return;
+    const now = Date.now();
+    const asking = new Set(
+      Object.values(this.handled)
+        .filter((handled) => handled.state === "asking")
+        .map((handled) => handled.taskId),
+    );
+    const wanted = new Set(
+      this.tasksRunHere()
+        .filter((task) => continuable(task, now) || asking.has(task.id))
+        .map((task) => task.id),
+    );
+    for (const [taskId, reader] of this.hosting)
+      if (!wanted.has(taskId)) {
+        reader.stopped = true;
+        reader.stream?.cancel();
+        this.hosting.delete(taskId);
+      }
+    for (const taskId of wanted) {
+      if (this.hosting.has(taskId)) continue;
+      const reader: Reader = {
+        cursor: this.hosted[taskId] ?? 0,
+        stopped: false,
+      };
+      this.hosting.set(taskId, reader);
+      reader.reading = this.readLog(taskId, reader, (entries) =>
+        this.received(taskId, reader, entries),
+      );
+    }
+  }
+
+  private received(
+    taskId: string,
+    reader: Reader,
+    entries: LoggedCardEntry[],
+  ): void {
+    const messages: Array<{ entry: CardEntry; logged: LoggedCardEntry }> = [];
+    for (const logged of entries) {
+      if (logged.sequence <= reader.cursor) continue;
+      reader.cursor = logged.sequence;
+      const read = readCardEntry(logged.payload);
+      if (
+        read.readable &&
+        read.entry.kind === "message" &&
+        read.entry.device.id !== this.options.device.id
+      )
+        messages.push({ entry: read.entry, logged });
+    }
+    const cursor = reader.cursor;
+    void this.inTurn(async () => {
+      if (this.stopped) return;
+      for (const { entry, logged } of messages)
+        await this.receive(taskId, entry, logged);
+      this.hosted[taskId] = Math.max(this.hosted[taskId] ?? 0, cursor);
+      await this.keep();
+      this.send();
+    }).catch((problem) =>
+      console.error("A message to a worker was not taken in:", problem),
+    );
+  }
+
+  /**
+   * A message to a worker run here. From the account that started the worker,
+   * it is carried out at once: the same person on another of their computers.
+   * From anyone else it waits for this computer's person to allow it.
+   */
+  private async receive(
+    taskId: string,
+    entry: CardEntry,
+    logged: LoggedCardEntry,
+  ): Promise<void> {
+    if (entry.kind !== "message" || this.handled[entry.message.id]) return;
+    const { message } = entry;
+    const task = this.options
+      .state()
+      .tasks.find(
+        (item) =>
+          item.id === taskId && item.projectId === this.options.projectId,
+      );
+    const startedAt = task?.run.startedAt;
+    // For the run here now, or an earlier one this computer wrote to this card. Not for another computer's.
+    if (
+      !startedAt ||
+      (message.sessionId !==
+        sessionIdOf(this.options.device.id, taskId, startedAt) &&
+        !this.sent[message.sessionId])
+    )
+      return;
+    const handled: Handled = {
+      taskId,
+      sessionId: message.sessionId,
+      state: "asking",
+      author: logged.author,
+      device: entry.device,
+      sentAt: message.sentAt,
+      ...(message.text ? { text: message.text } : {}),
+      ...(message.answer ? { answer: message.answer } : {}),
+    };
+    this.handled[message.id] = handled;
+    await this.learnNames([logged.author]);
+    if (logged.author === this.options.me)
+      await this.carryOut(message.id, handled);
+    else
+      this.queue(
+        cardIdOf(taskId),
+        this.delivery(message.id, handled, "asking"),
+      );
+    this.showAsks(taskId);
+  }
+
+  /** Hands a message to the worker, as if it was typed or answered here. */
+  private async carryOut(messageId: string, handled: Handled): Promise<void> {
+    const cardId = cardIdOf(handled.taskId);
+    try {
+      if (handled.answer) {
+        if (!this.options.answer)
+          throw new Error(
+            "This computer cannot answer a worker for someone else.",
+          );
+        await this.options.answer(
+          handled.taskId,
+          handled.answer.inputId,
+          handled.answer.response,
+        );
+        this.queue(cardId, this.delivery(messageId, handled, "picked-up"));
+        return;
+      }
+      if (!this.options.deliver)
+        throw new Error(
+          "This computer cannot continue a worker for someone else.",
+        );
+      await this.options.deliver(handled.taskId, {
+        id: messageId,
+        role: "user",
+        text: handled.text!,
+        at: new Date().toISOString(),
+        actor: this.actorOf(handled.author, handled.device),
+        sourceCommandId: messageId,
+      });
+      this.queue(cardId, this.delivery(messageId, handled, "queued"));
+    } catch (problem) {
+      this.queue(
+        cardId,
+        this.delivery(
+          messageId,
+          handled,
+          "failed",
+          problem instanceof Error ? problem.message : String(problem),
+        ),
+      );
+    }
+  }
+
+  /** The person here allows or declines a message someone else sent to a worker run here. */
+  async decide(
+    taskId: string,
+    messageId: string,
+    allow: boolean,
+  ): Promise<void> {
+    await this.load();
+    await this.inTurn(async () => {
+      const handled = this.handled[messageId];
+      if (!handled || handled.taskId !== taskId || handled.state !== "asking")
+        throw new Error("This message is no longer waiting for you.");
+      if (allow) await this.carryOut(messageId, handled);
+      else
+        this.queue(
+          cardIdOf(taskId),
+          this.delivery(messageId, handled, "declined"),
+        );
+      this.showAsks(taskId);
+      await this.keep();
+    });
+    this.send();
+  }
+
+  /** Puts the messages that wait for this person's word on their task. */
+  private showAsks(taskId: string): void {
+    const task = this.options
+      .state()
+      .tasks.find(
+        (item) =>
+          item.id === taskId && item.projectId === this.options.projectId,
+      );
+    if (!task) return;
+    const inputs = this.options.state().workerInputs ?? [];
+    const asks: SharedAsk[] = Object.entries(this.handled)
+      .filter(
+        ([, handled]) =>
+          handled.taskId === taskId && handled.state === "asking",
+      )
+      .map(([id, handled]) => ({
+        id,
+        from: this.options.nameOf(handled.author) ?? SOMEONE,
+        device: handled.device.name,
+        kind: handled.answer ? ("answer" as const) : ("message" as const),
+        text: handled.answer
+          ? answerSummary(
+              inputs.find((input) => input.id === handled.answer!.inputId),
+              handled.answer.response,
+            )
+          : handled.text!,
+        sentAt: handled.sentAt,
+      }))
+      .sort((left, right) => left.sentAt.localeCompare(right.sentAt));
+    if (asks.length) task.sharedAsks = asks;
+    else delete task.sharedAsks;
+    this.options.shown();
+  }
+
   // ── Small things ─────────────────────────────────────────────────────────
 
   async stop(): Promise<void> {
     this.stopped = true;
-    for (const card of this.followed.values()) {
-      card.stopped = true;
-      card.stream?.cancel();
+    for (const reader of [
+      ...this.followed.values(),
+      ...this.hosting.values(),
+    ]) {
+      reader.stopped = true;
+      reader.stream?.cancel();
     }
     for (const end of [...this.pauses]) end();
     await this.turns;
@@ -602,4 +1229,12 @@ export class CardActivity {
       this.pauses.add(end);
     });
   }
+}
+
+/** A run here still continued by a message: one that runs, or that ended a little while ago. */
+function continuable(task: WorkItem, now: number): boolean {
+  if (["preparing", "running", "stopping", "blocked"].includes(task.run.state))
+    return true;
+  const ended = Date.parse(task.run.finishedAt ?? task.run.startedAt ?? "");
+  return Number.isFinite(ended) && now - ended < CONTINUABLE_FOR_MS;
 }

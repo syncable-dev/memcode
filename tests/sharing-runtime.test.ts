@@ -606,7 +606,7 @@ test("a board connected on two computers of one person follows what is done in t
   }
 });
 
-test("a worker run on the Mac is on the PC's card when it is opened there, and the PC cannot steer it", async () => {
+test("a worker run on the Mac is on the PC's card when it is opened there, and a follow-up from the PC continues it", async () => {
   const mac = await fixture();
   const pc = await fixture(true, mac);
   try {
@@ -673,14 +673,31 @@ test("a worker run on the Mac is on the PC's card when it is opened there, and t
     assert.equal(onPc().sharedSession!.state, "running");
     assert.equal(onPc().run.state, "idle");
     assert.ok(pc.emitted.includes("workspace:state"));
-    // The PC reads the run; it cannot send to it, or start its review.
-    await assert.rejects(
-      pc.request("review:send", {
-        taskId: made.id,
-        text: "Also add a header row.",
-      }),
-      /^Error: This worker runs on .+'s (Mac|Windows|Linux)\. Sending to it from here is not available yet\. Comment on the card instead\.$/,
+    // The same person on the PC continues the Mac's worker through the card's log.
+    const { messageId } = await pc.request<{ messageId: string }>(
+      "review:send",
+      { taskId: made.id, text: "Also add a header row." },
     );
+    await until(
+      () =>
+        onMac.messages.some(
+          (message) =>
+            message.id === messageId && message.followupState === "queued",
+        ),
+      "the Mac to queue the PC's follow-up for its worker",
+    );
+    assert.equal(
+      onMac.messages.find((message) => message.id === messageId)!.actor?.name,
+      mac.me.name,
+    );
+    await until(
+      () =>
+        onPc().sharedSession?.messages.find(
+          (message) => message.id === messageId,
+        )?.deliveryLine === "Queued on your Mac",
+      "the PC to see it queued on the Mac",
+    );
+    // Nothing runs on the PC: its own task holds no new turn.
     assert.equal(
       onPc().messages.some((message) => /header row/.test(message.text)),
       false,

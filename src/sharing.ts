@@ -172,6 +172,18 @@ export function localProjectOf(
   return link && projects.find((project) => project.id === link.projectId);
 }
 
+/** A message from someone else to a worker run on this computer, waiting to be allowed. */
+export interface SharedAsk {
+  id: string;
+  /** Who sent it, and from which kind of computer. */
+  from: string;
+  device: string;
+  kind: "message" | "answer";
+  /** What they wrote, or what they answered. */
+  text: string;
+  sentAt: string;
+}
+
 /** A file someone shared from a card of a shared project. */
 export interface SharedCardResult {
   id: string;

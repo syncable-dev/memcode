@@ -49,7 +49,11 @@ test("an open card whose stream ends watches again from the last entry it has", 
     () => pc.find(id).sharedSession?.messages.length === 1,
     "the first turn",
   );
-  await until(() => service.cards.watching === 1, "the PC to be watching");
+  // The Mac watches too: it runs the worker, and reads the card for messages to it.
+  await until(
+    () => service.cards.watching === 2,
+    "the PC and the Mac to be watching",
+  );
   const reads = service.cards.calls.filter(
     (call) => call.method === "ReadCardEntries",
   ).length;
@@ -62,16 +66,19 @@ test("an open card whose stream ends watches again from the last entry it has", 
     () => pc.find(id).sharedSession?.messages.length === 2,
     "the turn after the cut",
   );
-  await until(() => service.cards.watching === 1, "the PC to watch again");
+  await until(
+    () => service.cards.watching === 2,
+    "the PC and the Mac to watch again",
+  );
   const watches = service.cards.calls.filter(
     (call) => call.method === "WatchCardEntries",
   );
-  assert.equal(watches.length, 2);
-  // It went on from where it was: one more read for what came meanwhile, no second copy of anything.
+  assert.equal(watches.length, 4);
+  // Each went on from where it was: one more read for what came meanwhile, no second copy of anything.
   assert.ok(
     service.cards.calls.filter((call) => call.method === "ReadCardEntries")
       .length <=
-      reads + 2,
+      reads + 4,
   );
   assert.deepEqual(
     pc.find(id).sharedSession!.messages.map((message) => message.id),
