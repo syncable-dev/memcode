@@ -217,7 +217,7 @@ sentence for `update_too_large`.
 **As built.** A change is written in pieces of about 256 KiB. An entry stays whole when
 it fits in one, and an entry that is larger goes key by key. A single value of about
 1 MiB or more is not written to the board. It stays on the computer it was typed on, and
-the Sharing view says so. MemCode does not refuse to save it.
+the Share panel says so. MemCode does not refuse to save it.
 
 ### Two boards meet
 
@@ -330,7 +330,7 @@ repaired by anyone: nobody else knows. It shows the line about changes left out,
 "Some changes are set aside until one they build on arrives". Damage that appears in the
 log after the author has read the update back is in the same place.
 
-What the person sees: a line in the Sharing view such as "2 changes from Dana Ek on
+What the person sees: a line in the Share panel such as "2 changes from Dana Ek on
 21 November could not be read and were left out", with nothing else interrupted.
 
 Two computers with different versions of MemCode could disagree about one update. The one
