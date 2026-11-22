@@ -205,6 +205,8 @@ export interface Message {
   sourceCommandId?: string;
   deliveryState?: import("./team-session").SessionCommand["state"];
   deliveryError?: string;
+  /** Where a message sent to a worker on another computer stands, in words. */
+  deliveryLine?: string;
   streamId?: string;
   pickedUpAt?: string;
   id: string;
@@ -271,6 +273,12 @@ export interface WorkItem extends TaskPlanningFields {
   sharedFromLog?: boolean;
   /** Files shared from this card at the sharing service. */
   sharedResults?: import("./sharing").SharedCardResult[];
+  /** The worker the card shows from another computer runs under this person's own account. */
+  sharedRunIsYours?: boolean;
+  /** What the worker on another computer waits for, from the card's log. */
+  sharedInputs?: import("./worker-input").WorkerInputRequest[];
+  /** Messages from someone else to a worker run here. Nothing runs until they are allowed. */
+  sharedAsks?: import("./sharing").SharedAsk[];
   id: string;
   identifier: string;
   projectId: string;
@@ -553,6 +561,12 @@ export interface MemCodeAPI extends CodeReviewAPI {
   /** A card of a shared project was opened or closed: its activity elsewhere is followed while open. */
   followSharedCard(taskId: string): Promise<void>;
   unfollowSharedCard(taskId: string): Promise<void>;
+  /** Allows or declines a message someone else sent to a worker run on this computer. */
+  decideSharedMessage(input: {
+    taskId: string;
+    messageId: string;
+    allow: boolean;
+  }): Promise<void>;
   /** Shares a file a task saved, or its changes, with everyone on the shared project. */
   shareCardFile(input: {
     taskId: string;

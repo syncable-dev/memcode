@@ -810,6 +810,18 @@ export async function createRuntime(
         shareableFile(store.dir, store.state, taskId, artifactId),
       changesOf: (taskId) => readDisplayedWorkerChanges(task(taskId)),
       filesFolder: (taskId) => join(store.dir, "captures", taskId),
+      // A follow-up from another computer is taken exactly as one typed here.
+      continueWorker: async (taskId, message) => {
+        const item = task(taskId);
+        if (item.messages.some((one) => one.id === message.id)) return;
+        item.messages.push(message);
+        item.updatedAt = message.at;
+        workers.enqueue(item, message.id);
+        await changed();
+        workers.dispatchQueued();
+      },
+      answerWorker: (taskId, inputId, response) =>
+        workers.inputs.respond(taskId, inputId, response),
     },
   });
   registerSharing(register, sharing);
@@ -1325,7 +1337,9 @@ export async function createRuntime(
       })
       .strict(),
     ({ taskId, requestId, response }) =>
-      workers.inputs.respond(taskId, requestId, response),
+      sharing?.showsRunElsewhere(taskId)
+        ? sharing.answerWorker(taskId, requestId, response)
+        : workers.inputs.respond(taskId, requestId, response),
   );
   register("fleet:refresh", identifier, (id) =>
     workers.fleet.refresh(project(id)),
@@ -1626,7 +1640,9 @@ export async function createRuntime(
     workers,
     {
       remoteSend: (item, body) => {
-        refuseRunElsewhere(item.id);
+        // A worker a shared project's card shows from another computer gets it through the card's log.
+        if (sharing?.showsRunElsewhere(item.id))
+          return sharing.messageWorker(item.id, body);
         return team?.remoteSession(item.id) ? team.sendSessionCommand(item.id, "followup", body) : Promise.resolve(undefined);
       },
       actor: (item) => team?.sessionActor(item.projectId),
@@ -1701,7 +1717,7 @@ export async function createRuntime(
     if (!sharing?.showsRunElsewhere(taskId)) return;
     const owner = task(taskId).sharedSession?.owner;
     throw Error(
-      `This worker runs on ${owner ? `${owner.name}'s ${owner.device}` : "another computer"}. Sending to it from here is not available yet. Comment on the card instead.`,
+      `This worker runs on ${owner ? `${owner.name}'s ${owner.device}` : "another computer"}. Its code review is run and discussed there.`,
     );
   };
   const requireReviewLane = (taskId: string) => {

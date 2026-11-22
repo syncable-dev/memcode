@@ -15,7 +15,9 @@
 //
 // --stand-in-worker adds POST /dev/worker-turn, which plays a worker on a task:
 // it adds a turn of the conversation, sets the run's state and can save a file
-// the worker made. Nothing runs a model. Everything else in the app is as it is.
+// the worker made. It also answers follow-ups: one sent to a task, here or from
+// another computer, is picked up and answered in a couple of seconds, in place
+// of a real worker. Nothing runs a model. Everything else in the app is as it is.
 import react from "@vitejs/plugin-react";
 import { build } from "vite";
 import { createServer } from "node:http";
@@ -29,6 +31,7 @@ import { BETA_ORIGIN } from "../runtime/beta-auth.ts";
 import { ManagedMemcodeEngine } from "../runtime/managed-engine.ts";
 import { MemtraceEngine } from "../runtime/memtrace.ts";
 import { initialState } from "../src/seed.ts";
+import { WorkerManager } from "../runtime/workers.ts";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const option = (name: string) => {
@@ -215,8 +218,7 @@ async function playWorker(turn: {
   const task = state.tasks.find((item) => item.id === turn.taskId);
   if (!task) throw new Error("No such task here.");
   const now = new Date().toISOString();
-  if (!task.run.startedAt || task.run.state === "finished")
-    task.run = { state: "running", startedAt: now };
+  if (!task.run.startedAt) task.run = { state: "running", startedAt: now };
   if (turn.state) task.run.state = turn.state;
   if (turn.state === "finished") task.run.finishedAt = now;
   task.run.activity =
@@ -254,6 +256,51 @@ async function playWorker(turn: {
   // Saved as any change is, so sharing hears of it.
   await runtime.request("task:update", { id: task.id, patch: {} });
 }
+
+/**
+ * In place of a real worker: a follow-up that waits on a task is picked up, and
+ * a moment later answered. The run keeps its start, so its card shows one run.
+ */
+const standInWorker = process.argv.includes("--stand-in-worker");
+const ANSWER_AFTER_MS = 2500;
+function answerFollowups() {
+  const state = runtime.store.state;
+  for (const task of state.tasks) {
+    const waiting = task.messages.filter(
+      (message) => message.followupState === "queued" && !message.promptedAt,
+    );
+    if (!waiting.length) continue;
+    const now = new Date().toISOString();
+    for (const message of waiting) {
+      message.promptedAt = now;
+      message.followupState = "included";
+    }
+    task.run = {
+      ...task.run,
+      state: "running",
+      startedAt: task.run.startedAt ?? now,
+      finishedAt: undefined,
+      activity: { phase: "editing", label: "Editing project files", at: now },
+    } as typeof task.run;
+    void runtime.request("task:update", { id: task.id, patch: {} });
+    setTimeout(() => {
+      void playWorker({
+        taskId: task.id,
+        text: waiting
+          .map(
+            (message) =>
+              `Done with “${message.text.split("\n")[0].slice(0, 120)}” (the local stand-in worker answered; no model ran).`,
+          )
+          .join("\n\n"),
+        state: "finished",
+      }).catch((problem) => console.error("The stand-in worker failed:", problem));
+    }, ANSWER_AFTER_MS);
+  }
+}
+if (standInWorker)
+  WorkerManager.prototype.dispatchQueued = function () {
+    queueMicrotask(answerFollowups);
+  };
 
 const types: Record<string, string> = {
   ".html": "text/html; charset=utf-8",

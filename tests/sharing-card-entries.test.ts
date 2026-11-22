@@ -206,3 +206,111 @@ test("a shared file names a file, never a path, and is at most 5 MB", () => {
       JSON.stringify(changes),
     );
 });
+
+// ── Messages to a worker on another computer (MemSync ADR-0015) ──────────
+
+const laptop = { id: randomUUID(), name: "Windows" };
+const runId = sessionIdOf(mac.id, "task-1", at);
+const message = (changes: Record<string, unknown> = {}) => ({
+  id: randomUUID(),
+  sessionId: runId,
+  sentAt: at,
+  text: "Also export as PDF.",
+  ...changes,
+});
+const written = (record: unknown, writer = laptop) =>
+  cardPayloads(record as CardRecord, writer);
+
+test("a message to a worker, what became of it, and what the worker waits for are written and read back", () => {
+  const question = {
+    sessionId: runId,
+    id: "input-1",
+    kind: "question",
+    title: "Which format first?",
+    options: [{ id: "csv", label: "CSV" }],
+    questions: [
+      {
+        id: "q1",
+        question: "Which format first?",
+        options: [
+          { id: "csv", label: "CSV" },
+          { id: "pdf", label: "PDF" },
+        ],
+      },
+    ],
+    createdAt: at,
+    status: "pending",
+  };
+  const records = [
+    { kind: "message", message: message() },
+    {
+      kind: "message",
+      message: message({
+        text: undefined,
+        answer: { inputId: "input-1", response: { answers: { q1: "pdf" } } },
+      }),
+    },
+    {
+      kind: "delivery",
+      delivery: {
+        messageId: randomUUID(),
+        sessionId: runId,
+        state: "declined",
+        at,
+      },
+    },
+    { kind: "input", input: question },
+  ];
+  for (const record of records) {
+    const [payload] = written(JSON.parse(JSON.stringify(record)));
+    assert.deepEqual(decoded(payload), {
+      format: "memcode-card",
+      version: 1,
+      device: laptop,
+      ...JSON.parse(JSON.stringify(record)),
+    });
+  }
+});
+
+test("a message holds either text or an answer, and a delivery names a state MemCode knows", () => {
+  const unreadable = (record: unknown) => {
+    const [payload] = written(record);
+    assert.equal(readCardEntry(payload).readable, false, JSON.stringify(record));
+  };
+  unreadable({ kind: "message", message: message({ text: undefined }) });
+  unreadable({
+    kind: "message",
+    message: message({
+      answer: { inputId: "input-1", response: { optionId: "allow" } },
+    }),
+  });
+  unreadable({ kind: "message", message: message({ text: "  " }) });
+  unreadable({
+    kind: "message",
+    message: message({ text: "x".repeat(20001) }),
+  });
+  unreadable({
+    kind: "message",
+    message: message({ sessionId: "not-a-run" }),
+  });
+  unreadable({
+    kind: "delivery",
+    delivery: {
+      messageId: randomUUID(),
+      sessionId: runId,
+      state: "started",
+      at,
+    },
+  });
+  unreadable({
+    kind: "input",
+    input: {
+      sessionId: runId,
+      id: "input-1",
+      kind: "question",
+      title: "Run it?",
+      createdAt: at,
+      status: "waiting",
+    },
+  });
+});

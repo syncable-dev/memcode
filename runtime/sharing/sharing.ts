@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
-import type { AppState, Artifact, Project } from "../../src/shared";
+import type { AppState, Artifact, Message, Project } from "../../src/shared";
+import type { WorkerInputResponse } from "../../src/worker-input";
 import type { WorkerChanges } from "../../src/changes";
 import type { StoryReviewRun } from "../../src/code-review";
 import type {
@@ -93,6 +94,14 @@ export interface CardHost {
   changesOf(taskId: string): Promise<WorkerChanges>;
   /** Where a file shared from a card is kept on this computer: a folder its previews may read. */
   filesFolder(taskId: string): string;
+  /** Continues a worker run here with a follow-up sent from another computer. */
+  continueWorker?(taskId: string, message: Message): Promise<void>;
+  /** Answers what a worker run here waits for, with an answer sent from another computer. */
+  answerWorker?(
+    taskId: string,
+    inputId: string,
+    response: WorkerInputResponse,
+  ): Promise<void>;
 }
 /** Board sync running for one connected project. */
 interface RunningBoard {
@@ -180,10 +189,18 @@ export class Sharing {
     // Addresses typed in Settings by an earlier build: MemCode now finds the service itself.
     delete (state.settings as { sharing?: unknown }).sharing;
     for (const task of state.tasks)
-      if (task.sharedFromLog || task.sharedResults) {
+      if (
+        task.sharedFromLog ||
+        task.sharedResults ||
+        task.sharedInputs ||
+        task.sharedAsks
+      ) {
         delete task.sharedSession;
         delete task.sharedFromLog;
         delete task.sharedResults;
+        delete task.sharedRunIsYours;
+        delete task.sharedInputs;
+        delete task.sharedAsks;
       }
   }
 
@@ -497,9 +514,40 @@ export class Sharing {
     this.boardOfTask(taskId)?.cards.unfollow(taskId);
   }
 
-  /** Whether a card shows a worker run from another computer, which nothing can be sent to. */
+  /** Whether a card shows a worker run from another computer. What is sent to it goes through the card's log. */
   showsRunElsewhere(taskId: string): boolean {
     return !!this.taskNamed(taskId)?.sharedFromLog;
+  }
+
+  /** Sends a follow-up to the worker a card shows from another computer. Its id is the message's. */
+  messageWorker(taskId: string, text: string): Promise<string> {
+    return this.requiredBoardOfTask(taskId).cards.messageWorker(taskId, text);
+  }
+
+  /** Answers what the worker a card shows from another computer waits for. */
+  async answerWorker(
+    taskId: string,
+    inputId: string,
+    response: WorkerInputResponse,
+  ): Promise<void> {
+    await this.requiredBoardOfTask(taskId).cards.answerWorker(
+      taskId,
+      inputId,
+      response,
+    );
+  }
+
+  /** Allows or declines a message someone else sent to a worker run here. */
+  decideMessage(input: {
+    taskId: string;
+    messageId: string;
+    allow: boolean;
+  }): Promise<void> {
+    return this.requiredBoardOfTask(input.taskId).cards.decide(
+      input.taskId,
+      input.messageId,
+      input.allow,
+    );
   }
 
   /** Shares a file a task saved with everyone on the shared project. */
@@ -745,10 +793,24 @@ export class Sharing {
       reviewOf: (taskId) =>
         this.options.cards?.reviewOf(taskId) ?? Promise.resolve(null),
       nameOf: (account) => sync.nameOf(account),
+      learnName: (account) => sync.learnName(account),
       shown: () => this.options.shown?.(),
+      me: link.accountId,
+      deliver: (taskId, message) =>
+        this.cardHost().continueWorker?.(taskId, message) ??
+        Promise.reject(new Error("Workers cannot be continued from here.")),
+      answer: (taskId, inputId, response) =>
+        this.cardHost().answerWorker?.(taskId, inputId, response) ??
+        Promise.reject(new Error("Workers cannot be answered from here.")),
     });
     this.boards.set(link.projectId, { link, service, sync, cards });
     sync.start();
+    // Messages sent to workers here while MemCode was closed are read now.
+    void cards
+      .capture()
+      .catch((problem) =>
+        console.error("Card activity could not start:", problem),
+      );
   }
 
   /** Puts how each board stands where the window reads it. */
