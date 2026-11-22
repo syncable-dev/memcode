@@ -36,6 +36,13 @@ import "../styles-worker-input.css";
 import "../styles-annotations.css";
 import "../styles-card-comments.css";
 import { WorkerChanges } from "./WorkerChanges";
+import { ShareFromCard } from "./ShareFromCard";
+import {
+  cardRunElsewhere,
+  isUnfetchedSharedFile,
+  runElsewhereNote,
+  sharedFilesToFetch,
+} from "../sharing-cards";
 import { StoryTabBar, type StoryTab, type StoryTabItem } from "./StoryTabBar";
 import { isCodeReviewTask } from "../code-review-workflow";
 import { taskStatus, workflowFor } from "../planning/workflow";
@@ -134,7 +141,7 @@ export function WorkDetail({
   state,
   task: localTask,
   project,
-  artifacts,
+  artifacts: ownArtifacts,
   initialArtifact,
   runtime,
   epics,
@@ -157,7 +164,27 @@ export function WorkDetail({
   const task = presentedTask(localTask);
   const health = useRuntimeHealth();
   const team = state.team?.find((item) => item.projectId === task.projectId);
-  const owner = teamClaimForStory(team, task.id);
+  // A run shown from the card's log at the sharing service: read here, never steered.
+  const elsewhere = cardRunElsewhere(localTask);
+  const owner = teamClaimForStory(team, task.id) ?? elsewhere;
+  const sharedBoard = state.sharedBoards?.find(
+    (board) => board.projectId === localTask.projectId,
+  );
+  const sharedProjectName = state.sharedProjectLinks?.find(
+    (link) => link.projectId === localTask.projectId,
+  )?.sharedProjectName;
+  const artifacts = [
+    ...ownArtifacts,
+    ...sharedFilesToFetch(localTask, ownArtifacts),
+  ];
+  const [sharing, setSharing] = useState("");
+  // While a card of a shared project is open, what happens to it elsewhere is followed.
+  useEffect(() => {
+    if (!sharedBoard) return;
+    const taskId = localTask.id;
+    void window.memcode.followSharedCard(taskId).catch(() => {});
+    return () => void window.memcode.unfollowSharedCard(taskId).catch(() => {});
+  }, [localTask.id, !!sharedBoard]);
   const remote = owner && !owner.local ? owner : undefined;
   const teamBlock = teamStartBlocked(team, task.id);
   const blockers = pendingPrerequisites(task, tasks);
@@ -402,9 +429,38 @@ export function WorkDetail({
     });
   };
   const openArtifact = async (item: Artifact) => {
+    if (isUnfetchedSharedFile(item))
+      return act(async () => {
+        const fetched = await window.memcode.openSharedCardFile({
+          taskId: task.id,
+          resultId: item.id.slice("shared:".length),
+        });
+        setArtifact(fetched);
+        setTab("artifacts");
+      });
     setArtifact(item);
     setTab("artifacts");
   };
+  const shareFile = (item: Artifact) =>
+    void act(async () => {
+      setSharing(item.id);
+      try {
+        await window.memcode.shareCardFile({
+          taskId: task.id,
+          artifactId: item.id,
+        });
+        notify(`${item.name} is shared with ${sharedProjectName}`);
+      } finally {
+        setSharing("");
+      }
+    });
+  const shareChanges = () =>
+    act(async () => {
+      await window.memcode.shareCardChanges(task.id);
+      notify(`These changes are shared with ${sharedProjectName}`);
+    });
+  // Sharing is offered on the computer that ran the worker, for a shared project.
+  const mayShare = !!sharedBoard && !elsewhere && !task.example;
   const comment = (reference: ReviewReference) => {
     if (reference.taskId !== task.id) return;
     setReferences([reference]);
@@ -913,12 +969,15 @@ export function WorkDetail({
                     )}
                     <textarea
                       aria-label="Message to worker"
+                      disabled={!!elsewhere}
                       placeholder={
-                        task.example
-                          ? "Explore the conversation, or add a note…"
-                          : active
-                            ? "Queue a follow-up for the next worker pass…"
-                            : "Add context, ask a follow-up, or describe the next step…"
+                        elsewhere
+                          ? runElsewhereNote(elsewhere)
+                          : task.example
+                            ? "Explore the conversation, or add a note…"
+                            : active
+                              ? "Queue a follow-up for the next worker pass…"
+                              : "Add context, ask a follow-up, or describe the next step…"
                       }
                       value={draft}
                       onChange={(e) => setDraft(e.target.value)}
@@ -987,6 +1046,7 @@ export function WorkDetail({
                           }
                           disabled={
                             !health.available ||
+                            !!elsewhere ||
                             !draft.trim() ||
                             (!remote && !active && !!teamBlock) ||
                             (!remote &&
@@ -1094,6 +1154,9 @@ export function WorkDetail({
             {tab === "changes" && (
               <WorkerChanges
                 task={task}
+                onShare={
+                  mayShare && localTask.run.startedAt ? shareChanges : undefined
+                }
                 focusTarget={changeTarget}
                 onComment={comment}
                 comments={comments.filter(
@@ -1144,6 +1207,23 @@ export function WorkDetail({
                     artifacts={artifacts}
                     onOpen={(item) => void openArtifact(item)}
                   />
+                  {mayShare && (
+                    <ShareFromCard
+                      projectName={sharedProjectName ?? "the shared project"}
+                      artifacts={ownArtifacts.filter(
+                        (item) => !item.id.startsWith("shared:"),
+                      )}
+                      sharedNames={
+                        new Set(
+                          (localTask.sharedResults ?? [])
+                            .filter((result) => result.sharedHere)
+                            .map((result) => result.name),
+                        )
+                      }
+                      busy={sharing}
+                      onShare={shareFile}
+                    />
+                  )}
                 </div>
               ) : (
                 <Empty
