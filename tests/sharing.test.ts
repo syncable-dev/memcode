@@ -1100,3 +1100,41 @@ test("only a task's own saved file, at most 5 MB, can be shared, and only from a
     await close();
   }
 });
+
+test("a file of 5 MB, the most a project shares, goes from one computer to the other whole", async () => {
+  const { mac, pc, onMac, onPc, close } = await macAndPc();
+  try {
+    onMac().run = {
+      state: "finished",
+      startedAt: "2026-11-22T10:00:00.000Z",
+    } as never;
+    const folder = join(mac.dataDir, "captures", "task-1");
+    await mkdir(folder, { recursive: true });
+    const bytes = Buffer.alloc(5 * 1024 * 1024, "a");
+    await writeFile(join(folder, "large-report.txt"), bytes);
+    mac.state.artifacts.push({
+      id: "large",
+      projectId: "local-web",
+      taskId: "task-1",
+      name: "large-report.txt",
+      kind: "text",
+      path: join(folder, "large-report.txt"),
+      createdAt: at,
+      source: "Worker",
+      purpose: "report",
+    });
+    pc.sharing.followCard("task-1");
+    await mac.sharing.shareResult({ taskId: "task-1", artifactId: "large" });
+    await until(
+      () => onPc().sharedResults?.length === 1,
+      "the large file on the PC's card",
+    );
+    const opened = await pc.sharing.openSharedResult({
+      taskId: "task-1",
+      resultId: onPc().sharedResults![0].id,
+    });
+    assert.ok((await readFile(opened.path)).equals(bytes));
+  } finally {
+    await close();
+  }
+});
