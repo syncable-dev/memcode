@@ -125,8 +125,10 @@ sequenceDiagram
   their board. A computer whose board has work on it writes the board to a log that has
   none, one entry an update. A computer whose project has no work takes the board from the
   log as it is, lanes, custom fields and saved views included. When both have work,
-  nothing is merged: Connect answers with a sentence that says so, and the project stays
+  nothing is merged: Connect answers with one sentence that says so, and the project stays
   unconnected. One board on two computers, with the same ids, is one board.
+  Two computers that both find the log empty in the same seconds both write their board.
+  That gap is known and stays for now. Closing it needs a field in MemSync.
 - **Changes made here** are found after every save of the workspace, and once when sync
   starts, which is how changes made while signed out are sent later. They wait on disk
   until the log has them.
@@ -159,7 +161,7 @@ The Sharing view says how the open project's board stands:
 | Nothing waits | The board is in sync. |
 | Changes on their way | Sending 3 changes to the shared board… |
 | The service cannot be reached | The reason, and "3 changes made here are kept on this computer and sent when it works again." |
-| Both boards have work | "website has tasks of its own, and Website board already has a board. Two boards are never made into one. To join Website board, connect a project that has no tasks yet. To share website, start a new shared project for it at memtrace.io." Connect answers with it. It is on this line only when the service could not be asked while connecting. |
+| The project has work, and so has the shared board | "website already has work of its own, so it cannot join Website board: connect a project that has none yet." Connect answers with it and connects nothing. It is on this line only when the service could not be asked while connecting. |
 | A newer MemCode laid the board out | A newer MemCode laid this board out. Update MemCode to change it from this computer. Until then it is shown here and what you change stays on this computer. |
 | The shared project is gone for this person | This shared project no longer exists, or you are no longer on it. |
 | The workspace cannot be saved | The workspace could not be saved, so changes from the shared board are waiting. Free disk space, and they are taken up again. |
@@ -391,10 +393,11 @@ For board sync, beside what the [layout page](shared-board-layout-proposal.md) h
 
 ## Not built
 
-- **A card's conversation, artifacts and changes on other computers.** This is the largest
-  gap against what sharing is meant to be. It waits for MemSync's conversation logs.
-  Until then the second computer continues a task from its brief, its runbook and its
-  comments, with a worker that starts fresh, not from the first computer's conversation.
+- **The next step: a card's conversation, artifacts and changes on other computers,** with
+  who did what. This is the largest gap against what sharing is meant to be. It waits
+  for MemSync's log for each card (ADR-0005). Until then the second computer continues a
+  task from its brief, its runbook and its comments, with a worker that starts fresh, not
+  from the first computer's conversation.
 - What the [layout page](shared-board-layout-proposal.md#not-built) lists for the board.
 - Running a worker on someone else's computer. MemSync has nothing for it.
 - Leaving a shared project from MemCode.

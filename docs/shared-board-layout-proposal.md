@@ -229,16 +229,18 @@ are added to the log as new entries. Ids cannot collide, and identifiers that do
 renumbered by the rule above. Nothing is lost and nothing is merged by guesswork. The
 person is told how many tasks will be added before it happens.
 
-**Corrected: nothing is merged.** Alex decided otherwise on 21 November 2026: you either
-share your own project, or you join someone else's and get their board. So:
+**Corrected: nothing is merged.** Alex decided otherwise on 21 November 2026: "you either
+share your own project, or you join someone else's and get their board. Nothing is ever
+merged. That is as simple as that." So:
 
-- A computer whose project has work writes it only to a log that has no work in it.
-- A computer that joins a project with a board takes that board as it is. It adds nothing
-  of its own, not a lane and not a custom field.
-- When both have work, the project is not connected. Connecting answers: "app has tasks of
-  its own, and Website already has a board. Two boards are never made into one. To join
-  Website, connect a project that has no tasks yet. To share app, start a new shared
-  project for it at memtrace.io."
+- Sharing your own project puts your board into a shared project whose log has no work
+  in it.
+- Joining, whether someone else's project or your own from another computer, gives you
+  the board that is in the log. The joining computer adds nothing of its own, not a lane
+  and not a custom field.
+- A project that already has work is never merged into a board that already exists.
+  Connecting answers with one sentence, and the project is not connected: "app already
+  has work of its own, so it cannot join Website: connect a project that has none yet."
 
 A first version of the code did keep both, behind a question. It was taken out again.
 
@@ -348,6 +350,10 @@ the project again does.
 
 ## Not built
 
+- **The next step: a card's conversation for everyone on the project.** How it was
+  solved, its artifacts, its changes and who did it. Only running the worker stays on
+  the computer it runs on. MemSync does not carry these yet. Its ADR-0005 plans them
+  as a log for each card, and it is not built.
 - **A change to someone else's comment is shown.** MemCode itself lets only the author
   change a comment. Nothing stops a changed MemCode from writing one, and other computers
   would show it.
