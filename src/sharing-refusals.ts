@@ -21,6 +21,11 @@ export const refusalRules = [
   "empty_update",
   "update_too_large",
   "too_many_updates",
+  "invalid_card_id",
+  "invalid_file",
+  "file_too_large",
+  "project_storage_full",
+  "no_such_file",
 ] as const;
 export type RefusalRule = (typeof refusalRules)[number];
 
@@ -58,4 +63,13 @@ export const refusalSentences: Record<RefusalRule, string> = {
     "One change to the board was too large to share. Shorten the text you just added and try again.",
   too_many_updates:
     "MemCode sent too many board changes at once. This is a fault in MemCode, not something you did.",
+  invalid_card_id:
+    "MemCode named a card the sharing service cannot use. This is a fault in MemCode, not something you did.",
+  invalid_file: "That file cannot be shared. An empty file is not kept.",
+  file_too_large:
+    "That file is larger than 5 MB, which is the most a project can share in one file.",
+  project_storage_full:
+    "This project already shares 50 MB of files, which is all it can keep. The file stays on this computer.",
+  no_such_file:
+    "That file is no longer kept for this project. Ask whoever shared it to share it again.",
 };
