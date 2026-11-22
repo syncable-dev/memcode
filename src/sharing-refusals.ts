@@ -22,7 +22,6 @@ export const refusalRules = [
   "update_too_large",
   "too_many_updates",
   "invalid_card_id",
-  "invalid_file",
   "file_too_large",
   "project_storage_full",
   "no_such_file",
@@ -65,7 +64,6 @@ export const refusalSentences: Record<RefusalRule, string> = {
     "MemCode sent too many board changes at once. This is a fault in MemCode, not something you did.",
   invalid_card_id:
     "MemCode named a card the sharing service cannot use. This is a fault in MemCode, not something you did.",
-  invalid_file: "That file cannot be shared. An empty file is not kept.",
   file_too_large:
     "That file is larger than 5 MB, which is the most a project can share in one file.",
   project_storage_full:
