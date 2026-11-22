@@ -30,8 +30,11 @@ export function WorkerChanges({
   focusVersion,
   onFocusComment,
   focusTarget,
+  onShare,
 }: {
   task: WorkItem;
+  /** Offered on the computer that ran the worker, for a card of a shared project. */
+  onShare?: () => Promise<void>;
   onComment: (reference: ReviewReference) => void;
   comments: ReviewComment[];
   focusedCommentId?: string;
@@ -158,7 +161,14 @@ export function WorkerChanges({
     return () => {
       alive = false;
     };
-  }, [task.id, task.changesRevision, task.run.state, task.run.sessionId]);
+  }, [
+    task.id,
+    task.changesRevision,
+    task.run.state,
+    task.run.sessionId,
+    // Changes shared from another computer arrive as a file on the card.
+    task.sharedResults?.filter((result) => result.kind === "patch").length,
+  ]);
   if (error)
     return (
       <div className="changes-error" role="alert">
@@ -202,6 +212,7 @@ export function WorkerChanges({
           {task.run.branch}
         </small>
         <SelectionActions selection={selection} onComment={onComment} />
+        {onShare && <ShareChanges onShare={onShare} />}
       </header>
       <div className="changes-layout">
         <nav className="changed-files" aria-label="Changed files">
@@ -371,5 +382,22 @@ function FilePatches({
         </div>
       </div>
     </article>
+  );
+}
+
+function ShareChanges({ onShare }: { onShare: () => Promise<void> }) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <button
+      className="button secondary worker-changes-share"
+      disabled={busy}
+      title="Everyone on the shared project can then see these changes on this card."
+      onClick={() => {
+        setBusy(true);
+        void onShare().finally(() => setBusy(false));
+      }}
+    >
+      Share changes
+    </button>
   );
 }
