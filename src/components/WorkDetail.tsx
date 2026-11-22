@@ -247,11 +247,13 @@ export function WorkDetail({
   useEffect(() => {
     // Reviewing saved evidence must not start implementation qualification or
     // indexing. Check the lane too: an in-place card switch updates tab later.
+    // A project with no folder on this computer, as a shared one opened here, has nothing to measure.
     if (
       remote ||
       reviewing ||
       tab === "review" ||
       !health.available ||
+      !project.path ||
       task.example ||
       task.route ||
       isActive(task)
