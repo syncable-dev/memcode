@@ -73,7 +73,11 @@ interface RunElsewhere {
   entries: number;
 }
 /** A shared file, with the account that named it. The window gets the name only. */
-type KnownResult = SharedResultRecord & { account: string; sharedAt: string };
+type KnownResult = SharedResultRecord & {
+  account: string;
+  sharedAt: string;
+  sharedHere: boolean;
+};
 interface Followed {
   followers: number;
   cursor: number;
@@ -462,6 +466,7 @@ export class CardActivity {
         ...entry.result,
         account: logged.author,
         sharedAt: logged.loggedAt,
+        sharedHere: entry.device.id === this.options.device.id,
       });
       return true;
     }

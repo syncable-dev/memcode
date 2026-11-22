@@ -178,4 +178,6 @@ export interface SharedCardResult {
   /** The name of whoever shared it, as the sharing service has it. */
   sharedBy: string;
   sharedAt: string;
+  /** Shared from this computer: its own copy is already among the card's files. */
+  sharedHere: boolean;
 }

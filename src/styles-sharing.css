@@ -186,3 +186,50 @@
 .sharing-open-project + .sharing-notice {
   margin-top: 14px;
 }
+.share-from-card {
+  margin-top: 28px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+.share-from-card > p {
+  margin: 6px 0 10px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+.share-from-card ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.share-from-card li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+.share-from-card li > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.share-from-card .button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.share-from-card-done {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.worker-changes-share {
+  margin-left: 8px;
+  white-space: nowrap;
+}
