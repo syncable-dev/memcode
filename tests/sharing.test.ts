@@ -1,13 +1,22 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { initialState } from "../src/seed";
 import type { AppState, Project } from "../src/shared";
 import type { SharingOverview } from "../src/sharing";
 import { refusalSentences } from "../src/sharing-refusals";
-import { Sharing } from "../runtime/sharing/sharing";
+import { Sharing, type CardHost } from "../runtime/sharing/sharing";
+import { shareableFile } from "../runtime/sharing/cards/files";
+import type { WorkerChanges } from "../src/changes";
 import {
   startStandInMemsync,
   type StandInMemsync,
@@ -52,6 +61,8 @@ async function fixture(beside?: {
     exchanges: [] as string[],
     tokenEndpointStatus: 200,
     admitAt: service as StandInMemsync,
+    /** What each task changed, as this computer's Changes tab would show it. */
+    changes: new Map<string, WorkerChanges>(),
   };
   let serial = 0;
   const issueToken = (async (url) => {
@@ -71,6 +82,21 @@ async function fixture(beside?: {
     });
   }) as typeof fetch;
   const boardsFolder = await mkdtemp(join(tmpdir(), "memcode-sharing-"));
+  const dataDir = join(boardsFolder, "profile");
+  const cards: CardHost = {
+    reviewOf: async () => null,
+    shareableFile: (taskId, artifactId) =>
+      shareableFile(dataDir, state, taskId, artifactId),
+    changesOf: async (taskId) =>
+      world.changes.get(taskId) ?? {
+        taskId,
+        checkpoints: [],
+        additions: 0,
+        deletions: 0,
+        files: 0,
+      },
+    filesFolder: (taskId) => join(dataDir, "captures", taskId),
+  };
   const sharing = new Sharing({
     state: () => state,
     changed: async () => {
@@ -78,6 +104,7 @@ async function fixture(beside?: {
       await sharing.workspaceSaved();
     },
     boardsFolder,
+    cards,
     saveWorkspace: async (first) => {
       await first();
       world.saves++;
@@ -102,6 +129,7 @@ async function fixture(beside?: {
     sharing,
     as,
     boardsFolder,
+    dataDir,
     /** MemCode is started again on the same profile: what was kept is still there. */
     restarted: () =>
       new Sharing({
@@ -140,6 +168,11 @@ const boardsSynced = (
       f.state.sharedBoards.every((board) => board.state === state),
     () => `the boards to be ${state}: ${JSON.stringify(f.state.sharedBoards)}`,
   );
+/** The folders kept for connected boards. Beside them is this computer's id for card logs. */
+const boardFolders = async (folder: string) =>
+  (await readdir(folder, { withFileTypes: true }))
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name);
 type Ready = Extract<SharingOverview, { state: "ready" }>;
 const ready = (overview: SharingOverview): Ready => {
   assert.equal(overview.state, "ready", JSON.stringify(overview));
@@ -562,8 +595,8 @@ test("connecting writes the project's board to the shared project, and the perso
     await boardsSynced(mac, 1);
     assert.equal(mac.state.sharedBoards![0].projectId, "local-web");
     assert.ok(mac.service.boards.log(shared).length > 0);
-    assert.deepEqual(await readdir(mac.boardsFolder), [
-      (await readdir(mac.boardsFolder))[0],
+    assert.deepEqual(await boardFolders(mac.boardsFolder), [
+      (await boardFolders(mac.boardsFolder))[0],
     ]);
 
     await pc.sharing.connect({
@@ -632,12 +665,12 @@ test("disconnecting ends sync for the board and forgets what was kept for it", a
       sharedProjectId: shared,
     });
     await boardsSynced(f, 1);
-    assert.equal((await readdir(f.boardsFolder)).length, 1);
+    assert.equal((await boardFolders(f.boardsFolder)).length, 1);
     const logged = f.service.boards.log(shared).length;
 
     await f.sharing.disconnect("local-web");
     assert.deepEqual(f.state.sharedBoards, []);
-    assert.deepEqual(await readdir(f.boardsFolder), []);
+    assert.deepEqual(await boardFolders(f.boardsFolder), []);
     assert.equal(f.service.boards.watching, 0);
     // The board stays on this computer, and what changes on it now goes nowhere.
     assert.equal(
@@ -769,7 +802,7 @@ test("a project with tasks cannot be connected to a shared project that already 
     );
     assert.deepEqual(laptop.state.sharedProjectLinks ?? [], []);
     assert.equal(laptop.state.sharedBoards?.length, 0);
-    assert.deepEqual(await readdir(laptop.boardsFolder), []);
+    assert.deepEqual(await boardFolders(laptop.boardsFolder), []);
     assert.equal(mac.service.boards.log(shared).length, logged);
     assert.equal(
       laptop.state.tasks.filter((one) => one.projectId === "local-app").length,
@@ -828,5 +861,227 @@ test("a board connected at one sharing service is not synchronized at another", 
   } finally {
     await f.close();
     await other.close();
+  }
+});
+
+/** The same person's Mac and PC, both connected to one shared project with the Mac's board. */
+async function macAndPc() {
+  const mac = await fixture();
+  const pc = await fixture(mac);
+  giveWork(mac.state, "local-web");
+  const shared = await mac.as(mac.people.alex).startProject("Website");
+  await mac.sharing.connect({
+    projectId: "local-web",
+    sharedProjectId: shared,
+  });
+  await boardsSynced(mac, 1);
+  await pc.sharing.connect({ projectId: "local-app", sharedProjectId: shared });
+  await boardsSynced(pc, 1);
+  const onMac = () => mac.state.tasks.find((one) => one.id === "task-1")!;
+  const onPc = () => pc.state.tasks.find((one) => one.id === "task-1")!;
+  return {
+    mac,
+    pc,
+    onMac,
+    onPc,
+    close: async () => {
+      await pc.close();
+      await mac.close();
+    },
+  };
+}
+
+test("a worker run on one computer is on the other's open card, live, and nothing can be sent to it", async () => {
+  const { mac, pc, onMac, onPc, close } = await macAndPc();
+  try {
+    pc.sharing.followCard("task-1");
+    onMac().run = {
+      state: "running",
+      startedAt: "2026-11-22T10:00:00.000Z",
+    } as never;
+    onMac().messages = [
+      {
+        id: "m1",
+        role: "user",
+        text: "Export the report as CSV.",
+        at: "2026-11-22T10:00:00.000Z",
+      },
+    ];
+    await mac.sharing.workspaceSaved();
+    await until(
+      () => onPc().sharedSession?.messages.length === 1,
+      "the PC's open card to show the run",
+    );
+    assert.equal(onPc().sharedSession!.owner.name, mac.people.alex.name);
+    assert.equal(pc.sharing.showsRunElsewhere("task-1"), true);
+    assert.equal(mac.sharing.showsRunElsewhere("task-1"), false);
+    // Live: a new turn arrives on the open card.
+    onMac().messages.push({
+      id: "m2",
+      role: "assistant",
+      text: "Done.",
+      at: "2026-11-22T10:01:00.000Z",
+    });
+    mac.sharing.workerActivity();
+    await until(
+      () => onPc().sharedSession?.messages.length === 2,
+      "the new turn",
+    );
+    // Closed and opened again, the card reads the log again.
+    pc.sharing.unfollowCard("task-1");
+    pc.sharing.followCard("task-1");
+    await until(
+      () => onPc().sharedSession?.messages.length === 2,
+      "the card again",
+    );
+  } finally {
+    await close();
+  }
+});
+
+test("a file and the changes shared from a card open on the other computer, with who shared them", async () => {
+  const { mac, pc, onMac, onPc, close } = await macAndPc();
+  try {
+    onMac().run = {
+      state: "finished",
+      startedAt: "2026-11-22T10:00:00.000Z",
+    } as never;
+    const folder = join(mac.dataDir, "captures", "task-1");
+    await mkdir(folder, { recursive: true });
+    const html = "<h1>Export report</h1>";
+    await writeFile(join(folder, "report.html"), html);
+    mac.state.artifacts.push({
+      id: "artifact-1",
+      projectId: "local-web",
+      taskId: "task-1",
+      name: "report.html",
+      kind: "html",
+      path: join(folder, "report.html"),
+      createdAt: at,
+      source: "Worker",
+      purpose: "report",
+    });
+    pc.sharing.followCard("task-1");
+    const shared = await mac.sharing.shareResult({
+      taskId: "task-1",
+      artifactId: "artifact-1",
+    });
+    assert.equal(shared.name, "report.html");
+    await until(
+      () => onPc().sharedResults?.length === 1,
+      "the shared file on the PC's card",
+    );
+    assert.equal(onPc().sharedResults![0].sharedBy, mac.people.alex.name);
+    const opened = await pc.sharing.openSharedResult({
+      taskId: "task-1",
+      resultId: onPc().sharedResults![0].id,
+    });
+    assert.equal(await readFile(opened.path, "utf8"), html);
+    assert.equal(opened.source, mac.people.alex.name);
+    assert.equal(opened.purpose, "report");
+    assert.ok(pc.state.artifacts.some((item) => item.id === opened.id));
+    assert.ok(opened.path.startsWith(join(pc.dataDir, "captures", "task-1")));
+
+    const changes: WorkerChanges = {
+      taskId: "task-1",
+      checkpoints: [
+        {
+          id: "c1",
+          runId: "r1",
+          taskId: "task-1",
+          agentId: "a1",
+          harness: "codex",
+          branch: "epic/ep-01",
+          startedAt: at,
+          at,
+          basis: "native-edit",
+          files: [
+            {
+              path: "src/export.ts",
+              status: "modified",
+              additions: 1,
+              deletions: 0,
+              binary: false,
+              hunks: [
+                {
+                  oldStart: 1,
+                  newStart: 1,
+                  lines: [
+                    {
+                      kind: "add",
+                      text: "export const csv = true;",
+                      newLine: 1,
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      additions: 1,
+      deletions: 0,
+      files: 1,
+    };
+    mac.world.changes.set("task-1", changes);
+    await mac.sharing.shareChanges("task-1");
+    await until(
+      () => !!onPc().sharedResults?.some((item) => item.kind === "patch"),
+      "the shared changes",
+    );
+    assert.deepEqual(await pc.sharing.sharedChanges("task-1"), changes);
+  } finally {
+    await close();
+  }
+});
+
+test("only a task's own saved file, at most 5 MB, can be shared, and only from a shared project", async () => {
+  const { mac, close } = await macAndPc();
+  try {
+    const outside = join(mac.dataDir, "elsewhere.txt");
+    await mkdir(mac.dataDir, { recursive: true });
+    await writeFile(outside, "not this task's");
+    mac.state.artifacts.push({
+      id: "outside",
+      projectId: "local-web",
+      taskId: "task-1",
+      name: "elsewhere.txt",
+      kind: "text",
+      path: outside,
+      createdAt: at,
+      source: "Worker",
+    });
+    await assert.rejects(
+      mac.sharing.shareResult({ taskId: "task-1", artifactId: "outside" }),
+      /Only files this task saved can be shared/,
+    );
+    const folder = join(mac.dataDir, "captures", "task-1");
+    await mkdir(folder, { recursive: true });
+    await writeFile(join(folder, "big.bin"), Buffer.alloc(5 * 1024 * 1024 + 1));
+    mac.state.artifacts.push({
+      id: "big",
+      projectId: "local-web",
+      taskId: "task-1",
+      name: "big.bin",
+      kind: "text",
+      path: join(folder, "big.bin"),
+      createdAt: at,
+      source: "Worker",
+    });
+    await assert.rejects(
+      mac.sharing.shareResult({ taskId: "task-1", artifactId: "big" }),
+      /larger than 5 MB/,
+    );
+    await assert.rejects(
+      mac.sharing.shareChanges("task-1"),
+      /no recorded changes to share yet/,
+    );
+    mac.state.tasks.push(task("local-app", "task-9"));
+    await assert.rejects(
+      mac.sharing.shareChanges("task-9"),
+      /not being shared/,
+    );
+  } finally {
+    await close();
   }
 });
