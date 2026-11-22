@@ -267,6 +267,10 @@ export interface Evidence {
 export interface WorkItem extends TaskPlanningFields {
   /** Read-only projection; never grants this device execution authority. */
   sharedSession?: import("./team-session").TeamSession;
+  /** The shared session came from the card's log at the sharing service: nothing can be sent to it. */
+  sharedFromLog?: boolean;
+  /** Files shared from this card at the sharing service. */
+  sharedResults?: import("./sharing").SharedCardResult[];
   id: string;
   identifier: string;
   projectId: string;
