@@ -1122,3 +1122,18 @@
 .epic-branch-picker.mc-select-trigger:hover {
   background: #e8f1e6;
 }
+/* A shipped goal whose checkout MemCode had to keep, and why. */
+.roadmap-kept-checkout {
+  display: block;
+  margin-top: 6px;
+  font-size: 10px;
+  line-height: 1.5;
+  color: #8a7445;
+}
+/* What happens after the merge, not yet done: quieter than the checked steps. */
+.pr-done li.pr-done-next {
+  color: #687d6e;
+}
+.pr-done li.pr-done-next > svg {
+  color: #9cb19f;
+}

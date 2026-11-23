@@ -23,6 +23,7 @@ import {
   type GoalBranch,
   type RepositoryStatus,
 } from "../branches";
+import { keptCheckoutNotes } from "../shipped-goals";
 import { Modal } from "./Dialogs";
 import { DeleteAction } from "./DeleteAction";
 
@@ -469,6 +470,11 @@ export function Roadmap({
             Prerequisites keep the order explicit.
             {shipped > 0 &&
               ` ${shipped} ${shipped === 1 ? "goal has" : "goals have"} shipped.`}
+            {keptCheckoutNotes(allEpics).map((note) => (
+              <small className="roadmap-kept-checkout" key={note}>
+                {note}
+              </small>
+            ))}
           </span>
         </div>
       )}
