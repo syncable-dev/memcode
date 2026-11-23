@@ -384,8 +384,9 @@ async function readChanges(
     deletions: 0,
     files: 0,
   };
-  if (!task.run.workspace) return empty;
-  await recoverClaudeEdits(task);
+  if (!workerRecordsFolder(task)) return empty;
+  // Claude's edits are recovered from the checkout; a shipped goal's is gone.
+  if (!task.run.records) await recoverClaudeEdits(task);
   const readLedger = async (name: string): Promise<ChangeCheckpoint[]> => {
     const target = join(directory(task), name);
     const path = await realpath(target).catch((e) => {
