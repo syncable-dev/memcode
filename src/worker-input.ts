@@ -51,4 +51,6 @@ export interface WorkerInputRequest extends WorkerInputPrompt {
   status: "pending" | "answered" | "cancelled";
   answeredAt?: string;
   response?: WorkerInputResponse;
+  /** It waits on another computer: where an answer from here stands, and whether one can be sent. */
+  elsewhere?: { line?: string; answerable: boolean };
 }

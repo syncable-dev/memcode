@@ -1,6 +1,6 @@
 [package]
 name = "memcode"
-version = "0.4.0-beta.20"
+version = "0.4.0-beta.21"
 license = "PolyForm-Noncommercial-1.0.0"
 edition = "2021"
 rust-version = "1.90"
@@ -38,6 +38,14 @@ windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Grap
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = "=3.7.0"
 core-foundation = "=0.10.1"
+wry = "=0.57.2"
+objc2 = "=0.6.5"
+block2 = "=0.6.2"
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "block2", "objc2-core-foundation", "NSString", "NSError", "NSData", "NSDictionary", "NSValue", "NSProcessInfo", "NSGeometry", "NSRange", "NSObjCRuntime", "NSURL", "NSArray"] }
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "block2", "objc2-core-foundation", "objc2-core-graphics", "NSEvent", "NSView", "NSResponder", "NSWindow", "NSImage", "NSImageRep", "NSBitmapImageRep", "NSGraphicsContext", "NSScreen", "NSTextInputClient"] }
+objc2-web-kit = { version = "=0.3.2", default-features = false, features = ["std", "block2", "objc2-app-kit", "objc2-core-foundation", "WKWebView", "WKWebViewConfiguration", "WKContentWorld", "WKFrameInfo", "WKSnapshotConfiguration", "WKContentRuleList", "WKContentRuleListStore", "WKUserContentController", "WKNavigation"] }
+objc2-core-graphics = { version = "=0.3.2", default-features = false, features = ["std", "CGEvent", "CGEventTypes", "CGRemoteOperation"] }
+objc2-core-foundation = { version = "=0.3.2", default-features = false, features = ["std", "CFCGTypes"] }
 
 [profile.release]
 codegen-units = 1

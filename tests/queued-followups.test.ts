@@ -421,6 +421,9 @@ test("all three adapters automatically coalesce busy follow-ups after Fleet clea
         assert.equal(outsider.symbols[0], join(task.run.workspace!, "scope-0.ts"));
         assert.equal(JSON.parse(outsider.plan).workspace_scope, task.run.workspace);
         assert.ok(!prompt.includes(f.repo), "neither the fresh nor resumed provider prompt exposes the shared base");
+        // On a shared project the others read this summary instead of the conversation.
+        assert.ok(prompt.includes('End your last message with a short section that starts with the line "Summary for the project:"'));
+        assert.match(prompt, /Name files by their path in the project, without links\./);
       }
       const prompt = passes[1].prompt;
       assert.ok(prompt.includes(`Source checkout: ${task.run.workspace}`));

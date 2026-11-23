@@ -795,10 +795,12 @@ commit and provenance in the inventory.
 | npm | is-promise | 4.0.0 | MIT | [Source](https://www.npmjs.com/package/is-promise/v/4.0.0) |
 | npm | isarray | 1.0.0 | MIT | [Source](https://www.npmjs.com/package/isarray/v/1.0.0) |
 | npm | isexe | 2.0.0 | ISC | [Source](https://www.npmjs.com/package/isexe/v/2.0.0) |
+| npm | isomorphic.js | 0.2.5 | MIT | [Source](https://www.npmjs.com/package/isomorphic.js/v/0.2.5) |
 | npm | jose | 6.2.17 | MIT | [Source](https://www.npmjs.com/package/jose/v/6.2.17) |
 | npm | json-schema-traverse | 1.0.0 | MIT | [Source](https://www.npmjs.com/package/json-schema-traverse/v/1.0.0) |
 | npm | json-schema-typed | 8.0.2 | BSD-2-Clause | [Source](https://www.npmjs.com/package/json-schema-typed/v/8.0.2) |
 | npm | jszip | 3.10.2 | (MIT OR GPL-3.0-or-later) | [Source](https://www.npmjs.com/package/jszip/v/3.10.2) |
+| npm | lib0 | 0.2.120 | MIT | [Source](https://www.npmjs.com/package/lib0/v/0.2.120) |
 | npm | lie | 3.3.0 | MIT | [Source](https://www.npmjs.com/package/lie/v/3.3.0) |
 | npm | longest-streak | 3.1.0 | MIT | [Source](https://www.npmjs.com/package/longest-streak/v/3.1.0) |
 | npm | lucide-react | 1.72.0 | ISC | [Source](https://www.npmjs.com/package/lucide-react/v/1.72.0) |
@@ -932,6 +934,7 @@ commit and provenance in the inventory.
 | npm | which | 2.0.2 | ISC | [Source](https://www.npmjs.com/package/which/v/2.0.2) |
 | npm | worker-f | 0.1.24 | MIT | [Source](https://www.npmjs.com/package/worker-f/v/0.1.24) |
 | npm | wrappy | 1.0.2 | ISC | [Source](https://www.npmjs.com/package/wrappy/v/1.0.2) |
+| npm | yjs | 13.6.33 | MIT | [Source](https://www.npmjs.com/package/yjs/v/13.6.33) |
 | npm | zod-to-json-schema | 3.25.2 | ISC | [Source](https://www.npmjs.com/package/zod-to-json-schema/v/3.25.2) |
 | npm | zod | 4.6.7 | MIT | [Source](https://www.npmjs.com/package/zod/v/4.6.7) |
 | npm | zrender | 6.1.0 | BSD-3-Clause | [Source](https://www.npmjs.com/package/zrender/v/6.1.0) |

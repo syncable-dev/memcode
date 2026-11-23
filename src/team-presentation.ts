@@ -1,4 +1,4 @@
-import type { TeamWorkspaceState, WorkItem } from "./shared";
+import type { AppState, TeamWorkspaceState, WorkItem } from "./shared";
 
 /** Display a shared session without turning it into a locally running worker. */
 export function presentedTask(local: WorkItem): WorkItem {
@@ -103,4 +103,15 @@ export function teamErrorMessage(reason: unknown): string {
   )
     ? "Team Sync needs the updated local runtime. Restart MemCode after the update is ready."
     : message;
+}
+
+/**
+ * Sharing a project replaces Team Sync, so the Team page is only for a project still
+ * in a Team Sync team: there it can be managed and left.
+ */
+export function hasTeamPage(
+  state: Pick<AppState, "team">,
+  projectId: string,
+): boolean {
+  return !!state.team?.some((room) => room.projectId === projectId);
 }

@@ -45,6 +45,9 @@ export function WorkerInputPanel({ request }: { request: WorkerInputRequest }) {
     const answer = values()[q.id];
     return Array.isArray(answer) ? answer.length > 0 : !!answer.trim();
   });
+  // A question from a worker on another computer: answered from here only while it can be.
+  const elsewhere = request.elsewhere;
+  const locked = !!elsewhere && !elsewhere.answerable;
   const send = async (response: WorkerInputResponse) => {
     setBusy(true);
     setError("");
@@ -95,7 +98,7 @@ export function WorkerInputPanel({ request }: { request: WorkerInputRequest }) {
           className="worker-input-dismiss"
           aria-label="Dismiss request"
           title="Dismiss request"
-          disabled={busy}
+          disabled={busy || locked}
           onClick={() => void send({ cancelled: true })}
         >
           <X size={14} />
@@ -123,7 +126,7 @@ export function WorkerInputPanel({ request }: { request: WorkerInputRequest }) {
           </details>
         )}
         {(request.questions ?? []).map((q) => (
-          <fieldset key={q.id} disabled={busy}>
+          <fieldset key={q.id} disabled={busy || locked}>
             <legend>{q.question}</legend>
             <div className="worker-question-options">
               {q.options.map((option) => {
@@ -208,7 +211,11 @@ export function WorkerInputPanel({ request }: { request: WorkerInputRequest }) {
         )}
       </div>
       <footer>
-        <span>{busy ? "Sending…" : "Reply to continue this worker."}</span>
+        <span role={elsewhere?.line ? "status" : undefined}>
+          {busy
+            ? "Sending…"
+            : (elsewhere?.line ?? "Reply to continue this worker.")}
+        </span>
         <div>
           {request.options?.length ? (
             request.options.map((option) => (
@@ -219,7 +226,7 @@ export function WorkerInputPanel({ request }: { request: WorkerInputRequest }) {
                   (option.id === primaryOption ? "primary" : "secondary")
                 }
                 title={option.description}
-                disabled={busy || !ready}
+                disabled={busy || locked || !ready}
                 onClick={() =>
                   void send({ optionId: option.id, answers: values() })
                 }
@@ -230,7 +237,7 @@ export function WorkerInputPanel({ request }: { request: WorkerInputRequest }) {
           ) : (
             <button
               className="button primary"
-              disabled={busy || !ready}
+              disabled={busy || locked || !ready}
               onClick={() => void send({ answers: values() })}
             >
               {busy ? "Sending…" : "Send answer"}

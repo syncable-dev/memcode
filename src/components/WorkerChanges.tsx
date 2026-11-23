@@ -158,7 +158,14 @@ export function WorkerChanges({
     return () => {
       alive = false;
     };
-  }, [task.id, task.changesRevision, task.run.state, task.run.sessionId]);
+  }, [
+    task.id,
+    task.changesRevision,
+    task.run.state,
+    task.run.sessionId,
+    // Changes shared from another computer arrive as a file on the card.
+    task.sharedResults?.filter((result) => result.kind === "patch").length,
+  ]);
   if (error)
     return (
       <div className="changes-error" role="alert">
@@ -325,7 +332,10 @@ function FilePatches({
             <div key={checkpoint.id} data-checkpoint={checkpoint.id}>
               {groups.length > 1 && (
                 <div className="change-checkpoint-label">
-                  {checkpoint.basis.startsWith("native-") ? "Edit" : "Checkpoint"} ·{" "}
+                  {checkpoint.basis.startsWith("native-")
+                    ? "Edit"
+                    : "Checkpoint"}{" "}
+                  ·{" "}
                   {new Date(checkpoint.at).toLocaleTimeString([], {
                     hour: "2-digit",
                     minute: "2-digit",

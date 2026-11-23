@@ -2350,13 +2350,20 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
 name = "memcode"
-version = "0.4.0-beta.20"
+version = "0.4.0-beta.21"
 dependencies = [
  "base64 0.23.1",
+ "block2",
  "core-foundation 0.10.1",
  "dunce",
  "image",
  "keyring",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-core-foundation",
+ "objc2-core-graphics",
+ "objc2-foundation",
+ "objc2-web-kit",
  "portable-pty",
  "rfd",
  "security-framework",
@@ -2636,6 +2643,7 @@ dependencies = [
  "block2",
  "objc2",
  "objc2-core-foundation",
+ "objc2-core-graphics",
  "objc2-foundation",
  "objc2-quartz-core",
  "objc2-uniform-type-identifiers",

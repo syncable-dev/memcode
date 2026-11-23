@@ -46,6 +46,7 @@ export const cursorDefaultModel = "Cursor default";
 export interface ModelOption {
   id: string;
   label: string;
+  group?: string;
   /** Unranked models remain available for explicit selection. */
   tier?: ModelTier;
   source: "cache" | "cli" | "alias" | "acp";
@@ -62,10 +63,90 @@ export interface HarnessRuntime {
   runtimeIdentity?: string;
   /** Desktop application detected even when its agent CLI is not available. */
   desktopAppPath?: string;
+  profiles?: string[];
+  activeProfile?: string;
   models: ModelOption[];
   /** An authenticated catalog was returned and every visible model was denied. */
   allModelsDenied?: boolean;
   note?: string;
+}
+export interface DshProfileSummary {
+  name: string;
+  kind: "acp" | "non-acp";
+  hasCustomConfig: boolean;
+}
+export interface DshDesktopCliInfo {
+  desktopAppPath: string;
+  canInstall: boolean;
+  managed: boolean;
+  available: boolean;
+  launcherPath?: string;
+  activeCommand?: string;
+  reason?: string;
+}
+export interface DshSetupStatus {
+  cliInstalled: boolean;
+  cliPath: string | null;
+  desktopAppPath: string | null;
+  desktopCli?: DshDesktopCliInfo;
+  dshHome: string;
+  activeProfile: string;
+  configuredProfile?: string;
+  recommendedProfile?: string;
+  activeProfileIssue?: "missing" | "non-acp";
+  acpProfiles: DshProfileSummary[];
+  nonAcpProfiles: DshProfileSummary[];
+  desktopProfilePresent: boolean;
+  needsProfileCreation: boolean;
+}
+export interface DshDesktopProviderCandidate {
+  id: string;
+  kind: "pi-ai" | "plugin";
+  name: string;
+  providerId: string;
+  models: string[];
+  missingModels?: string[];
+  source?: "registry" | "local-link";
+  spec?: string;
+  hasConfigPatch?: boolean;
+  defaultSelected: boolean;
+  warning?: string;
+}
+export interface DshSkippedDesktopItem {
+  name: string;
+  reason: string;
+}
+export interface DshDesktopDiff {
+  targetProfile: string;
+  desktopPresent: boolean;
+  providers: DshDesktopProviderCandidate[];
+  skipped: DshSkippedDesktopItem[];
+}
+export interface DshProviderFailure {
+  id: string;
+  name: string;
+  reason: string;
+}
+export interface DshDryRunResult {
+  ok: boolean;
+  targetProfile: string;
+  passedIds: string[];
+  failed: DshProviderFailure[];
+  previewModels: ModelOption[];
+  error?: string;
+  /** Present when the dry-run passed; import accepts only this verified plan. */
+  planId?: string;
+}
+export interface DshApplyMigrationResult {
+  ok: boolean;
+  targetProfile: string;
+  appliedIds: string[];
+  failed: DshProviderFailure[];
+  models: ModelOption[];
+  runtime: RuntimeInfo;
+  error?: string;
+  /** False when a failed import could not be fully rolled back. */
+  restored?: boolean;
 }
 export interface RouteDecision {
   policyVersion: "memcode-envelope-v2" | "memcode-evidence-v3" | "memcode-evidence-v4";
@@ -124,6 +205,8 @@ export interface Message {
   sourceCommandId?: string;
   deliveryState?: import("./team-session").SessionCommand["state"];
   deliveryError?: string;
+  /** Where a message sent to a worker on another computer stands, in words. */
+  deliveryLine?: string;
   streamId?: string;
   pickedUpAt?: string;
   id: string;
@@ -186,6 +269,16 @@ export interface Evidence {
 export interface WorkItem extends TaskPlanningFields {
   /** Read-only projection; never grants this device execution authority. */
   sharedSession?: import("./team-session").TeamSession;
+  /** The shared session came from the card's log at the sharing service: nothing can be sent to it. */
+  sharedFromLog?: boolean;
+  /** Files shared from this card at the sharing service. */
+  sharedResults?: import("./sharing").SharedCardResult[];
+  /** The worker the card shows from another computer runs under this person's own account. */
+  sharedRunIsYours?: boolean;
+  /** What the worker on another computer waits for, from the card's log. */
+  sharedInputs?: import("./worker-input").WorkerInputRequest[];
+  /** Messages from someone else to a worker run here. Nothing runs until they are allowed. */
+  sharedAsks?: import("./sharing").SharedAsk[];
   id: string;
   identifier: string;
   projectId: string;
@@ -267,6 +360,7 @@ export interface Settings {
   memtracePath: string;
   speechEndpoint: string;
   defaultHarness: Harness;
+  dshProfile?: string;
   model: string;
   localModel: boolean;
   maxWorkers: number;
@@ -331,6 +425,10 @@ export interface TeamInvite {
   expiresAt: string;
 }
 export interface AppState {
+  /** Which shared project each local project's board belongs to, on this computer. */
+  sharedProjectLinks?: import("./sharing").SharedProjectLink[];
+  /** How each connected board stands right now. Worked out again on every start. */
+  sharedBoards?: import("./sharing").SharedBoardStatus[];
   reviewWorkflows?: Record<
     string,
     import("./code-review").ReviewWorkflowBinding
@@ -449,6 +547,62 @@ export interface MemCodeAPI extends CodeReviewAPI {
   localAnalysisDiagnostics(
     projectId: string,
   ): Promise<import("./local-analysis").LocalAnalysisDiagnostics>;
+  /** The signed-in person's shared projects and invitations, or why they cannot be shown. */
+  sharingOverview(): Promise<import("./sharing").SharingOverview>;
+  acceptSharedInvitation(input: {
+    projectId: string;
+    invitationId: string;
+  }): Promise<import("./sharing").SharingOverview>;
+  connectSharedProject(input: {
+    projectId: string;
+    sharedProjectId: string;
+  }): Promise<import("./sharing").SharedProjectLink>;
+  disconnectSharedProject(projectId: string): Promise<void>;
+  /** A card of a shared project was opened or closed: its activity elsewhere is followed while open. */
+  followSharedCard(taskId: string): Promise<void>;
+  unfollowSharedCard(taskId: string): Promise<void>;
+  /** Allows or declines a message someone else sent to a worker run on this computer. */
+  decideSharedMessage(input: {
+    taskId: string;
+    messageId: string;
+    allow: boolean;
+  }): Promise<void>;
+  /** Shares a file a task saved, or its changes, with everyone on the shared project. */
+  shareCardFile(input: {
+    taskId: string;
+    artifactId: string;
+  }): Promise<{ id: string; name: string }>;
+  /** Fetches a file shared from a card, to open it like the card's own. */
+  openSharedCardFile(input: {
+    taskId: string;
+    resultId: string;
+  }): Promise<Artifact>;
+  /** Shares a project: the first time, a shared project of the same name is started for it. */
+  shareProject(
+    projectId: string,
+  ): Promise<import("./sharing").SharedProjectLink>;
+  /** Invites someone by email, sharing the project first if it is not shared yet. */
+  inviteToProject(input: {
+    projectId: string;
+    email: string;
+  }): Promise<import("./sharing").SharingOverview>;
+  cancelProjectInvitation(input: {
+    projectId: string;
+    invitationId: string;
+  }): Promise<import("./sharing").SharingOverview>;
+  removeFromProject(input: {
+    projectId: string;
+    personId: string;
+  }): Promise<import("./sharing").SharingOverview>;
+  /** A guest leaves a shared project. Its board stays on this computer, no longer shared. */
+  leaveProject(projectId: string): Promise<import("./sharing").SharingOverview>;
+  /** Opens a shared project on this computer, making a project for its board when there is none. */
+  openSharedProject(sharedProjectId: string): Promise<{ projectId: string }>;
+  /** Accepts an invitation and opens the shared project on this computer. */
+  joinSharedProject(input: {
+    sharedProjectId: string;
+    invitationId: string;
+  }): Promise<{ projectId: string }>;
   teamsList(): Promise<import("./team-space").TeamDirectory>;
   createTeamWorkspace(input: {
     name: string;
@@ -539,6 +693,8 @@ export interface MemCodeAPI extends CodeReviewAPI {
   ): Promise<import("./deletion").DeletionResult>;
   deleteEpic(id: string): Promise<import("./deletion").DeletionResult>;
   deleteCycle(id: string): Promise<import("./deletion").DeletionResult>;
+  /** Removes a project from MemCode on this computer. Its folder stays on disk. */
+  deleteProject(id: string): Promise<import("./deletion").DeletionResult>;
   respondToWorker(
     taskId: string,
     requestId: string,
@@ -563,6 +719,30 @@ export interface MemCodeAPI extends CodeReviewAPI {
   editStoryComment(taskId: string, id: string, text: string): Promise<void>;
   deleteStoryComment(taskId: string, id: string): Promise<void>;
   refreshWorkerCatalog(): Promise<RuntimeInfo>;
+  dshSetupStatus(): Promise<DshSetupStatus>;
+  installDshCli(): Promise<{
+    installed: boolean;
+    needsDesktopMenu?: boolean;
+    message: string;
+    status: DshSetupStatus;
+    runtime: RuntimeInfo;
+  }>;
+  createDshProfile(name: string): Promise<{
+    profile: string;
+    status: DshSetupStatus;
+    runtime: RuntimeInfo;
+  }>;
+  selectDshProfile(name: string): Promise<{
+    profile: string;
+    status: DshSetupStatus;
+    runtime: RuntimeInfo;
+  }>;
+  dshDesktopDiff(targetProfile?: string): Promise<DshDesktopDiff>;
+  dryRunDshMigration(input: {
+    targetProfile?: string;
+    selectedIds: string[];
+  }): Promise<DshDryRunResult>;
+  applyDshMigration(input: { planId: string }): Promise<DshApplyMigrationResult>;
   installationStatus(): Promise<{
     state: string;
     needsInstall: boolean;

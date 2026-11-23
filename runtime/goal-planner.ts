@@ -5,6 +5,7 @@ import type { Command } from "./commands";
 import {
   approvedHarnessCommand,
   askInCapsule,
+  type ReviewAgentOptions,
 } from "./review-agent";
 
 type Register = (
@@ -24,6 +25,7 @@ export interface GoalPlannerDependencies {
   relatedFiles: (projectId: string, request: string) => Promise<string[]>;
   resolveCommand?: (harness: Harness) => Promise<Command>;
   ask?: typeof askInCapsule;
+  reviewOptions?: Pick<ReviewAgentOptions, "dshAdmission">;
 }
 
 const maximumTasks = 5;
@@ -125,7 +127,7 @@ export class GoalPlanner {
           `${readInstruction} for the planning context, then answer with the goal plan as JSON only.`,
         hooks: {},
       },
-      { policy: planningPolicy },
+      { ...this.deps.reviewOptions, policy: planningPolicy },
     );
     return {
       ...readGoalPlan(answer.text, input.request),
