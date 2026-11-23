@@ -230,7 +230,7 @@ export const guideArticles: GuideArticle[] = [
     note: "Name a goal by its outcome, like “Customers can export reports” or “Sign-in feels instant”. Add a line on why it matters.",
     details: [
       "New goal on the Roadmap creates an empty goal you fill in yourself.",
-      "Beside New goal, Goals branch from shows where new goals start. MemCode works it out from your repository and says why when you open it. Pick a branch to always use it instead.",
+      "The branch beside the project's name at the top shows where new goals start, on every page. MemCode works it out from your repository and says why when you open it. Pick a branch to always use it instead.",
       "Each goal card shows its branch. Before its work starts, you can pick another branch for that goal alone. A goal that names a branch no one here has worked on, such as one copied from another project, offers Start fresh.",
       "Quick changes have their own card. They ship together.",
       "Link tasks when one really needs another to finish first. Child tasks split a big request; related and duplicate links keep context.",
