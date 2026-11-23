@@ -10,7 +10,6 @@ import {
   type WorkerBrowserState,
 } from "../../src/browser";
 import { within, now } from "../local";
-import { NativeBrowserPool } from "./native-pool";
 import type { NativeHost } from "../host";
 import { browserDeadline } from "./capture";
 import type {
@@ -19,7 +18,7 @@ import type {
   BrowserTabs,
   ImageFormat,
 } from "./engine";
-import { HeadlessEngine, WebView2Engine } from "./playwright-engine";
+import { browserEngineFor } from "./engine-choice";
 
 interface Session {
   state: WorkerBrowserState;
@@ -35,19 +34,14 @@ interface Session {
 export class AgentBrowserManager {
   private closing = false;
   private sessions = new Map<string, Session>();
-  private engine: BrowserEngine;
   constructor(
     private state: () => AppState,
     private dataDir: string,
     private changed: () => Promise<void>,
     private maxContexts = 16,
     host?: NativeHost,
-  ) {
-    this.engine =
-      host && process.platform === "win32"
-        ? new WebView2Engine(new NativeBrowserPool(host))
-        : new HeadlessEngine();
-  }
+    private engine: BrowserEngine = browserEngineFor(host),
+  ) {}
   private session(taskId: string): Session {
     if (!this.state().tasks.some((task) => task.id === taskId))
       throw Error("Work item not found.");
@@ -256,6 +250,7 @@ export class AgentBrowserManager {
     request: BrowserRequest,
     actor: "user" | "worker",
   ): Promise<BrowserReply> {
+    await session.context?.sync();
     const observing = ["state", "frame", "observe"].includes(request.action);
     if (actor === "worker" && !observing && session.state.control === "user")
       throw Error(

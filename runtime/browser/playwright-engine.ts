@@ -89,6 +89,8 @@ abstract class PlaywrightTabs implements BrowserTabs {
   protected announce(page: Page) {
     this.listener?.(this.wrap(page));
   }
+  /** Playwright reports page changes as events, so there is nothing to fetch. */
+  async sync() {}
   allowOnlyBrowserAddresses() {
     return this.session.route("**/*", allowBrowserAddresses);
   }

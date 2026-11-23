@@ -1,4 +1,5 @@
 //! Native browser surfaces. Guest pages receive no Tauri bridge or application RPC.
+//! Windows: WebView2 driven over CDP. macOS: WKWebView driven natively (`browser/macos`).
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -479,14 +480,21 @@ mod windows {
             .map_err(|_| "Native browser operation closed")?
     }
 }
+#[cfg(target_os = "macos")]
+mod macos;
+
 pub async fn call(app: AppHandle, method: &str, input: Value) -> Result<Value, String> {
     #[cfg(windows)]
     {
         windows::call(app, method.to_owned(), input).await
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        macos::call(app, method.to_owned(), input).await
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = (app, method, input);
-        Err("The shared native browser currently requires Windows WebView2".into())
+        Err("The shared native browser requires Windows WebView2 or macOS WebKit".into())
     }
 }
