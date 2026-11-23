@@ -15,8 +15,9 @@ engine binaries. Keep managed engines separate from a user's global CLI setup.
   activity and explicitly published results; source changes use Git in this
   preview. Cloud models may be used by an explicitly selected installed harness.
 - On a shared project (MemSync), a worker's conversation is its person's alone, on
-  each of their computers. Everyone else gets how the run stands, its summary, its
-  review and what it changed. Only the worker's own account continues it.
+  each of their computers. Everyone else gets the request, how the run stands, a
+  summary of each round of work, its review, what it changed and the documents and
+  images its worker made. Only the worker's own account continues it.
 - Do not invent live workers, successful tests, metric values or confidence.
   The example project must remain visibly labelled as example data.
 - A worker exit creates a review candidate, never an automatically verified change.
