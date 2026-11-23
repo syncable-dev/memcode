@@ -1,5 +1,6 @@
 import type { Artifact, WorkItem } from "./shared";
 import type { teamClaimForStory } from "./team-presentation";
+import type { TeamSession } from "./team-session";
 
 /** Who runs a worker elsewhere, in the shape the card's views for that take. */
 type RunOwner = NonNullable<ReturnType<typeof teamClaimForStory>>;
@@ -28,26 +29,39 @@ export function cardRunElsewhere(task: WorkItem): RunOwner | undefined {
   };
 }
 
-/**
- * What the message box says on a card whose worker runs on another computer.
- * `yours`: it runs under the person's own account, on another of their computers.
- */
-export const runElsewhereNote = (
-  owner: { name: string; device: string },
-  yours: boolean,
-) =>
-  yours
-    ? `Continue the worker on your ${owner.device}…`
-    : `Message the worker on ${owner.name}'s ${owner.device}. ${owner.name} allows it first.`;
+type Owner = { name: string; device: string };
 
-/** Where the send button sends to, on a card whose worker runs on another computer. */
-export const sendElsewhereLabel = (
-  owner: { name: string; device: string },
-  yours: boolean,
-) =>
-  yours
-    ? `Send to your ${owner.device}`
-    : `Send to ${owner.name}'s ${owner.device}`;
+/**
+ * What the message box says on a card whose worker runs under the person's own
+ * account, on another of their computers. Only they continue it.
+ */
+export const runElsewhereNote = (owner: Owner) =>
+  `Continue the worker on your ${owner.device}…`;
+
+/** Where the send button sends to, on such a card. */
+export const sendElsewhereLabel = (owner: Owner) =>
+  `Send to your ${owner.device}`;
+
+/** What stands in for the message box on a card whose worker is someone else's. */
+export const onlyItsOwnerContinues = (owner: Owner) =>
+  `Only ${owner.name} can continue this worker. Comment on the card to reach them.`;
+
+/**
+ * What someone else's card says in place of a run's conversation, which only its
+ * owner reads (MemSync ADR-0019). Nothing once the run's summary is in: the
+ * summary is shown instead.
+ */
+export function runElsewhereStanding(
+  owner: Owner,
+  session: Pick<TeamSession, "state" | "summary">,
+): string | undefined {
+  if (session.summary) return undefined;
+  if (["preparing", "running", "stopping", "blocked"].includes(session.state))
+    return `${owner.name} is working on this on their ${owner.device}. A summary of the work shows here when it's ready for review.`;
+  if (session.state === "finished")
+    return `${owner.name}'s worker finished on their ${owner.device} without a summary. What it changed and made is in the Changes and Artifacts tabs.`;
+  return `${owner.name}'s worker on their ${owner.device} stopped before it finished.`;
+}
 
 /** An id the card's file list uses for a shared file this computer has not fetched yet. */
 export const sharedFileId = (resultId: string) => `shared:${resultId}`;

@@ -561,27 +561,6 @@ export class Sharing {
     return { id: result.id, name: result.name };
   }
 
-  /** Shares what a task changed, as its Changes tab shows it. */
-  async shareChanges(taskId: string) {
-    const running = this.requiredBoardOfTask(taskId);
-    const task = this.taskNamed(taskId)!;
-    const changes = await this.cardHost().changesOf(taskId);
-    if (!changes.checkpoints.length)
-      throw new Error("This task has no recorded changes to share yet.");
-    const bytes = new TextEncoder().encode(JSON.stringify(changes));
-    if (bytes.length > LARGEST_SHARED_FILE)
-      throw new Error(
-        "These changes are larger than 5 MB, which is the most a project can share in one file.",
-      );
-    const result = await running.cards.shareResult(taskId, {
-      name: `${task.identifier}-changes.json`,
-      mime: "application/json",
-      kind: "patch",
-      bytes,
-    });
-    return { id: result.id, name: result.name };
-  }
-
   /** Fetches a file shared from a card and keeps it beside the card, to open like its own. */
   async openSharedResult(input: {
     taskId: string;
@@ -792,6 +771,11 @@ export class Sharing {
       cards: service.cards,
       reviewOf: (taskId) =>
         this.options.cards?.reviewOf(taskId) ?? Promise.resolve(null),
+      changesOf: async (taskId) => {
+        const changes = await this.cardHost().changesOf(taskId);
+        if (!changes.checkpoints.length) return undefined;
+        return new TextEncoder().encode(JSON.stringify(changes));
+      },
       nameOf: (account) => sync.nameOf(account),
       learnName: (account) => sync.learnName(account),
       shown: () => this.options.shown?.(),

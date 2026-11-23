@@ -27,6 +27,12 @@ export interface TeamSession {
   error?: string;
   messages: Message[];
   review?: StoryReviewRun;
+  /** A finished run's last word, which everyone on a shared project reads. */
+  summary?: RunSummary;
+}
+export interface RunSummary {
+  text: string;
+  at: string;
 }
 export interface SessionCommand {
   id: string;

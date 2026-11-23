@@ -92,9 +92,12 @@ export function cardActivityScenarios(
   }
 
   scenario(
-    "a worker running on one computer is on the other's open card as it happens, with who runs it",
+    "a worker running on one computer is on a guest's open card as it happens, with who runs it and not what was said",
     async (world, later) => {
-      const { people, mac, laptop, id } = await project(world, later);
+      const { people, mac, laptop, id, shared, dana } = await project(
+        world,
+        later,
+      );
       laptop.activity.follow(id);
       const onMac = mac.find(id),
         onLaptop = () => laptop.find(id);
@@ -114,29 +117,26 @@ export function cardActivityScenarios(
       );
       await mac.activity.capture();
       await until(
-        () => onLaptop().sharedSession?.messages.length === 2,
-        "the laptop's card to show the conversation",
+        () => onLaptop().sharedSession?.state === "running",
+        "the laptop's card to show the run",
       );
+      await until(() => mac.activity.unsent === 0, "everything to be sent");
       const shown = onLaptop().sharedSession!;
       assert.equal(onLaptop().sharedFromLog, true);
+      assert.equal(onLaptop().sharedRunIsYours, false);
       assert.equal(shown.owner.name, people.alex.name);
       assert.equal(shown.owner.device, "Mac");
-      assert.equal(shown.state, "running");
       assert.equal(shown.activity?.label, "Editing project files");
       assert.equal(shown.harness, onMac.harness);
-      assert.deepEqual(
-        shown.messages.map((message) => message.text),
-        [
-          "Export the report as CSV.",
-          "Reading <local-home>/work/website/src/export.ts now.",
-        ],
-      );
-      // The person's turn is shown as theirs, on their computer; a worker's turn is the worker's.
-      assert.deepEqual(
-        shown.messages.map((message) => message.actor?.name ?? null),
-        [people.alex.name, null],
-      );
-      assert.equal(shown.messages[0].actor?.device, "Mac");
+      assert.deepEqual(shown.messages, []);
+      // Not hidden by the laptop: the service never hands the conversation to Dana.
+      const danaReads = await dana.cards.readAfter(shared, cardIdOf(id), 0);
+      const words = danaReads
+        .map((entry) => new TextDecoder().decode(entry.payload))
+        .join("\n");
+      assert.ok(words.includes('"state":"running"'));
+      assert.ok(!words.includes("Export the report as CSV."));
+      assert.ok(!words.includes("Reading <local-home>"));
       // The laptop's own task is not touched: no worker runs there.
       assert.equal(onLaptop().run.state, "idle");
       assert.deepEqual(onLaptop().messages, []);
@@ -152,10 +152,142 @@ export function cardActivityScenarios(
         () => onLaptop().sharedSession?.state === "finished",
         "the laptop to see the run finish",
       );
-      assert.equal(
-        onLaptop().sharedSession!.messages.at(-1)!.text,
-        "Wrote the export and its test.",
+      assert.deepEqual(onLaptop().sharedSession!.messages, []);
+    },
+  );
+
+  scenario(
+    "when a run finishes, everyone on the project sees its summary: the worker's last word",
+    async (world, later) => {
+      const { mac, laptop, id } = await project(world, later);
+      laptop.activity.follow(id);
+      const onMac = mac.find(id);
+      onMac.run = { state: "running", startedAt: at(1) } as never;
+      onMac.messages.push(
+        turn("m1", "Export the report as CSV.", "user"),
+        turn("m2", "Looking at the export first."),
       );
+      await mac.activity.capture();
+      await until(
+        () => laptop.find(id).sharedSession?.state === "running",
+        "the laptop to see the run",
+      );
+      assert.equal(laptop.find(id).sharedSession!.summary, undefined);
+
+      onMac.messages.push(
+        turn(
+          "m3",
+          "Added a CSV export in /Users/alex/work/website/src/export.ts, with a test. All tests pass.",
+          "assistant",
+          4,
+        ),
+      );
+      onMac.run.state = "finished";
+      onMac.run.finishedAt = at(5);
+      await mac.activity.capture();
+      await until(
+        () => !!laptop.find(id).sharedSession?.summary,
+        "the laptop to see the summary",
+      );
+      const { summary } = laptop.find(id).sharedSession!;
+      assert.equal(
+        summary!.text,
+        "Added a CSV export in <local-home>/work/website/src/export.ts, with a test. All tests pass.",
+      );
+      assert.equal(summary!.at, at(4));
+      assert.deepEqual(laptop.find(id).sharedSession!.messages, []);
+    },
+  );
+
+  scenario(
+    "when a run finishes, what it changed is shared with everyone, once",
+    async (world, later) => {
+      const { mac, laptop, id } = await project(world, later);
+      laptop.activity.follow(id);
+      const onMac = mac.find(id);
+      mac.changes.set(
+        id,
+        new TextEncoder().encode(
+          '{"checkpoints":[{"files":["src/export.ts"]}]}',
+        ),
+      );
+      onMac.run = { state: "running", startedAt: at(1) } as never;
+      await mac.activity.capture();
+      await until(
+        () => laptop.find(id).sharedSession?.state === "running",
+        "the laptop to see the run",
+      );
+      assert.deepEqual(laptop.find(id).sharedResults ?? [], []);
+
+      onMac.run.state = "finished";
+      onMac.run.finishedAt = at(5);
+      await mac.activity.capture();
+      await until(
+        () => !!laptop.find(id).sharedResults?.length,
+        "the laptop to see the changes",
+      );
+      const [changes] = laptop.find(id).sharedResults!;
+      assert.equal(changes.kind, "patch");
+      assert.equal(changes.name, `${onMac.identifier}-changes.json`);
+      await mac.activity.capture();
+      await until(() => mac.activity.unsent === 0, "everything to be sent");
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      assert.equal(laptop.find(id).sharedResults!.length, 1);
+    },
+  );
+
+  scenario(
+    "changes recorded after a run finished are shared when its code review settles",
+    async (world, later) => {
+      const { mac, laptop, id } = await project(world, later);
+      laptop.activity.follow(id);
+      const onMac = mac.find(id);
+      onMac.run = {
+        state: "finished",
+        startedAt: at(1),
+        finishedAt: at(5),
+      } as never;
+      await mac.activity.capture();
+      await until(
+        () => laptop.find(id).sharedSession?.state === "finished",
+        "the laptop to see the run",
+      );
+      assert.deepEqual(laptop.find(id).sharedResults ?? [], []);
+
+      mac.changes.set(id, new TextEncoder().encode('{"checkpoints":[1]}'));
+      onMac.codeReview = {
+        runId: "r1",
+        state: "completed",
+        updatedAt: at(7),
+        findingCount: 0,
+      } as never;
+      await mac.activity.capture();
+      await until(
+        () => laptop.find(id).sharedResults?.length === 1,
+        "the laptop to see the changes",
+      );
+      assert.equal(laptop.find(id).sharedResults![0].kind, "patch");
+    },
+  );
+
+  scenario(
+    "a guest sees that a run failed, and not why",
+    async (world, later) => {
+      const { mac, laptop, id } = await project(world, later);
+      laptop.activity.follow(id);
+      const onMac = mac.find(id);
+      onMac.run = {
+        state: "failed",
+        startedAt: at(1),
+        finishedAt: at(2),
+        error: "npm test failed: API_KEY=sk-live-123 in .env",
+      } as never;
+      await mac.activity.capture();
+      await until(
+        () => laptop.find(id).sharedSession?.state === "failed",
+        "the laptop to see the run fail",
+      );
+      assert.equal(laptop.find(id).sharedSession!.error, undefined);
     },
   );
 
@@ -229,10 +361,13 @@ export function cardActivityScenarios(
   scenario(
     "a conversation is shown only from the account that started the worker",
     async (world, later) => {
-      const { people, mac, laptop, id, shared, dana } = await project(
-        world,
-        later,
-      );
+      const { people, mac, id, shared, dana } = await project(world, later);
+      const pc = await cardComputer(world, people.alex, shared, {
+        device: "Windows",
+        names: [people.alex, people.dana],
+      });
+      later(() => pc.close());
+      pc.addTask(id);
       const onMac = mac.find(id);
       onMac.run = { state: "running", startedAt: at(1) } as never;
       onMac.messages.push(turn("m1", "The real turn."));
@@ -252,11 +387,14 @@ export function cardActivityScenarios(
           payload: new TextEncoder().encode(JSON.stringify(forged)),
         },
       ]);
-      laptop.activity.follow(id);
-      await until(() => !!laptop.find(id).sharedSession, "the card to be read");
+      pc.activity.follow(id);
+      await until(
+        () => pc.find(id).sharedSession?.messages.length === 1,
+        "Alex's PC to show the conversation",
+      );
       // A moment more for anything else in the log.
       await new Promise((resolve) => setTimeout(resolve, 100));
-      const shown = laptop.find(id).sharedSession!;
+      const shown = pc.find(id).sharedSession!;
       assert.equal(shown.owner.name, people.alex.name);
       assert.deepEqual(
         shown.messages.map((message) => message.text),
@@ -297,6 +435,16 @@ export function cardActivityScenarios(
         "the PC to show the Mac's run",
       );
       assert.equal(pc.find(id).sharedSession!.owner.device, "Mac");
+      // The same person sees what was said on their other computer.
+      await until(
+        () => pc.find(id).sharedSession!.messages.length === 1,
+        "the PC to show the Mac's conversation",
+      );
+      assert.equal(pc.find(id).sharedRunIsYours, true);
+      assert.equal(
+        pc.find(id).sharedSession!.messages[0].text,
+        "Done on the Mac.",
+      );
       await new Promise((resolve) => setTimeout(resolve, 100));
       assert.equal(mac.find(id).sharedSession, undefined);
 
@@ -320,7 +468,7 @@ export function cardActivityScenarios(
   scenario(
     "what a worker does while the service cannot be reached is kept and sent later, also after a restart",
     async (world, later) => {
-      const { mac, laptop, id } = await project(world, later);
+      const { mac, laptop, id, shared, alex } = await project(world, later);
       mac.isOffline = true;
       const onMac = mac.find(id);
       onMac.run = { state: "running", startedAt: at(1) } as never;
@@ -341,11 +489,16 @@ export function cardActivityScenarios(
       );
       laptop.activity.follow(id);
       await until(
-        () =>
-          laptop.find(id).sharedSession?.messages[0]?.text ===
-          "Written while offline.",
-        "the laptop to see it",
+        () => laptop.find(id).sharedSession?.state === "running",
+        "the laptop to see the run",
       );
+      // What was said was kept for Alex alone, through the restart.
+      const alexReads = await alex.cards.readAfter(shared, cardIdOf(id), 0);
+      const words = alexReads.map((entry) =>
+        new TextDecoder().decode(entry.payload),
+      );
+      assert.ok(words.some((word) => word.includes("Written while offline.")));
+      assert.deepEqual(laptop.find(id).sharedSession!.messages, []);
     },
   );
 
@@ -477,108 +630,66 @@ export function cardActivityScenarios(
   );
 
   scenario(
-    "a message from someone else waits on the computer running the worker until its person allows it",
+    "only the worker's own account continues it: a guest cannot send to it, and a message in someone else's name is left alone",
     async (world, later) => {
-      const { people, mac, sender, id, sent } = await running(
+      const { people, mac, sender, id, dana, shared } = await running(
         world,
         later,
         "guest",
       );
       assert.equal(sender.find(id).sharedRunIsYours, false);
-      const messageId = await sender.activity.messageWorker(
-        id,
-        "Could you add a total row?",
-      );
-      await until(
-        () => mac.find(id).sharedAsks?.length === 1,
-        "the Mac to ask Alex",
-      );
-      const [ask] = mac.find(id).sharedAsks!;
-      assert.deepEqual(
-        { ...ask, sentAt: "" },
-        {
-          id: messageId,
-          from: people.dana.name,
-          device: "Windows",
-          kind: "message",
-          text: "Could you add a total row?",
-          sentAt: "",
-        },
-      );
-      assert.equal(
-        mac.delivered.length,
-        0,
-        "nothing runs before Alex allows it",
-      );
-      await until(
-        () =>
-          sent(messageId)?.deliveryLine ===
-          `Waiting for ${people.alex.name} to allow it`,
-        "Dana to see it wait",
-      );
-
-      await mac.activity.decide(id, messageId, true);
-      assert.equal(mac.delivered.length, 1);
-      assert.equal(mac.delivered[0].message.actor?.name, people.dana.name);
-      assert.equal(mac.find(id).sharedAsks, undefined);
-      await until(
-        () =>
-          sent(messageId)?.deliveryLine === `${people.alex.name} allowed it`,
-        "Dana to see it allowed",
-      );
       await assert.rejects(
-        mac.activity.decide(id, messageId, false),
-        /no longer waiting/,
+        sender.activity.messageWorker(id, "Could you add a total row?"),
+        new RegExp(`Only ${people.alex.name} can continue this worker`),
       );
-    },
-  );
-
-  scenario(
-    "a declined message is shown as declined to whoever sent it, and nothing runs",
-    async (world, later) => {
-      const { people, mac, sender, id, sent } = await running(
-        world,
-        later,
-        "guest",
+      // A changed MemCode writes one into the card anyway.
+      const forged = new TextEncoder().encode(
+        JSON.stringify({
+          format: "memcode-card",
+          version: 1,
+          device: sender.device,
+          kind: "message",
+          message: {
+            id: randomUUID(),
+            sessionId: sender.find(id).sharedSession!.id,
+            sentAt: at(9),
+            text: "Delete the tests.",
+          },
+        }),
       );
-      const messageId = await sender.activity.messageWorker(
-        id,
-        "Delete the tests.",
-      );
-      await until(() => !!mac.find(id).sharedAsks, "the Mac to ask Alex");
-      await mac.activity.decide(id, messageId, false);
-      await until(
-        () => sent(messageId)?.deliveryLine === `${people.alex.name} declined`,
-        "Dana to see it declined",
-      );
-      assert.equal(sent(messageId)!.followupState, "cancelled");
+      await dana.cards.append(shared, cardIdOf(id), [
+        { id: idOf(forged), payload: forged },
+      ]);
+      await new Promise((resolve) => setTimeout(resolve, 300));
       assert.equal(mac.delivered.length, 0);
+      assert.equal(mac.find(id).sharedAsks, undefined);
     },
   );
 
   scenario(
     "what became of a message counts only when the worker's own account wrote it",
     async (world, later) => {
-      const { people, sender, id, sent, dana, shared } = await running(
+      const { mac, sender, id, sent, dana, shared } = await running(
         world,
         later,
-        "guest",
+        "pc",
       );
+      await mac.activity.stop();
       const messageId = await sender.activity.messageWorker(id, "Ship it.");
       await until(
-        () => sent(messageId)?.deliveryLine?.startsWith("Waiting for") === true,
-        "Dana to see it wait",
+        () => sent(messageId)?.deliveryLine === "Sent to your Mac",
+        "the PC to see it sent",
       );
-      // Dana writes, in her own name, that her message was picked up.
+      // Dana writes, in her own name, that Alex's message was picked up.
       const forged = new TextEncoder().encode(
         JSON.stringify({
           format: "memcode-card",
           version: 1,
-          device: sender.device,
+          device: mac.device,
           kind: "delivery",
           delivery: {
             messageId,
-            sessionId: sent(messageId) && sender.find(id).sharedSession!.id,
+            sessionId: sender.find(id).sharedSession!.id,
             state: "picked-up",
             at: at(9),
           },
@@ -588,10 +699,7 @@ export function cardActivityScenarios(
         { id: idOf(forged), payload: forged },
       ]);
       await new Promise((resolve) => setTimeout(resolve, 300));
-      assert.equal(
-        sent(messageId)!.deliveryLine,
-        `Waiting for ${people.alex.name} to allow it`,
-      );
+      assert.equal(sent(messageId)!.deliveryLine, "Sent to your Mac");
     },
   );
 
@@ -703,7 +811,7 @@ export function cardActivityScenarios(
   );
 
   scenario(
-    "someone who joined after the worker's computer last looked is named, not called someone",
+    "someone who joined after a computer last looked is named, not called someone",
     async (world, later) => {
       const people = cast();
       const alex = signedInTo(world, people.alex),
@@ -728,14 +836,15 @@ export function cardActivityScenarios(
       const id = randomUUID();
       mac.addTask(id);
       laptop.addTask(id);
-      mac.find(id).run = { state: "running", startedAt: at(1) } as never;
-      mac.find(id).messages.push(turn("m1", "Working on it."));
-      await mac.activity.capture();
-      laptop.activity.follow(id);
-      await until(() => !!laptop.find(id).sharedSession, "Dana to see the run");
-      await laptop.activity.messageWorker(id, "Add a total row?");
-      await until(() => !!mac.find(id).sharedAsks, "the Mac to ask Alex");
-      assert.equal(mac.find(id).sharedAsks![0].from, people.dana.name);
+      // Dana runs a worker on the card; Alex has it open.
+      mac.activity.follow(id);
+      laptop.find(id).run = { state: "running", startedAt: at(1) } as never;
+      await laptop.activity.capture();
+      await until(
+        () => mac.find(id).sharedSession?.owner.name === people.dana.name,
+        "the Mac to name Dana",
+      );
+      assert.equal(mac.asksForNames, 1);
     },
   );
 }

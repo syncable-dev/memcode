@@ -1,8 +1,10 @@
 import type { LoggedUpdate, UpdateReceipt } from "./boards-api";
 import {
+  cardReaders,
   cardsCalls,
   cardsContract,
   cardsService,
+  type CardReaders,
   type CardsCall,
 } from "./cards-contract";
 import type { GrpcStream } from "./grpc";
@@ -14,6 +16,8 @@ export interface NewCardEntry {
   /** A UUID the sender chooses. Sending the same id again to the same card adds nothing. */
   id: string;
   payload: Uint8Array;
+  /** Everyone on the project, the default, or only the account that sends it. */
+  readers?: CardReaders;
 }
 /** An entry as the log holds it: numbered, dated and signed by the service. */
 export type LoggedCardEntry = LoggedUpdate;
@@ -116,7 +120,11 @@ export class MemsyncCards implements CardsApi {
     const request = {
       project_id: projectId,
       card_id: cardId,
-      entries: entries.map(({ id, payload }) => ({ id, payload })),
+      entries: entries.map(({ id, payload, readers = "everyone" }) => ({
+        id,
+        payload,
+        readers: cardReaders[readers],
+      })),
     };
     return this.calls.unary(call("AppendCardEntries"), request, (reply) =>
       messages(reply.receipts).map(receipt),

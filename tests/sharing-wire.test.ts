@@ -18,6 +18,7 @@ import {
   boardsService,
 } from "../runtime/sharing/memsync/boards-contract";
 import {
+  cardReaders,
   cardsCalls,
   cardsContract,
   cardsService,
@@ -214,9 +215,20 @@ test("fields are written in the order of their numbers, however the shape lists 
   );
 });
 
-/** Reads the messages and calls out of a .proto file that has no nested messages. */
+/**
+ * Reads the messages, enums and calls out of a .proto file that has no nested messages.
+ * A field of an enum type travels as an int32, so it is read as one.
+ */
 function parseProto(source: string) {
   const text = source.replace(/\/\/[^\n]*/g, "");
+  const enums: Record<string, Record<string, number>> = {};
+  for (const [, name, body] of text.matchAll(/enum\s+(\w+)\s*\{([^{}]*)\}/g))
+    enums[name] = Object.fromEntries(
+      [...body.matchAll(/(\w+)\s*=\s*(\d+)\s*;/g)].map(([, value, number]) => [
+        value,
+        Number(number),
+      ]),
+    );
   const messages: Record<
     string,
     Record<string, { number: number; kind: string; repeated: boolean }>
@@ -230,7 +242,7 @@ function parseProto(source: string) {
     ))
       messages[name][field] = {
         number: Number(number),
-        kind,
+        kind: kind in enums ? "int32" : kind,
         repeated: !!repeated,
       };
   }
@@ -242,6 +254,7 @@ function parseProto(source: string) {
   return {
     package: /package\s+([\w.]+)\s*;/.exec(text)?.[1],
     service: /service\s+(\w+)/.exec(text)?.[1],
+    enums,
     messages,
     calls,
   };
@@ -317,6 +330,10 @@ test("what MemCode reads and writes of a card's log and its files is what the co
   assert.deepEqual(written(cardsContract), {
     ...contract.messages,
     UpdateReceipt: boards.messages.UpdateReceipt,
+  });
+  assert.deepEqual(contract.enums.Readers, {
+    READERS_EVERYONE: cardReaders.everyone,
+    READERS_ONLY_ITS_AUTHOR: cardReaders["only-its-author"],
   });
 });
 
