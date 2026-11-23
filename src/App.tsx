@@ -1,4 +1,4 @@
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { cardActivityFeed } from "./card-activity";
 import { needsPerson } from "./fleet";
 import {
@@ -85,6 +85,8 @@ import {
   useSharingOverview,
 } from "./components/ShareProject";
 import { LocalProjectSetup } from "./components/LocalProjectSetup";
+import { projectSharingAsKnown } from "./sharing";
+import { readShownNotices, rememberShownNotices, unseenNotices } from "./notices";
 import "./styles-team.css";
 import "./styles-collaboration.css";
 import "./styles-sharing.css";
@@ -243,6 +245,15 @@ export function App() {
   useEffect(() => {
     if (state) cardActivityFeed.publish(state.tasks);
   }, [state?.tasks]);
+  const shownNotices = useRef(readShownNotices());
+  useEffect(() => {
+    const unseen = unseenNotices(state?.notices, shownNotices.current);
+    for (const notice of unseen) {
+      shownNotices.current.add(notice.id);
+      notify(notice.text);
+    }
+    if (unseen.length) rememberShownNotices(shownNotices.current);
+  }, [state?.notices, notify]);
   useEffect(() => {
     if (betaStatus?.accessMode !== "installed-cli") return;
     let live = true;
@@ -757,7 +768,7 @@ export function App() {
                       </button>
                       <DeleteProject
                         project={item}
-                        shared={isSharedHere(state, item.id)}
+                        sharing={projectSharingAsKnown(item, state, sharing.overview)}
                         onDeleted={() => {
                           setSelectedId(null);
                           setProjectMenu(false);

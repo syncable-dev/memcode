@@ -104,11 +104,15 @@ async function fixture(beside?: {
       },
     filesFolder: (taskId) => join(dataDir, "captures", taskId),
   };
+  const gone: string[] = [];
   const sharing = new Sharing({
     state: () => state,
     changed: async () => {
       world.saves++;
       await sharing.workspaceSaved();
+    },
+    projectGone: async (link) => {
+      gone.push(link.projectId);
     },
     boardsFolder,
     cards,
@@ -144,6 +148,7 @@ async function fixture(beside?: {
     state,
     world,
     sharing,
+    gone,
     as,
     boardsFolder,
     dataDir,
@@ -1348,6 +1353,63 @@ test("a shared project that cannot be opened leaves no project behind", async ()
     assert.equal(f.state.projects.length, before);
   } finally {
     await f.close();
+  }
+});
+
+test("the owner removing a shared project deletes it for everyone, and the guest's MemCode learns it is gone", async () => {
+  const owner = await fixture();
+  const guest = await fixture(owner);
+  const { dana } = owner.people;
+  try {
+    giveWork(owner.state, "local-web");
+    await owner.sharing.invite({ projectId: "local-web", email: dana.email! });
+    signIn(guest, dana);
+    const [waiting] = ready(await guest.sharing.overview()).invitations;
+    const { projectId } = await guest.sharing.join({
+      sharedProjectId: waiting.projectId,
+      invitationId: waiting.id,
+    });
+    await boardsSynced(guest, 1);
+
+    await owner.sharing.removeForAccount("local-web");
+
+    assert.deepEqual(owner.state.sharedProjectLinks, []);
+    assert.deepEqual(ready(await guest.sharing.overview()).projects, []);
+    await until(
+      () => guest.gone.includes(projectId),
+      "the guest's MemCode to hear the project is gone",
+    );
+  } finally {
+    await guest.close();
+    await owner.close();
+  }
+});
+
+test("a guest removing a shared project leaves it, and the owner keeps it", async () => {
+  const owner = await fixture();
+  const guest = await fixture(owner);
+  const { dana } = owner.people;
+  try {
+    giveWork(owner.state, "local-web");
+    await owner.sharing.invite({ projectId: "local-web", email: dana.email! });
+    signIn(guest, dana);
+    const [waiting] = ready(await guest.sharing.overview()).invitations;
+    const { projectId } = await guest.sharing.join({
+      sharedProjectId: waiting.projectId,
+      invitationId: waiting.id,
+    });
+    await boardsSynced(guest, 1);
+
+    await guest.sharing.removeForAccount(projectId);
+
+    assert.deepEqual(guest.state.sharedProjectLinks, []);
+    const kept = ready(await owner.sharing.overview()).projects;
+    assert.equal(kept.length, 1);
+    assert.deepEqual(kept[0].guests, []);
+    assert.deepEqual(owner.gone, []);
+  } finally {
+    await guest.close();
+    await owner.close();
   }
 });
 
