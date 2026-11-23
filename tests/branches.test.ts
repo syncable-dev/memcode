@@ -99,17 +99,17 @@ test("GitHub remotes become their repository page; other remotes have none", () 
   assert.equal(githubPage("/tmp/remote.git"), undefined);
 });
 
-test("the repository panel says which branch the folder is on, how far behind where new work starts, and what is uncommitted", async () => {
+test("the repository status names the GitHub repository, where new work starts and why, and every branch", async () => {
   const f = await fixture();
   try {
     const status = await f.call("project:repository", { projectId: f.project.id });
     assert.equal(status.folder, f.root);
     assert.equal(status.remote, "origin");
-    assert.equal(status.branch, "epic/old-goal");
-    assert.equal(status.changedFiles, 1);
-    assert.deepEqual(status.base, { branch: "dev", chosen: false });
-    assert.equal(status.behind, 3, "dev has the login branch, its merge and one more commit");
-    assert.equal(status.ahead, 0);
+    assert.deepEqual(status.base, {
+      branch: "dev",
+      chosen: false,
+      reason: { kind: "merged-pull-requests", count: 1, of: 1 },
+    });
     assert.deepEqual(status.branches, ["dev", "epic/old-goal", "feature/login", "main", "staging"]);
   } finally {
     await rm(f.directory, { recursive: true, force: true });
@@ -122,8 +122,7 @@ test("you choose where new work starts, and can go back to what MemCode works ou
     await f.call("project:base-branch", { projectId: f.project.id, branch: "staging" });
     assert.equal(f.project.baseBranch, "staging");
     const chosen = await f.call("project:repository", { projectId: f.project.id });
-    assert.deepEqual(chosen.base, { branch: "staging", chosen: true });
-    assert.equal(chosen.behind, 0);
+    assert.deepEqual(chosen.base, { branch: "staging", chosen: true, reason: { kind: "chosen" } });
     await f.call("project:base-branch", { projectId: f.project.id, branch: null });
     assert.equal(f.project.baseBranch, undefined);
     assert.equal(f.saved(), 2);

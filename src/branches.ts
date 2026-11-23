@@ -1,54 +1,74 @@
-/** A project's folder and where its work branches from, as the Repository panel shows it. */
+/**
+ * Why a project's new work starts from its base branch: the first of MemCode's rules
+ * that applied, or the person's own choice. The rules, in order: where most merged
+ * pull requests went; else an integration branch the repository has (develop,
+ * development, dev); else its default branch; else main, or master when only master
+ * exists.
+ */
+export type BaseReason =
+  | { kind: "merged-pull-requests"; count: number; of: number }
+  | { kind: "integration-branch" }
+  | { kind: "default-branch" }
+  | { kind: "fallback" };
+export type BaseChoice = BaseReason | { kind: "chosen" };
+
+/** A project's repository and where its work branches from, as the Roadmap shows it. */
 export interface RepositoryStatus {
   folder: string;
   /** The remote new work is fetched from, such as "origin". */
   remote?: string;
   /** The repository's page, when the remote is on GitHub. */
   github?: string;
-  /** The branch the folder is on, or null when it is on no branch. */
-  branch: string | null;
-  /** Files changed in the folder and not committed. */
-  changedFiles: number;
-  /** Where new work starts, and whether the person chose it. */
-  base: { branch: string; chosen: boolean };
-  /** Commits the folder's branch has that the base lacks, and the other way round. */
-  ahead?: number;
-  behind?: number;
+  /** Where new work starts, whether the person chose it, and why. */
+  base: { branch: string; chosen: boolean; reason: BaseChoice };
   /** Every branch, local or on the remote, by name. */
   branches: string[];
 }
 
-/** What the Repository panel says about the folder's branch, in a sentence. */
-export function folderStanding(status: RepositoryStatus): string {
-  const where = status.branch
-    ? `The folder is on ${status.branch}`
-    : "The folder is on no branch";
-  const behind = status.behind
-    ? `, ${status.behind} ${status.behind === 1 ? "commit" : "commits"} behind ${status.base.branch}`
-    : "";
-  const changed = status.changedFiles
-    ? ` ${status.changedFiles} changed ${status.changedFiles === 1 ? "file is" : "files are"} not committed.`
-    : "";
-  return `${where}${behind}.${changed}`;
+const GITHUB_PAGE = "https://github.com/";
+
+/** How the project switcher names a repository: owner/name on GitHub, else its folder. */
+export function repositoryName(repository: Pick<RepositoryStatus, "folder" | "github">): string {
+  if (repository.github?.startsWith(GITHUB_PAGE))
+    return repository.github.slice(GITHUB_PAGE.length);
+  return repository.folder.split(/[\\/]/).filter(Boolean).at(-1) ?? repository.folder;
 }
 
-/**
- * Where a goal's work goes, and whether it may start fresh: only before any worker
- * here has used its branch, such as a goal copied from another project.
- */
+/** Which rule chose the base branch, in one sentence. */
+export function baseReasonText(base: { branch: string; reason: BaseChoice }): string {
+  const { branch, reason } = base;
+  switch (reason.kind) {
+    case "chosen":
+      return `You chose ${branch}.`;
+    case "merged-pull-requests":
+      return reason.of === 1
+        ? `Your last merged pull request went to ${branch}.`
+        : `${reason.count} of your last ${reason.of} merged pull requests went to ${branch}.`;
+    case "integration-branch":
+      return `Your repository has a ${branch} branch.`;
+    case "default-branch":
+      return `${branch} is the repository's default branch.`;
+    case "fallback":
+      return `No other branch fits, so ${branch}.`;
+  }
+}
+
+/** Where a goal's work goes: */
+export type GoalBranch =
+  /** a new branch from `from`, made when its first task starts; */
+  | { kind: "on-first-start"; from: string }
+  /** a branch it names that no worker here has used, such as one copied from another project; */
+  | { kind: "unused"; branch: string }
+  /** the branch its workers use. */
+  | { kind: "working"; branch: string };
+
 export function goalBranchStanding(
   goal: { branch?: string; baseBranch?: string },
   started: boolean,
   base: string,
-): { text: string; startFresh: boolean } {
-  if (!goal.branch)
-    return {
-      text: `Gets its own branch from ${goal.baseBranch ?? base} when work starts.`,
-      startFresh: false,
-    };
-  if (started) return { text: `Work is on ${goal.branch}.`, startFresh: false };
-  return {
-    text: `Set to ${goal.branch}, which no worker here has used yet.`,
-    startFresh: true,
-  };
+): GoalBranch {
+  if (!goal.branch) return { kind: "on-first-start", from: goal.baseBranch ?? base };
+  return started
+    ? { kind: "working", branch: goal.branch }
+    : { kind: "unused", branch: goal.branch };
 }

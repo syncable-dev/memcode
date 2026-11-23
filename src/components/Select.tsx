@@ -22,6 +22,8 @@ interface Props {
 interface SelectOptionItem {
   value: string;
   label: ReactNode;
+  /** A quiet second line under the label, from the option's `data-detail`. */
+  detail?: string;
   disabled?: boolean;
 }
 
@@ -51,11 +53,13 @@ function toOption(element: ReactNode): SelectOptionItem | null {
     value?: string | number;
     children?: ReactNode;
     disabled?: boolean;
+    "data-detail"?: string;
   };
   if (props.value === undefined) return null;
   return {
     value: String(props.value),
     label: props.children,
+    detail: props["data-detail"],
     disabled: props.disabled,
   };
 }
@@ -87,7 +91,14 @@ function renderOption(option: SelectOptionItem) {
       className="mc-select-item"
     >
       <OptionIcon value={option.value} />
-      <Primitive.ItemText>{option.label}</Primitive.ItemText>
+      {option.detail ? (
+        <span className="mc-select-copy">
+          <Primitive.ItemText>{option.label}</Primitive.ItemText>
+          <small>{option.detail}</small>
+        </span>
+      ) : (
+        <Primitive.ItemText>{option.label}</Primitive.ItemText>
+      )}
       <Primitive.ItemIndicator className="mc-select-indicator">
         <Check size={13} />
       </Primitive.ItemIndicator>
