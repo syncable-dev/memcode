@@ -24,7 +24,11 @@ pub(super) fn watch(app: &AppHandle) {
         }
         let app = app.clone();
         let seen = RcBlock::new(move |event: NonNull<NSEvent>| -> *mut NSEvent {
-            if let Some(owner) = receiving_owner(unsafe { event.as_ref() }) {
+            let event_ref = unsafe { event.as_ref() };
+            if event_ref.r#type() != NSEventType::KeyDown && event_ref.r#type() != NSEventType::ScrollWheel {
+                super::focus::forget();
+            }
+            if let Some(owner) = receiving_owner(event_ref) {
                 let _ = app.emit_to(
                     tauri::EventTarget::Webview { label: "main".into() },
                     "browser:native-input",

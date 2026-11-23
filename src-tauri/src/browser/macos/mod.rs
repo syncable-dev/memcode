@@ -4,6 +4,7 @@
 //! event queue, so only the human's own input reaches `human_input`.
 mod address_policy;
 mod capture;
+mod focus;
 mod human_input;
 mod input;
 mod script;
@@ -27,6 +28,7 @@ pub async fn call(app: AppHandle, method: String, input: Value) -> Result<Value,
 }
 
 fn dispatch(app: &AppHandle, method: &str, input: Value, reply: Reply) {
+    focus::give_back();
     match method {
         "browser_create" => surface::create(app, input, reply),
         "browser_capture" => capture::capture(&input, reply),

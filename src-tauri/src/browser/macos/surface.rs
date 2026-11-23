@@ -16,7 +16,7 @@ use wry::{
     WebViewBuilderExtMacos, WebViewExtMacOS,
 };
 
-use super::{address_policy, human_input, input, Reply};
+use super::{address_policy, focus, human_input, input, Reply};
 use crate::native::Bounds;
 
 const INITIAL_BOUNDS: Bounds = Bounds {
@@ -264,7 +264,11 @@ pub(super) fn operate(method: &str, input: &Value) -> Result<Value, String> {
                     _ => return Err("Unknown browser history action".into()),
                 };
             }
-            "browser_input" => input::deliver(&owned(&mut surfaces, input)?.wk, &input["input"])?,
+            "browser_input" => {
+                let card = &owned(&mut surfaces, input)?.wk;
+                focus::remember(card);
+                input::deliver(card, &input["input"])?
+            }
             _ => return Err("Unknown browser surface operation".into()),
         }
         Ok(Value::Null)
