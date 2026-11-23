@@ -326,6 +326,8 @@ export interface WorkItem extends TaskPlanningFields {
     finishedSourceBinding?: string | null;
     /** The disagreement this worker stopped to wait on. It carries on when the person decides. */
     waitingOnDecision?: string;
+    /** Where this task's worker records went when its goal shipped and its checkout was removed. */
+    records?: string;
   };
   evidence?: Evidence;
   diff?: string;
@@ -374,6 +376,8 @@ export interface Epic {
   baseBranch?: string;
   /** Set when the goal's pull request merged; a closed goal takes no new tasks. */
   closedAt?: string;
+  /** Why this shipped goal's checkout is still on disk, when MemCode had to keep it. */
+  checkoutKept?: string;
   /** Another goal merged code this goal uses, or dev moved under a Quick changes batch. */
   updateNeeded?: { reason: string; files: string[]; since: string };
   id: string;

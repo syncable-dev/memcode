@@ -103,6 +103,7 @@ import {
   isCodeReviewTask,
 } from "../src/code-review-workflow";
 import { epicAnalysisProject } from "./epic-checkout";
+import { retireShippedGoal } from "./shipped-goal";
 import { createReadonlyReviewAgent } from "./review-agent";
 import { SpeechManager, registerSpeech } from "./speech";
 import { speechSettingsSchema } from "../src/speech";
@@ -1566,6 +1567,18 @@ export async function createRuntime(
       state,
       changed,
       openUrl: (url) => host.call<void>("open_github_pull_request", { url }),
+      retireShippedGoal: (goal, mergedInto) =>
+        retireShippedGoal(state(), goal, mergedInto, {
+          dataDir: store.dir,
+          releaseGoalEngine: (_goal, task) =>
+            task.run.analysisProjectId
+              ? engine.releaseEpic(epicAnalysisProject(project(task.projectId), task))
+              : Promise.resolve(),
+          importHistory: async (request) => {
+            const result = await engine.call(project(goal.projectId), "import_goal_history", { ...request });
+            return result.imported;
+          },
+        }),
     }),
   );
   /** Repo-relative files Memtrace associates with a request, for placement and planning. */

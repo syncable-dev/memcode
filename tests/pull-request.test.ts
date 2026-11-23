@@ -77,7 +77,11 @@ interface Fixture {
   opened: string[];
   service: ReturnType<typeof createPullRequestService>;
   ghCalls: () => Promise<string[][]>;
+  /** Each shipped goal handed on to retirement, with the branch it merged into. */
+  retirements: [string, string][];
 }
+
+const KEPT_REASON = "A worker is still running in this goal's checkout.";
 
 interface FakeGitHub {
   pr: Record<string, unknown> | null;
@@ -157,9 +161,14 @@ async function fixture(gitHub?: FakeGitHub): Promise<Fixture> {
   const opened: string[] = [];
   const ghState = join(root, "gh-state.json");
   await writeFile(ghState, JSON.stringify({ calls: [], ...gitHub }));
+  const retirements: [string, string][] = [];
   const service = createPullRequestService({
     state: () => state,
     changed: async () => {},
+    retireShippedGoal: async (goal, mergedInto) => {
+      retirements.push([goal.id, mergedInto]);
+      return { kind: "kept", reason: KEPT_REASON };
+    },
     openUrl: async (url) => {
       opened.push(url);
     },
@@ -187,7 +196,7 @@ async function fixture(gitHub?: FakeGitHub): Promise<Fixture> {
   const ghCalls = async () =>
     (JSON.parse(await readFile(ghState, "utf8")) as { calls: string[][] })
       .calls;
-  return { root, repo, remote, state, opened, service, ghCalls };
+  return { root, repo, remote, state, opened, service, ghCalls, retirements };
 }
 
 test("the plan lists what Create will do on the active epic branch", async () => {
@@ -469,6 +478,32 @@ test("an approved pull request with green checks merges the repo's way and finis
       f.state.tasks.map((task) => task.stage),
       ["done", "done"],
     );
+  } finally {
+    await rm(f.root, { recursive: true, force: true });
+  }
+});
+
+test("a merged goal's checkout is retired, and a reason to keep it is saved on the goal", async () => {
+  const f = await fixture({ pr: openPullRequest, mergeMethod: "SQUASH" });
+  try {
+    f.state.pullRequests = [
+      {
+        epicId: "e1",
+        branch: "epic/mc-12",
+        base: "main",
+        url: openPullRequest.url,
+        number: 42,
+        state: "open",
+        createdAt: "2026-11-20T10:00:00.000Z",
+        updatedAt: "2026-11-20T10:00:00.000Z",
+      },
+    ];
+    await f.service.merge("e1");
+    const goal = f.state.epics.find((epic) => epic.id === "e1")!;
+    for (let wait = 0; wait < 50 && !goal.checkoutKept; wait++)
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.deepEqual(f.retirements, [["e1", "main"]]);
+    assert.equal(goal.checkoutKept, KEPT_REASON);
   } finally {
     await rm(f.root, { recursive: true, force: true });
   }
