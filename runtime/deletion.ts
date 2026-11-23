@@ -212,11 +212,87 @@ function deleteCycle(state: AppState, id: string): DeletionResult {
   };
 }
 
+/**
+ * Removes a project from MemCode on this computer: its board and everything kept
+ * for it. Its folder, its code and the files workers made stay on disk. A shared
+ * project is disconnected from this computer first; it stays shared for the others.
+ */
+async function deleteProject(
+  state: AppState,
+  id: string,
+  forgetSharing?: (projectId: string) => Promise<void>,
+): Promise<DeletionResult> {
+  const project = state.projects.find((item) => item.id === id);
+  if (!project) throw Error("Project not found.");
+  if (state.projects.length === 1)
+    throw Error("Add another project before deleting the last one.");
+  if (state.team?.some((room) => room.projectId === id))
+    throw Error(
+      `${project.name} is in a Team Sync team. Leave the team on its Team page first.`,
+    );
+  const tasks = state.tasks.filter((task) => task.projectId === id);
+  if (tasks.some(isActive))
+    throw Error(`Stop the workers running in ${project.name} before deleting it.`);
+  if (state.sharedProjectLinks?.some((link) => link.projectId === id))
+    await forgetSharing?.(id);
+  removeStories(state, new Set(tasks.map((task) => task.id)));
+  removeProjectRecords(state, id);
+  return { deletedIds: [id], reassignedStoryIds: [] };
+}
+
+/** Everything the workspace keeps for a project other than its tasks. */
+function removeProjectRecords(state: AppState, id: string): void {
+  const ofOtherProjects = <T extends { projectId?: string }>(items: T[]) =>
+    items.filter((item) => item.projectId !== id);
+  const goalIds = new Set(
+    state.epics.filter((epic) => epic.projectId === id).map((epic) => epic.id),
+  );
+  state.projects = state.projects.filter((item) => item.id !== id);
+  state.epics = ofOtherProjects(state.epics);
+  state.cycles = ofOtherProjects(state.cycles);
+  state.workflowStates = ofOtherProjects(state.workflowStates);
+  state.customFields = ofOtherProjects(state.customFields);
+  state.savedViews = ofOtherProjects(state.savedViews);
+  state.qualitySnapshots = ofOtherProjects(state.qualitySnapshots);
+  state.fleetConflicts = ofOtherProjects(state.fleetConflicts);
+  state.artifacts = ofOtherProjects(state.artifacts);
+  state.planning.events = ofOtherProjects(state.planning.events);
+  if (state.fleetDeclarations)
+    state.fleetDeclarations = ofOtherProjects(state.fleetDeclarations);
+  if (state.fleetProposals)
+    state.fleetProposals = ofOtherProjects(state.fleetProposals);
+  if (state.sharedBoards) state.sharedBoards = ofOtherProjects(state.sharedBoards);
+  if (state.pullRequests)
+    state.pullRequests = state.pullRequests.filter(
+      (request) => !goalIds.has(request.epicId),
+    );
+  if (state.planning.authoritativeProjects)
+    state.planning.authoritativeProjects =
+      state.planning.authoritativeProjects.filter((item) => item !== id);
+  delete state.reviewWorkflows?.[id];
+  delete state.projectOnboarding?.[id];
+  if (state.onboarding?.epicId && goalIds.has(state.onboarding.epicId))
+    delete state.onboarding.epicId;
+  if (state.activeProjectId === id)
+    state.activeProjectId = (
+      state.projects.find((item) => !item.example) ?? state.projects[0]
+    ).id;
+}
+
 export function registerDeletion(
   register: Register,
   state: () => AppState,
   changed: () => Promise<void>,
+  options: {
+    /** Disconnects a shared project from this computer; the others keep it. */
+    forgetSharing?(projectId: string): Promise<void>;
+  } = {},
 ): void {
+  register("project:delete", deleteEntitySchema, async ({ id }) => {
+    const result = await deleteProject(state(), id, options.forgetSharing);
+    await changed();
+    return result;
+  });
   register("story:delete", deleteStorySchema, async ({ id, cascade }) => {
     const result = deleteStories(state(), id, cascade);
     await changed();

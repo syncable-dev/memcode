@@ -67,8 +67,9 @@ export const guideArticles: GuideArticle[] = [
       "For a new idea, pick where it should live, give it a name and say what it’s for. MemCode sets up the folder and an empty board.",
       "For existing code, pick its folder. Memtrace reads the code so later work has context.",
       "Switch projects from the same selector. Each project keeps its own goals, tasks and results.",
+      "To remove a project you no longer need, point at it in the selector and choose the bin. Its folder stays on your computer.",
     ],
-    note: "Adding a project never changes your files. Work you haven’t saved to Git stays as it is.",
+    note: "Adding or deleting a project never changes your files. Work you haven’t saved to Git stays as it is.",
     details: [
       "A new or empty folder gets a Git repository automatically. For a folder that already has files, initialize Git first or choose the repository’s root folder.",
     ],

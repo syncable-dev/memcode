@@ -1543,7 +1543,9 @@ export async function createRuntime(
 
   registerPlanning(register, state, project, changed);
   registerOnboarding(register, state, changed);
-  registerDeletion(register, state, changed);
+  registerDeletion(register, state, changed, {
+    forgetSharing: async (projectId) => sharing?.disconnect(projectId),
+  });
   registerCardComments(register, state, changed, (taskId) => {
     const projectId = taskId
       ? state().tasks.find((task) => task.id === taskId)?.projectId

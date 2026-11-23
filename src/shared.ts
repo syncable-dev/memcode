@@ -693,6 +693,8 @@ export interface MemCodeAPI extends CodeReviewAPI {
   ): Promise<import("./deletion").DeletionResult>;
   deleteEpic(id: string): Promise<import("./deletion").DeletionResult>;
   deleteCycle(id: string): Promise<import("./deletion").DeletionResult>;
+  /** Removes a project from MemCode on this computer. Its folder stays on disk. */
+  deleteProject(id: string): Promise<import("./deletion").DeletionResult>;
   respondToWorker(
     taskId: string,
     requestId: string,
