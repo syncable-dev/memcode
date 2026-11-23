@@ -46,8 +46,6 @@ export class GoalUpdates {
     const target = await integrationCommit(worktree, {
       base,
       remote: await primaryRemote(worktree),
-      featurePrefix: "",
-      fixPrefix: "",
     });
     if (await contains(worktree, target)) {
       delete epic.updateNeeded;

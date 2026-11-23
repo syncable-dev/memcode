@@ -3,7 +3,7 @@ import type { AppState, Epic, Project } from "../src/shared";
 import type { RepositoryStatus } from "../src/branches";
 import {
   detectBranchStrategy,
-  fetchBranch,
+
   primaryRemote,
   refExists,
   type BranchStrategy,
@@ -11,7 +11,7 @@ import {
 import { git } from "./local";
 
 /**
- * Where a project's work branches from: the state of its folder, the branch new work
+ * Where a project's work branches from: its repository, the branch new work
  * starts from (worked out from the repository, or chosen), and a goal that has not
  * started going back to a fresh branch. Branches themselves are never deleted.
  */
@@ -83,43 +83,16 @@ async function repositoryStatus(
     ? await git(folder, ["remote", "get-url", remote]).catch(() => "")
     : "";
   const github = githubPage(address);
-  const base = project.baseBranch ?? (await detect(folder)).base;
-  if (remote) await fetchBranch(folder, remote, base).catch(() => {});
-  const branch = (await git(folder, ["branch", "--show-current"])) || null;
-  const changedFiles = (await git(folder, ["status", "--porcelain"]))
-    .split("\n")
-    .filter(Boolean).length;
-  const distance = await distanceFrom(folder, remote, base);
+  const base = project.baseBranch
+    ? { branch: project.baseBranch, chosen: true, reason: { kind: "chosen" as const } }
+    : await detect(folder).then(({ base, reason }) => ({ branch: base, chosen: false, reason }));
   return {
     folder,
     ...(remote ? { remote } : {}),
     ...(github ? { github } : {}),
-    branch,
-    changedFiles,
-    base: { branch: base, chosen: !!project.baseBranch },
-    ...distance,
+    base,
     branches: await branchNames(folder, remote),
   };
-}
-
-/** How far the folder's branch is from the base, as the remote has it when it can. */
-async function distanceFrom(
-  folder: string,
-  remote: string | undefined,
-  base: string,
-): Promise<{ ahead?: number; behind?: number }> {
-  const tracking = remote ? `refs/remotes/${remote}/${base}` : undefined;
-  const ref =
-    tracking && (await refExists(folder, tracking))
-      ? tracking
-      : `refs/heads/${base}`;
-  if (!(await refExists(folder, ref))) return {};
-  const [ahead, behind] = (
-    await git(folder, ["rev-list", "--left-right", "--count", `HEAD...${ref}`])
-  )
-    .split(/\s+/)
-    .map(Number);
-  return { ahead, behind };
 }
 
 async function branchNames(

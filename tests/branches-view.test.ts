@@ -1,57 +1,34 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {
-  folderStanding,
-  goalBranchStanding,
-  type RepositoryStatus,
-} from "../src/branches";
+import { baseReasonText, goalBranchStanding, repositoryName } from "../src/branches";
 
-const status = (changes: Partial<RepositoryStatus> = {}): RepositoryStatus => ({
-  folder: "/work/memcode",
-  remote: "origin",
-  github: "https://github.com/syncable-dev/memcode",
-  branch: "dev",
-  changedFiles: 0,
-  base: { branch: "dev", chosen: false },
-  ahead: 0,
-  behind: 0,
-  branches: ["dev", "main"],
-  ...changes,
-});
-
-test("the folder's branch reads as one sentence: where it is, how far behind, what is not committed", () => {
-  assert.equal(folderStanding(status()), "The folder is on dev.");
+test("the base branch says in one sentence which rule chose it", () => {
   assert.equal(
-    folderStanding(
-      status({ branch: "epic/ep-02-telligence", behind: 230, changedFiles: 79 }),
-    ),
-    "The folder is on epic/ep-02-telligence, 230 commits behind dev. 79 changed files are not committed.",
+    baseReasonText({ branch: "dev", reason: { kind: "merged-pull-requests", count: 34, of: 40 } }),
+    "34 of your last 40 merged pull requests went to dev.",
   );
   assert.equal(
-    folderStanding(status({ behind: 1, changedFiles: 1 })),
-    "The folder is on dev, 1 commit behind dev. 1 changed file is not committed.",
+    baseReasonText({ branch: "dev", reason: { kind: "merged-pull-requests", count: 1, of: 1 } }),
+    "Your last merged pull request went to dev.",
   );
-  assert.equal(folderStanding(status({ branch: null })), "The folder is on no branch.");
+  assert.equal(baseReasonText({ branch: "develop", reason: { kind: "integration-branch" } }), "Your repository has a develop branch.");
+  assert.equal(baseReasonText({ branch: "main", reason: { kind: "default-branch" } }), "main is the repository's default branch.");
+  assert.equal(baseReasonText({ branch: "main", reason: { kind: "fallback" } }), "No other branch fits, so main.");
+  assert.equal(baseReasonText({ branch: "staging", reason: { kind: "chosen" } }), "You chose staging.");
 });
 
-test("a goal says where its work goes, and offers a fresh start only before any worker used its branch", () => {
-  assert.deepEqual(goalBranchStanding({}, false, "dev"), {
-    text: "Gets its own branch from dev when work starts.",
-    startFresh: false,
+test("a goal's branch row says where its work goes, and when a fresh start is offered", () => {
+  assert.deepEqual(goalBranchStanding({}, false, "dev"), { kind: "on-first-start", from: "dev" });
+  assert.deepEqual(goalBranchStanding({ baseBranch: "staging" }, false, "dev"), { kind: "on-first-start", from: "staging" });
+  assert.deepEqual(goalBranchStanding({ branch: "epic/ep-02-telligence" }, false, "dev"), {
+    kind: "unused",
+    branch: "epic/ep-02-telligence",
   });
-  assert.deepEqual(goalBranchStanding({ baseBranch: "staging" }, false, "dev"), {
-    text: "Gets its own branch from staging when work starts.",
-    startFresh: false,
-  });
-  assert.deepEqual(
-    goalBranchStanding({ branch: "epic/ep-02-telligence" }, false, "dev"),
-    {
-      text: "Set to epic/ep-02-telligence, which no worker here has used yet.",
-      startFresh: true,
-    },
-  );
-  assert.deepEqual(goalBranchStanding({ branch: "feat/export" }, true, "dev"), {
-    text: "Work is on feat/export.",
-    startFresh: false,
-  });
+  assert.deepEqual(goalBranchStanding({ branch: "feat/export" }, true, "dev"), { kind: "working", branch: "feat/export" });
+});
+
+test("the project switcher names the repository: owner/name on GitHub, else the folder", () => {
+  assert.equal(repositoryName({ folder: "/Users/a/code/memcode", github: "https://github.com/syncable-dev/memcode" }), "syncable-dev/memcode");
+  assert.equal(repositoryName({ folder: "/Users/a/code/notes/" }), "notes");
+  assert.equal(repositoryName({ folder: "C:\\Users\\a\\code\\api" }), "api");
 });

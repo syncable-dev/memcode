@@ -17,6 +17,12 @@ import { epicReadiness, type EpicPullRequest } from "../pull-request";
 import { isActive, isQuickChanges } from "../domain";
 import { Empty, PriorityMark, Spinner, StageIcon } from "./UI";
 import { Select } from "./Select";
+import {
+  baseReasonText,
+  goalBranchStanding,
+  type GoalBranch,
+  type RepositoryStatus,
+} from "../branches";
 import { Modal } from "./Dialogs";
 import { DeleteAction } from "./DeleteAction";
 
@@ -32,7 +38,12 @@ interface Props {
   onEpicCreated?: (epic: Epic) => void;
   pullRequests?: EpicPullRequest[];
   openPullRequest: (epicId: string) => void;
+  /** The project's repository: where new goals branch from, and why. */
+  repository?: RepositoryStatus;
 }
+
+/** The branch pickers' value for "MemCode decides", marked like every other automatic choice. */
+const WORKED_OUT = "auto";
 const phases = [
   { id: "now", name: "Now", detail: "Build the useful core", number: "01" },
   {
@@ -56,7 +67,17 @@ export function Roadmap({
   onEpicCreated,
   pullRequests = [],
   openPullRequest,
+  repository,
 }: Props) {
+  const base = repository?.base.branch ?? "dev";
+  const chooseBase = (value: string) =>
+    void window.memcode
+      .setBaseBranch(project.id, value === WORKED_OUT ? null : value)
+      .catch((error: Error) => notify(error.message));
+  const chooseGoalStart = (epic: Epic, value: string) =>
+    void window.memcode
+      .startGoalFresh(epic.id, value === WORKED_OUT ? null : value)
+      .catch((error: Error) => notify(error.message));
   const [phase, setPhase] = useState("all");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [updating, setUpdating] = useState<string>();
@@ -164,14 +185,50 @@ export function Roadmap({
             </button>
           ))}
         </div>
-        <button
-          className="button secondary"
-          data-guide="new-epic"
-          onClick={() => setNewEpic(true)}
-        >
-          <Plus size={13} />
-          New goal
-        </button>
+        <div className="roadmap-toolbar-end">
+          {repository && (
+            <div className="roadmap-base" title={baseReasonText(repository.base)}>
+              <GitBranch size={12} aria-hidden="true" />
+              <span>Goals branch from</span>
+              <Select
+                aria-label="Where new goals branch from"
+                className="roadmap-base-picker"
+                value={repository.base.chosen ? repository.base.branch : WORKED_OUT}
+                onValueChange={chooseBase}
+              >
+                <optgroup label="MemCode decides">
+                  <option
+                    value={WORKED_OUT}
+                    data-detail={
+                      repository.base.chosen
+                        ? "From your merged pull requests and branches."
+                        : baseReasonText(repository.base)
+                    }
+                  >
+                    {repository.base.chosen ? "Work it out for me" : base}
+                  </option>
+                </optgroup>
+                <optgroup label="Or always use">
+                  {repository.branches
+                    .filter((branch) => repository.base.chosen || branch !== base)
+                    .map((branch) => (
+                      <option key={branch} value={branch}>
+                        {branch}
+                      </option>
+                    ))}
+                </optgroup>
+              </Select>
+            </div>
+          )}
+          <button
+            className="button secondary"
+            data-guide="new-epic"
+            onClick={() => setNewEpic(true)}
+          >
+            <Plus size={13} />
+            New goal
+          </button>
+        </div>
       </div>
       {!epics.length ? (
         <Empty
@@ -287,6 +344,20 @@ export function Roadmap({
                             <small>/ {stories.length} tasks</small>
                           </span>
                         </div>
+                        {repository && (
+                          <GoalBranchRow
+                            standing={goalBranchStanding(
+                              epic,
+                              stories.some((task) => !!task.run.startedAt),
+                              base,
+                            )}
+                            base={base}
+                            branches={
+                              isQuickChanges(epic) ? [] : repository.branches
+                            }
+                            chooseStart={(value) => chooseGoalStart(epic, value)}
+                          />
+                        )}
                         <div className="epic-card-actions">
                           <button onClick={() => toggle(epic.id)}>
                             {unfolded ? "Hide tasks" : "View tasks"}
@@ -543,4 +614,71 @@ function EpicState({
   if (ready) return <span className="epic-state ready">Ready for PR</span>;
   if (working) return <span className="epic-state working">In progress</span>;
   return <span className="epic-state">Planned</span>;
+}
+
+/**
+ * Where a goal's work goes, on its card: the branch its workers use; or, before its
+ * first task starts, the branch it will branch from, which can be changed; or a branch
+ * it names that no worker here has used, with a fresh start from the base.
+ */
+function GoalBranchRow({
+  standing,
+  base,
+  branches,
+  chooseStart,
+}: {
+  standing: GoalBranch;
+  base: string;
+  branches: string[];
+  chooseStart: (value: string) => void;
+}) {
+  if (standing.kind === "working")
+    return (
+      <div className="epic-branch">
+        <GitBranch size={11} aria-hidden="true" />
+        <code title={standing.branch}>{standing.branch}</code>
+      </div>
+    );
+  if (standing.kind === "unused")
+    return (
+      <div className="epic-branch unused">
+        <GitBranch size={11} aria-hidden="true" />
+        <code title={`${standing.branch}: no worker here has used it`}>{standing.branch}</code>
+        <button className="epic-branch-fresh" onClick={() => chooseStart(WORKED_OUT)}>
+          Start fresh from {base}
+        </button>
+      </div>
+    );
+  const others = branches.filter((branch) => branch !== base);
+  if (!others.length)
+    return (
+      <div className="epic-branch">
+        <GitBranch size={11} aria-hidden="true" />
+        <span>New branch from</span>
+        <code>{standing.from}</code>
+        <span>when work starts</span>
+      </div>
+    );
+  return (
+    <div className="epic-branch">
+      <GitBranch size={11} aria-hidden="true" />
+      <span>New branch from</span>
+      <Select
+        aria-label="Where this goal branches from"
+        className="epic-branch-picker"
+        value={standing.from === base ? WORKED_OUT : standing.from}
+        onValueChange={chooseStart}
+      >
+        <option value={WORKED_OUT} data-detail="Where this project's goals branch from.">
+          {base}
+        </option>
+        {others.map((branch) => (
+          <option key={branch} value={branch}>
+            {branch}
+          </option>
+        ))}
+      </Select>
+      <span>when work starts</span>
+    </div>
+  );
 }

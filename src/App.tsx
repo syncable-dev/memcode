@@ -94,6 +94,8 @@ import type { MemCodeBetaStatus } from "./beta";
 import type { MemtraceAccount } from "./connections";
 import { approvedRuntime } from "./worker-availability";
 import { useRuntimeHealth } from "./useRuntimeHealth";
+import { useRepositoryStatus } from "./useRepositoryStatus";
+import { repositoryName } from "./branches";
 import { primaryModifier, shortcutLabel } from "./platform";
 import "./styles-runtime-health.css";
 import "./styles-artifact-collection.css";
@@ -107,7 +109,6 @@ import {
 } from "./components/Dialogs";
 import { hasTeamPage } from "./team-presentation";
 import { DeleteProject } from "./components/DeleteProject";
-import { RepositoryPanel } from "./components/RepositoryPanel";
 
 type View =
   | "board"
@@ -188,6 +189,10 @@ const pageCopy: Record<View, [string, string, string]> = {
 export function App() {
   const runtimeHealth = useRuntimeHealth();
   const [state, setState] = useState<AppState | null>(null);
+  const repository = useRepositoryStatus(
+    state?.projects.find((item) => item.id === state.activeProjectId) ??
+      state?.projects[0],
+  );
   const [runtime, setRuntime] = useState<RuntimeInfo | null>(null);
   const [view, setView] = useState<View>("board");
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -201,7 +206,7 @@ export function App() {
   const [storyStatus, setStoryStatus] = useState<string | undefined>();
   const [storyParent, setStoryParent] = useState<string | undefined>();
   const [dialog, setDialog] = useState<
-    "task" | "project" | "repository" | "settings" | "search" | "welcome" | null
+    "task" | "project" | "settings" | "search" | "welcome" | null
   >(null);
   const [projectMenu, setProjectMenu] = useState(false);
   const [joinTeamRequest, setJoinTeamRequest] = useState(0);
@@ -713,7 +718,11 @@ export function App() {
             <span>
               <strong>{project.name}</strong>
               <small>
-                {project.example ? "Example project" : project.branch}
+                {project.example
+                  ? "Example project"
+                  : repository
+                    ? repositoryName(repository)
+                    : project.branch}
               </small>
             </span>
             <ChevronDown size={13} />
@@ -771,17 +780,6 @@ export function App() {
                 }}
               />
               <div className="menu-divider" />
-              {project.path && !project.example && (
-                <button
-                  onClick={() => {
-                    setDialog("repository");
-                    setProjectMenu(false);
-                  }}
-                >
-                  <GitBranch size={16} />
-                  Repository and branches
-                </button>
-              )}
               <button
                 onClick={() => {
                   setDialog("project");
@@ -1052,6 +1050,7 @@ export function App() {
               onCreateRequestConsumed={() => setCreateEpicRequest(0)}
               pullRequests={state.pullRequests}
               openPullRequest={setPullRequestEpic}
+              repository={repository}
               onEpicCreated={(epic) => {
                 if (guideProgress?.step === "epic" && !guideProgress.dismissed)
                   updateGuide({ epicId: epic.id, step: "story" });
@@ -1369,13 +1368,6 @@ export function App() {
               });
           }}
           notify={notify}
-        />
-      )}
-      {dialog === "repository" && (
-        <RepositoryPanel
-          project={project}
-          state={state}
-          close={() => setDialog(null)}
         />
       )}
       {dialog === "project" && (
