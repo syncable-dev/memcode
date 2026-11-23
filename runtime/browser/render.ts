@@ -1,6 +1,11 @@
 import type { CDPSession, Page } from "playwright-core";
 import type { BrowserSession } from "./pool";
 
+export type ImageFormat = "png" | "jpeg";
+// At Retina density Chrome encodes this 2-3x faster than PNG at about a third
+// of the size; 90 approaches PNG size on text-heavy pages.
+const JPEG_QUALITY = 85;
+
 export class BrowserRendering {
   private sessions = new WeakMap<Page, CDPSession>();
   private async session(context: BrowserSession, page: Page) {
@@ -31,6 +36,7 @@ export class BrowserRendering {
     viewport: { width: number; height: number },
     deviceScaleFactor: number,
     scale: "css" | "device",
+    format: ImageFormat = "png",
   ): Promise<string> {
     const session = await this.session(context, page);
     // Capture the compositor at its actual density. Playwright's screenshot
@@ -41,7 +47,8 @@ export class BrowserRendering {
       "Page.getLayoutMetrics",
     );
     const result = await session.send("Page.captureScreenshot", {
-      format: "png",
+      format,
+      ...(format === "jpeg" ? { quality: JPEG_QUALITY } : {}),
       fromSurface: true,
       captureBeyondViewport: false,
       clip: {
