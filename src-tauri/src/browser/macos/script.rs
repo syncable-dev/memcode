@@ -13,6 +13,21 @@ use super::{surface::{owned, SURFACES}, Reply};
 const WORLD: &str = "memcode";
 const MAX_SCRIPT: usize = 512 * 1024;
 
+thread_local! {
+    /// WebKit drops a content world's JavaScript state once the API object is
+    /// released, so the driver's per-page state lives only as long as this does.
+    static MEMCODE_WORLD: RefCell<Option<Retained<WKContentWorld>>> = const { RefCell::new(None) };
+}
+
+fn memcode_world(mtm: MainThreadMarker) -> Retained<WKContentWorld> {
+    MEMCODE_WORLD.with(|world| {
+        world
+            .borrow_mut()
+            .get_or_insert_with(|| unsafe { WKContentWorld::worldWithName(&NSString::from_str(WORLD), mtm) })
+            .clone()
+    })
+}
+
 /// Runs an async function body; it must return a string (the runtime sends JSON).
 pub(super) fn evaluate(input: &Value, reply: Reply) {
     let prepared = (|| -> Result<(Retained<WKWebView>, Retained<WKContentWorld>, String), String> {
@@ -24,8 +39,7 @@ pub(super) fn evaluate(input: &Value, reply: Reply) {
             Ok(owned(&mut surfaces.borrow_mut(), input)?.wk.clone())
         })?;
         let mtm = MainThreadMarker::new().ok_or("Browser scripts must run on the main thread")?;
-        let world = unsafe { WKContentWorld::worldWithName(&NSString::from_str(WORLD), mtm) };
-        Ok((wk, world, body.to_owned()))
+        Ok((wk, memcode_world(mtm), body.to_owned()))
     })();
     let (wk, world, body) = match prepared {
         Ok(prepared) => prepared,
