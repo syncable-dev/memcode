@@ -68,6 +68,7 @@ export const guideArticles: GuideArticle[] = [
       "For existing code, pick its folder. Memtrace reads the code so later work has context.",
       "Switch projects from the same selector. Each project keeps its own goals, tasks and results.",
       "To remove a project you no longer need, point at it in the selector and choose the bin. Its folder stays on your computer.",
+      "Choose Repository and branches in the selector to see the project's GitHub repository, the branch its folder is on and where new work starts. Pick another branch to start from, or start a goal fresh.",
     ],
     note: "Adding or deleting a project never changes your files. Work you haven’t saved to Git stays as it is.",
     details: [

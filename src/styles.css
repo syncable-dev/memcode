@@ -2293,6 +2293,23 @@ kbd {
 .shared-run-standing { margin:18px 4px; color:var(--muted); font-size:13px; line-height:1.55; }
 .shared-run-summary { margin:18px 0; padding:18px 20px; border:1px solid var(--line); border-radius:12px; background:var(--white); }
 .shared-run-summary-by { margin:6px 0 12px; color:var(--muted); font-size:11px; }
+/* A project's repository: its folder, GitHub repository, branch and where new work starts. */
+.repository-panel dl { display:grid; grid-template-columns:110px 1fr; gap:8px 14px; margin:0 0 16px; font-size:12px; }
+.repository-panel dt { color:var(--muted); }
+.repository-panel dd { margin:0; font-family:var(--mono, ui-monospace, monospace); font-size:11.5px; overflow-wrap:anywhere; }
+.repository-standing { display:flex; align-items:flex-start; gap:8px; margin:0 0 16px; padding:10px 12px; border-radius:9px; background:var(--mint-wash); color:var(--mint-ink); font-size:12px; line-height:1.55; }
+.repository-standing svg { flex:none; margin-top:3px; }
+.repository-standing.attention { background:#fbf3e4; color:#8a5a14; }
+.repository-base { display:flex; align-items:center; justify-content:space-between; gap:14px; margin:0 0 20px; font-size:12px; }
+.repository-base select { min-width:240px; }
+.repository-goals-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; font-size:12px; }
+.repository-goals ul { list-style:none; margin:0; padding:0; border:1px solid var(--line); border-radius:10px; max-height:300px; overflow:auto; }
+.repository-goals li { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 12px; border-top:1px solid var(--line); }
+.repository-goals li:first-child { border-top:0; }
+.repository-goals li > span { display:flex; flex-direction:column; gap:3px; min-width:0; }
+.repository-goals li strong { font-size:12.5px; font-weight:500; }
+.repository-goals li small { color:var(--muted); font-size:11px; overflow-wrap:anywhere; }
+.repository-goals .button { flex:none; font-size:11px; }
 .shared-only-owner { display:flex; align-items:center; gap:12px; margin:0 0 10px; padding:12px 14px; border:1px solid var(--line); border-radius:10px; background:var(--paper); color:var(--muted); font-size:12px; }
 .shared-only-owner > span { flex:1; }
 .message-origin { font-size:10px; color:var(--muted); font-weight:400; }

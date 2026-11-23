@@ -224,3 +224,27 @@ test("Quick changes batches are shared with the team like any goal", async () =>
     await rm(f.directory, { recursive: true, force: true });
   }
 });
+
+test("a project that chose where new work starts branches its goals from there", async () => {
+  const f = await fixture();
+  try {
+    await git(f.root, ["switch", "-c", "staging", "main"]);
+    await writeFile(join(f.root, "staging.ts"), "export const s = 1;\n");
+    await git(f.root, ["add", "-A"]);
+    await git(f.root, ["commit", "-m", "Staging only"]);
+    await git(f.root, ["push", "-u", "origin", "staging"]);
+    await git(f.root, ["switch", "main"]);
+    Object.assign(f.project, { baseBranch: "staging" });
+    const task = f.story("1", "Add the export");
+    task.epicId = ensureTaskEpic(f.state, task).id;
+    await f.workspaces.activate(task, f.project, { ownedCheckout: true });
+    const goal = f.state.epics.find((epic) => epic.id === task.epicId)!;
+    assert.equal(goal.baseBranch, "staging");
+    assert.equal(
+      await git(task.run.workspace!, ["rev-parse", "HEAD"]),
+      await git(f.root, ["rev-parse", "origin/staging"]),
+    );
+  } finally {
+    await rm(f.directory, { recursive: true, force: true });
+  }
+});

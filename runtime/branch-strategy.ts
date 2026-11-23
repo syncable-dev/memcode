@@ -287,7 +287,8 @@ function mergedBranchFrom(subject: string, base: string): MergedBranch[] {
   return [];
 }
 
-async function fetchBranch(cwd: string, remote: string, branch: string) {
+/** Fetches one branch from a remote, giving up quietly when the network does not answer. */
+export async function fetchBranch(cwd: string, remote: string, branch: string) {
   await exec("git", ["fetch", "--quiet", remote, branch], {
     cwd,
     windowsHide: true,

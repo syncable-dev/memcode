@@ -343,6 +343,8 @@ export interface Project {
   description: string;
   path: string | null;
   branch: string;
+  /** Where new work starts, chosen by the person. Unset: worked out from the repository. */
+  baseBranch?: string;
   repoId?: string;
   analysis: "idle" | "connecting" | "indexing" | "ready" | "error";
   analysisNote?: string;
@@ -695,6 +697,17 @@ export interface MemCodeAPI extends CodeReviewAPI {
   deleteCycle(id: string): Promise<import("./deletion").DeletionResult>;
   /** Removes a project from MemCode on this computer. Its folder stays on disk. */
   deleteProject(id: string): Promise<import("./deletion").DeletionResult>;
+  /** The project folder's branch, its GitHub repository and where new work starts. */
+  repositoryStatus(
+    projectId: string,
+  ): Promise<import("./branches").RepositoryStatus>;
+  /** Chooses where new work starts; null goes back to what MemCode works out. */
+  setBaseBranch(
+    projectId: string,
+    branch: string | null,
+  ): Promise<import("./branches").RepositoryStatus>;
+  /** A goal that has not started gets a fresh branch from the base when its work starts. */
+  startGoalFresh(id: string, baseBranch?: string | null): Promise<void>;
   respondToWorker(
     taskId: string,
     requestId: string,
