@@ -4,9 +4,11 @@ MemCode can share a project through MemSync, the service that is to replace Team
 start it, invite people, and keep its board the same on every computer that has it. This
 page says what exists, how MemCode finds the service and how to try it on one computer.
 
-Nothing is deployed. MemCode finds MemSync in memtrace.io's list of MemCode services.
-Until that list names it, none of this is in the app: no Share button, no request to
-MemSync. Team Sync is unchanged and keeps working beside it.
+MemSync runs at `https://sync.hosted.memtrace.io`, and memtrace.io's list of MemCode
+services names it. This branch of MemCode uses it; no released MemCode does yet. Sharing
+replaces Team Sync: the **Team** page in the sidebar is only shown for a project still in a
+Team Sync team, so it can be managed and left, and the project menu no longer offers
+**Join a team project**. The in-app guide's "Share a project" topic describes Share.
 
 ## What it does today
 
@@ -22,9 +24,10 @@ MemSync. Team Sync is unchanged and keeps working beside it.
 - Keeps the board of a connected project in step with the shared project: goals, cycles,
   tasks with their runbooks, comments, lanes, custom fields and saved views. See
   [Keeping the board in step](#keeping-the-board-in-step).
-- Shows what happened on a card to everyone on the project: the worker's conversation,
-  what it is doing, its code review, and the files and changes someone shared from the
-  card, with who did each. See [What happens on a card](#what-happens-on-a-card).
+- Shows what happened on a card to everyone on the project: who runs a worker on it and how
+  it stands, then the summary the worker ended with, what it changed, its code review and
+  the files someone shared, with who did each. The conversation is the person's own, on
+  each of their computers. See [What happens on a card](#what-happens-on-a-card).
 
 Renaming and deleting a shared project happen at memtrace.io. Workers run only on the
 computer that started them. Source changes travel through Git.
@@ -215,61 +218,87 @@ arrives." and "1 value is too large for the sharing service and stays on this co
 ## What happens on a card
 
 Each card of a shared project has an activity log at MemSync (its ADR-0014). MemSync never
-reads it; what an entry holds is MemCode's (`runtime/sharing/cards/entries.ts`).
+reads it; what an entry holds is MemCode's (`runtime/sharing/cards/entries.ts`). Each entry
+names who may read it: everyone on the project, or only the account that wrote it, on any
+of its computers (MemSync's ADR-0019). MemSync enforces that: the other computers never
+receive such an entry.
+
+What a run writes, and who reads it (`readersOf` in `entries.ts`):
+
+| Entry | Who reads it |
+| --- | --- |
+| The run: state, what it is doing, the harness and models | Everyone |
+| The person's and the worker's turns, and why a run failed | The person's own account |
+| The summary of a finished run | Everyone |
+| Its code review | Everyone |
+| A file someone shared, and what the run changed | Everyone |
+| A message to the worker, what became of it, what the worker waits for | The person's own account |
 
 On the computer that runs a worker on a card, MemCode writes the run to the card's log as
-it happens, at most once a second: its state, what it is doing, the models, the person's
-and the worker's turns, and its code review. That is what Team Sync shares, and nothing
-more: tool output, local references and review notes stay on the computer, and paths in a
-home folder and tokens are blotted out of the text.
+it happens, at most once a second. Tool output, local references and review notes stay on
+the computer, and paths in a home folder and tokens are blotted out of the text.
+
+**The summary.** Every worker's brief asks it to end with a short summary for the rest of
+the project: what it did, what changed, how it checked it, and anything left open. When a
+run finishes, its last message is the summary, and everyone on the project reads it.
+
+**The changes.** When a run finishes, what it changed, as its Changes tab shows it, is
+shared with the project. They are looked at again when the run's code review settles, and
+shared again if they changed since. There is no button. Changes over 5 MB are not shared.
 
 On every other computer, a card that is opened is read from its log and followed while it
 is open. A run from another computer is shown with the views MemCode has for a worker
 elsewhere:
 
 - the card header says "On Mac";
-- the conversation shows the person's turns as "Alex Holm · Mac" and the worker's turns;
-- the status line above the message box says "Alex Holm · Mac" and what the worker is doing;
-- the worker panel says SHARED, the harness, whose computer, and "Conversation and review
-  shared with the project. It runs on Mac.";
-- the Code review tab shows the run's review;
-- the message box sends to that worker, as the next section says. Starting a review or
-  asking the review a question is still done on the computer that runs the worker.
-  Comments reach everyone.
+- the status line above the message box says "Alex Holm · Mac" and what the worker is
+  doing;
+- the worker panel says SHARED, the harness and whose computer;
+- the Code review tab shows the run's review, and the Changes tab what it changed.
 
-A run shows only what the account that started it wrote. A turn or a review that someone
-else on the project writes into it is not shown. A computer never shows its own run back
-to itself, and a run started here takes over the card.
+What the Conversation tab shows depends on whose run it is:
 
-**Files and changes are shared on purpose**, as in Team Sync. On the computer that ran the
-worker, the Artifacts tab lists the card's files with a **Share** button each, and the
-Changes tab has **Share changes**. A file is at most 5 MB, and a project keeps at most 50 MB.
-On other computers, a shared file is listed among the card's files with who shared it, and
-opening it fetches it beside the card; shared changes show in the Changes tab.
+- **Your own, from another of your computers:** the whole conversation, your turns as
+  "Alex Holm · Mac", and the message box continues the worker, as the next section says.
+- **Someone else's:** in place of the conversation, "Alex Holm is working on this on their
+  Mac. A summary of the work shows here when it's ready for review.", then the summary
+  under SUMMARY with who and when. In place of the message box: "Only Alex Holm can
+  continue this worker. Comment on the card to reach them." and a **Comment** button.
+
+A run shows only what the account that started it wrote. A turn, a summary or a review that
+someone else on the project writes into it is not shown. A computer never shows its own run
+back to itself, and a run started here takes over the card.
+
+**Files are shared on purpose**, as in Team Sync. On the computer that ran the worker, the
+Artifacts tab lists the card's files with a **Share** button each. A file is at most 5 MB,
+and a project keeps at most 50 MB. On other computers, a shared file is listed among the
+card's files with who shared it, and opening it fetches it beside the card.
 
 What a computer sent and what still waits is in `cards.json` in the board's folder, so a
-restart sends only what is new and nothing is lost offline. The computer's own id for card
+restart sends only what is new and nothing is lost offline. An entry waiting there from a
+MemCode before this change is sent for its author alone. The computer's own id for card
 logs is in `shared-boards/computer.json`.
+
+**MemSync first.** A MemSync older than ADR-0019 ignores who an entry is for and gives
+everything to everyone. The server at `sync.hosted.memtrace.io` must be updated before a
+MemCode with this change is used on a shared project.
 
 ## Continuing a worker from another computer
 
 A message to a worker travels in its card's log (MemSync's ADR-0015). The computer that
-runs the worker, the host, decides what happens to it (ADR-0006).
+runs the worker, the host, decides what happens to it (ADR-0006). Only the account that
+started a worker continues it: the same person on another of their computers.
 
-**Sending.** On a card whose worker runs elsewhere, the message box works as it does for a
-worker here. It says "Continue the worker on your Mac…" when the worker runs under the
-person's own account, and "Message the worker on Alex Holm's Mac. Alex Holm allows it
-first." when it is someone else's. What is sent shows in the conversation, by the person who
-sent it, with one line for where it stands:
+**Sending.** On a card whose worker runs on another of your computers, the message box
+says "Continue the worker on your Mac…". What is sent shows in the conversation with one
+line for where it stands:
 
 | Where it stands | The line |
 | --- | --- |
 | Not at MemSync yet | Sending… |
-| In the log, the host has not read it | Sent to your Mac / Sent to Alex Holm's Mac |
-| Waiting for the host's person | Waiting for Alex Holm to allow it |
-| Queued for the worker | Queued on your Mac / Alex Holm allowed it |
-| The worker took it | No line: it is part of the conversation, and the answer follows on every computer. |
-| Declined | Alex Holm declined |
+| In the log, the host has not read it | Sent to your Mac |
+| Queued for the worker | Queued on your Mac |
+| The worker took it | No line: it is part of the conversation, and the answer follows on each of your computers. |
 | It could not reach the worker | Not delivered: the reason the host gave |
 
 The same lines are in the Queue tab, where such a message cannot be edited or cancelled.
@@ -277,17 +306,13 @@ The same lines are in the Queue tab, where such a message cannot be edited or ca
 **On the host.** MemCode reads the card of every worker run here that runs now or ended in
 the last three days, from where it last read, so a message sent while the host was closed
 is read when it opens again, once. A message from the account that started the worker is
-handled exactly as a follow-up typed on the host. From anyone else it waits: the card shows
-"Dana Ek on Windows wants to continue this worker" with what they wrote, "Nothing runs
-until you allow it.", and Decline and Allow. The board card shows "1 to allow". The host
-writes what became of each message into the log: queued, waiting to be allowed, picked up,
-declined or not delivered.
+handled exactly as a follow-up typed on the host. A message in anyone else's name is left
+alone. The host writes what became of each message into the log, for its own account.
 
 **Answering what the worker waits for.** A question, an approval or a plan the worker waits
-for is written to the card as well, and shows on the other computer in the same panel, to
-answer there. The same rules hold: the worker's own account straight through, anyone else
-after the host's person allows it. A question that asks for something secret is answered
-on the host only: the panel says "Answer this on your Mac".
+for is written to the card as well, for the person's own account, and shows on their other
+computer in the same panel, to answer there. A question that asks for something secret is
+answered on the host only: the panel says "Answer this on your Mac".
 
 **Trust.** What became of a message, and what the worker waits for, count only when the
 account that started the worker wrote them. A message is handled once, whatever the log
@@ -322,6 +347,7 @@ sentence.
 | `file_too_large` | That file is larger than 5 MB, which is the most a project can share in one file. |
 | `project_storage_full` | This project already shares 50 MB of files, which is all it can keep. The file stays on this computer. |
 | `no_such_file` | That file is no longer kept for this project. Ask whoever shared it to share it again. |
+| `unknown_readers` | MemCode named readers for a card entry that the sharing service does not know. This is a fault in MemCode, not something you did. |
 
 The last four belong to the board log. MemCode is written so that it never meets them:
 ids are made from the bytes, nothing empty is sent, a change is cut into pieces well under
@@ -373,10 +399,11 @@ with `[sharing]`.
 | What MemCode writes into a card's log | `runtime/sharing/cards/entries.ts` |
 | Writing this computer's runs, following an open card, sending and hosting messages to workers | `runtime/sharing/cards/activity.ts` |
 | Where a message to a worker stands, in words; what a worker waits for, as shared | `runtime/sharing/cards/worker-messages.ts` |
-| Allow and Decline on the host's card | `src/components/WorkerAsks.tsx` |
+| Allow and Decline on the host's card. Nothing reaches it since only a worker's own account continues it; it is to be removed | `src/components/WorkerAsks.tsx` |
 | Which of a task's files may be shared | `runtime/sharing/cards/files.ts` |
 | MemSync's Cards API as MemCode uses it | `runtime/sharing/memsync/cards-api.ts`, `cards-contract.ts`, `cards.proto` |
-| A run from a card's log, in the shape the card's views take | `src/sharing-cards.ts` |
+| A run from a card's log, in the shape the card's views take, and what someone else's run says in place of its conversation | `src/sharing-cards.ts` |
+| Someone else's run: how it stands, then its summary | `src/components/SharedRunSummary.tsx` |
 | The Share buttons on a card's files | `src/components/ShareFromCard.tsx` |
 | gRPC over Node's own HTTP/2 | `runtime/sharing/memsync/grpc.ts` |
 | Protocol Buffers on the wire | `runtime/sharing/memsync/wire.ts` |
@@ -567,25 +594,33 @@ For what happens on a card:
 
 23. **A card is read when it is opened and followed while open**, not for every card all
     the time. The board does not show who is running what across the project.
-24. **Files and changes are shared with one click each**, not on their own, as in Team Sync.
-    Shared changes are a file of the Changes tab's own format, not a Git patch.
+24. **Files are shared with one click each**, not on their own, as in Team Sync. A run's
+    changes are shared when it finishes, as a file of the Changes tab's own format, not a
+    Git patch.
 25. **A run's turns and review count only from the account that wrote its first entry.**
 26. **The person's turns of a run from elsewhere carry the run owner's name.**
 27. **This computer is named by its kind, "Mac", "Windows" or "Linux"**, never its host name.
 28. **A run is written at most once a second**, so a long streamed answer is sent a few
     times over as it grows.
+29. **Only the person who runs a worker reads its conversation** (Alex, 23 November 2026:
+    "I can't see what the agents has been had conversations about" in Linear). Everyone
+    else reads how it stands and its summary. Why a run failed is the person's too.
+30. **The summary is the run's last message**, which the brief asks to be a summary. It
+    is not written by another model.
+31. **A run's changes are looked at when it ends and when its code review settles**, not
+    on every save.
 
 For continuing a worker from another computer:
 
-29. **The host reads the cards of workers that run now or ended in the last three days.**
+32. **The host reads the cards of workers that run now or ended in the last three days.**
     A message to an older run waits until it is run again.
-30. **No one-time approval for a person's own second computer.** Signing in to the same
+33. **No one-time approval for a person's own second computer.** Signing in to the same
     account on both is the approval, as ADR-0015 says.
-31. **A message from someone else is allowed or declined once.** Allowing it is for that
-    message, not for the person.
-32. **A message sent from another computer cannot be edited or cancelled**: the log keeps
+34. **Nobody else continues a worker**, not even after its person allows it. A guest
+    comments on the card.
+35. **A message sent from another computer cannot be edited or cancelled**: the log keeps
     what was written.
-33. **A secret answer never travels.** The question shows; it is answered on the host.
+36. **A secret answer never travels.** The question shows; it is answered on the host.
 
 ## Not built
 
