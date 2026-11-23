@@ -12,7 +12,7 @@ import {
   chmod,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative, sep } from "node:path";
 
 const appleKeys = [
   "APPLE_CERTIFICATE",
@@ -245,6 +245,24 @@ export async function prepareMacSigning(root, inherited = process.env) {
       node,
     ]);
     run("/usr/bin/codesign", ["--verify", "--strict", node]);
+    // Native libraries in the other bundled folders, such as onnxruntime for local
+    // search, are loaded by that Node. Apple rejects the app while any is unsigned.
+    const libraries = await bundledLibrariesToSign(root);
+    for (const library of libraries) {
+      run("/usr/bin/codesign", [
+        "--force",
+        "--timestamp",
+        "--options",
+        "runtime",
+        "--sign",
+        policy.identity,
+        "--keychain",
+        keychain,
+        library,
+      ]);
+      run("/usr/bin/codesign", ["--verify", "--strict", library]);
+    }
+    await recordSignedFiles(root, libraries);
     const signedRuntime = {
       originalExecutableSha256: provenance.executableSha256,
       signedExecutableSha256: digest(await readFile(node)),
@@ -256,6 +274,52 @@ export async function prepareMacSigning(root, inherited = process.env) {
     await cleanup();
     throw error;
   }
+}
+
+/**
+ * Writes the fingerprint of each signed file into the provenance.json of the bundled
+ * folder it is in, keeping the unsigned one, since the app checks those files
+ * against it before it loads them.
+ */
+export async function recordSignedFiles(root, signed) {
+  const byFolder = new Map();
+  for (const path of signed) {
+    const [folder, ...rest] = relative(root, path).split(sep);
+    byFolder.set(folder, [...(byFolder.get(folder) ?? []), rest.join("/")]);
+  }
+  for (const [folder, names] of byFolder) {
+    const manifest = join(root, folder, "provenance.json");
+    let provenance;
+    try {
+      provenance = JSON.parse(await readFile(manifest, "utf8"));
+    } catch {
+      continue;
+    }
+    if (!Array.isArray(provenance.files)) continue;
+    for (const entry of provenance.files) {
+      if (!names.includes(entry.name)) continue;
+      const bytes = await readFile(join(root, folder, entry.name));
+      entry.unsignedSha256 ??= entry.sha256;
+      entry.bytes = bytes.length;
+      entry.sha256 = digest(bytes);
+    }
+    await writeFile(manifest, JSON.stringify(provenance, null, 2) + "\n");
+  }
+}
+
+/**
+ * The native binaries in the folders packaging copies into the app as resources
+ * (`dist-*` at the root), other than Node, which is signed with its own entitlement.
+ */
+export async function bundledLibrariesToSign(root) {
+  const node = join(root, "dist-desktop-runtime/node");
+  const folders = (await readdir(root, { withFileTypes: true })).filter(
+    (entry) => entry.isDirectory() && entry.name.startsWith("dist-"),
+  );
+  const found = await Promise.all(
+    folders.map((folder) => machoFiles(join(root, folder.name))),
+  );
+  return found.flat().filter((path) => path !== node);
 }
 
 export async function machoFiles(directory) {
