@@ -161,3 +161,14 @@ We will do option 4.
   inherited ones), and `invalidating_episode_uuid`, which evolution reads for
   removals, is not written anywhere. That needs an engine branch-model change.
 - Not yet copied: Fleet's `fleet-provenance.jsonl` file next to the goal store.
+
+## MemCode implementation notes (2026-11-23, branch `feat/ship-goal-history`)
+
+- `runtime/worker-records.ts`: one function says where a task's records are. A task
+  gets `run.records` once its goal has shipped; documents are re-pointed with it.
+- `runtime/shipped-goal.ts`: after `finishMerge`, in the background, it checks for
+  running workers and uncommitted work, releases the goal's engine, runs
+  `import_goal_history` as a dry run and for real, compares the counts, moves the
+  task records, then runs `git worktree remove` without `--force`.
+- A goal whose checkout stays gets `checkoutKept`, shown in the Roadmap's shipped
+  note. With an engine that has no `import_goal_history`, every checkout stays.
