@@ -74,7 +74,7 @@ test(
       await mkdtemp(join(tmpdir(), "memcode-capture-test-")),
       async () => {},
     );
-    const rendering = (manager as any).rendering,
+    const rendering = (manager as any).engine.rendering,
       original = rendering.capture.bind(rendering);
     try {
       await manager.execute(task.id, {
@@ -122,7 +122,7 @@ const stripedPage = `<body style="margin:0">${bands
 
 function selectedPage(manager: AgentBrowserManager, taskId: string): Page {
   const session = (manager as any).sessions.get(taskId);
-  return session.pages.get(session.selected);
+  return session.pages.get(session.selected).raw;
 }
 
 /** Decodes a frame in the browser and names the colour at its top and bottom edge. */

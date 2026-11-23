@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, writeFile, appendFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { Page } from "playwright-core";
 import type { AppState } from "../../src/shared";
 import {
   browserURL,
@@ -11,17 +10,21 @@ import {
   type WorkerBrowserState,
 } from "../../src/browser";
 import { within, now } from "../local";
-import { BrowserPool, type BrowserSession } from "./pool";
 import { NativeBrowserPool } from "./native-pool";
 import type { NativeHost } from "../host";
-import { inspectPage, interact } from "./inspect";
-import { BrowserRendering, type ImageFormat } from "./render";
 import { browserDeadline } from "./capture";
+import type {
+  BrowserEngine,
+  BrowserPage,
+  BrowserTabs,
+  ImageFormat,
+} from "./engine";
+import { HeadlessEngine, WebView2Engine } from "./playwright-engine";
 
 interface Session {
   state: WorkerBrowserState;
-  context?: BrowserSession;
-  pages: Map<string, Page>;
+  context?: BrowserTabs;
+  pages: Map<string, BrowserPage>;
   selected?: string;
   queue: Promise<unknown>;
   revision: number;
@@ -32,8 +35,7 @@ interface Session {
 export class AgentBrowserManager {
   private closing = false;
   private sessions = new Map<string, Session>();
-  private pool: BrowserPool | NativeBrowserPool;
-  private rendering = new BrowserRendering();
+  private engine: BrowserEngine;
   constructor(
     private state: () => AppState,
     private dataDir: string,
@@ -41,10 +43,10 @@ export class AgentBrowserManager {
     private maxContexts = 16,
     host?: NativeHost,
   ) {
-    this.pool =
+    this.engine =
       host && process.platform === "win32"
-        ? new NativeBrowserPool(host)
-        : new BrowserPool();
+        ? new WebView2Engine(new NativeBrowserPool(host))
+        : new HeadlessEngine();
   }
   private session(taskId: string): Session {
     if (!this.state().tasks.some((task) => task.id === taskId))
@@ -61,7 +63,7 @@ export class AgentBrowserManager {
           activity: [],
           viewport: { width: 1280, height: 800 },
           deviceScaleFactor: 1,
-          nativeSurface: this.pool.native,
+          nativeSurface: this.engine.native,
         },
         pages: new Map(),
         queue: Promise.resolve(),
@@ -112,7 +114,11 @@ export class AgentBrowserManager {
       }));
     return structuredClone(session.state);
   }
-  private register(session: Session, page: Page, replaces?: Page): string {
+  private register(
+    session: Session,
+    page: BrowserPage,
+    replaces?: BrowserPage,
+  ): string {
     const previous = [...session.pages].find(
       ([, existing]) => existing === page,
     );
@@ -137,9 +143,9 @@ export class AgentBrowserManager {
         })
         .catch(() => {});
     };
-    page.on("domcontentloaded", update);
-    page.on("framenavigated", (frame) => {
-      if (frame !== page.mainFrame() || session.pages.get(id) !== page) return;
+    page.onLoaded(update);
+    page.onNavigated(() => {
+      if (session.pages.get(id) !== page) return;
       session.revision++;
       session.observed = undefined;
       update();
@@ -147,15 +153,7 @@ export class AgentBrowserManager {
         () => {},
       );
     });
-    if (!this.pool.native)
-      page.on("popup", (popup) => this.register(session, popup));
-    page.on("dialog", (dialog) => {
-      void dialog.dismiss();
-    });
-    page.on("download", (download) => {
-      void download.cancel();
-    });
-    page.on("close", () => {
+    page.onClosed(() => {
       if (session.pages.get(id) !== page) return;
       session.pages.delete(id);
       if (session.selected === id)
@@ -171,11 +169,11 @@ export class AgentBrowserManager {
     update();
     return id;
   }
-  private async context(session: Session): Promise<BrowserSession> {
-    if (session.context && this.pool.connected()) return session.context;
+  private async context(session: Session): Promise<BrowserTabs> {
+    if (session.context && this.engine.connected()) return session.context;
     const occupied = [...this.sessions.values()].filter(
       (other) =>
-        (other.context && this.pool.connected()) ||
+        (other.context && this.engine.connected()) ||
         other.state.status === "starting",
     );
     if (occupied.length >= this.maxContexts) {
@@ -202,27 +200,19 @@ export class AgentBrowserManager {
       );
     }
     session.state.status = "starting";
-    session.context = await this.pool.context(
+    session.context = await this.engine.open(
       session.state.viewport,
       session.state.deviceScaleFactor,
       session.state.taskId,
     );
-    await session.context.route("**/*", async (route) => {
-      try {
-        browserURL(route.request().url());
-        await route.continue();
-      } catch {
-        await route.abort("blockedbyclient");
-      }
-    });
-    session.context.onPage?.((page, replaces) =>
+    session.context.onPage((page, replaces) =>
       this.register(session, page, replaces),
     );
     session.pages.clear();
     session.selected = undefined;
     return session.context;
   }
-  private page(session: Session, tabId?: string): Page {
+  private page(session: Session, tabId?: string): BrowserPage {
     const page = session.pages.get(tabId ?? session.selected ?? "");
     if (!page || page.isClosed())
       throw Error("Open a browser tab in this work item first.");
@@ -285,11 +275,11 @@ export class AgentBrowserManager {
           : "Browser returned to the worker.",
       );
     } else if (request.action === "surface") {
-      if (this.pool instanceof NativeBrowserPool) {
+      if (this.engine.native) {
         const page = request.tabId
           ? this.page(session, request.tabId)
           : undefined;
-        await this.pool.surface(session.state.taskId, page, {
+        await this.engine.surface(session.state.taskId, page, {
           visible: request.visible,
           bounds: request.bounds,
         });
@@ -321,11 +311,7 @@ export class AgentBrowserManager {
         : (existing?.[1] ?? (await context.newPage()));
       const id = request.tabId ?? existing?.[0] ?? this.register(session, page);
       session.selected = id;
-      if (!existing)
-        await page.goto(url.href, {
-          waitUntil: "domcontentloaded",
-          timeout: 20000,
-        });
+      if (!existing) await page.goto(url.href);
       session.state.status = "ready";
       this.view(session);
       session.state.tabs.find((tab) => tab.id === id)!.title =
@@ -365,9 +351,7 @@ export class AgentBrowserManager {
         session.state.pointer = undefined;
         session.state.cursor = undefined;
       } else if (command.action === "close") {
-        if (this.pool instanceof NativeBrowserPool)
-          await this.pool.closePage(session.state.taskId, page);
-        else await page.close();
+        await session.context!.closePage(page);
         if (!session.pages.size) {
           await session.context?.close();
           session.context = undefined;
@@ -375,17 +359,11 @@ export class AgentBrowserManager {
         }
       } else {
         session.state.action = command.action;
-        const native =
-          this.pool instanceof NativeBrowserPool ? this.pool : undefined;
-        if (native && actor === "worker")
-          await native.busy(session.state.taskId, page, true);
-        let feedback;
-        try {
-          feedback = await interact(page, command, session.state.viewport);
-        } finally {
-          if (native && actor === "worker")
-            await native.busy(session.state.taskId, page, false);
-        }
+        const feedback = await session.context!.interact(page, {
+          input: command,
+          viewport: session.state.viewport,
+          actor,
+        });
         if (
           feedback.cursor &&
           page === session.pages.get(session.selected ?? "")
@@ -410,9 +388,8 @@ export class AgentBrowserManager {
       session.state.viewport = { width: request.width, height: request.height };
       session.state.deviceScaleFactor =
         request.deviceScaleFactor ?? session.state.deviceScaleFactor;
-      for (const page of this.pool.native ? [] : session.pages.values())
-        await this.rendering.resize(
-          session.context!,
+      for (const page of session.pages.values())
+        await session.context!.resize(
           page,
           session.state.viewport,
           session.state.deviceScaleFactor,
@@ -425,7 +402,7 @@ export class AgentBrowserManager {
       if (actor === "worker" && session.state.control === "worker")
         session.selected = tabId;
       const text = await browserDeadline(
-        inspectPage(page),
+        page.inspect(),
         10000,
         "Browser DOM observation",
       );
@@ -467,55 +444,18 @@ export class AgentBrowserManager {
     session.state.action = undefined;
     return { state: this.view(session) };
   }
-  private async image(
+  private image(
     session: Session,
-    page: Page,
+    page: BrowserPage,
     scale: "css" | "device",
     format: ImageFormat = "png",
   ) {
-    const actual = this.pool.native
-      ? await browserDeadline(
-          page.evaluate(() => ({
-            viewport: { width: innerWidth, height: innerHeight },
-            density: devicePixelRatio,
-          })),
-          3000,
-          "Browser viewport observation",
-        )
-      : undefined;
-    // The native WebView2 capture is always PNG; only Chrome's frames change.
-    const encoded =
-      this.pool instanceof NativeBrowserPool
-        ? {
-            format: "png" as const,
-            data: await this.pool.capture(
-              session.state.taskId,
-              page,
-              scale,
-              actual!.viewport,
-              actual!.density,
-            ),
-          }
-        : {
-            format,
-            data: await browserDeadline(
-              this.rendering.capture(
-                session.context!,
-                page,
-                actual?.viewport ?? session.state.viewport,
-                actual?.density ?? session.state.deviceScaleFactor,
-                scale,
-                format,
-              ),
-              10000,
-              "Browser screenshot",
-            ),
-          };
-    return {
-      mimeType: `image/${encoded.format}` as const,
-      data: encoded.data,
-      ...(actual?.viewport ?? session.state.viewport),
-    };
+    return session.context!.capture(page, {
+      scale,
+      format,
+      viewport: session.state.viewport,
+      density: session.state.deviceScaleFactor,
+    });
   }
   private async capture(
     session: Session,
@@ -551,7 +491,7 @@ export class AgentBrowserManager {
   async close(): Promise<void> {
     this.closing = true;
     // Closing Chromium cancels pending navigation and screenshot operations.
-    await this.pool.close();
+    await this.engine.close();
     await Promise.allSettled(
       [...this.sessions.values()].map((session) => session.queue),
     );

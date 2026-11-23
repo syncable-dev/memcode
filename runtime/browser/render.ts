@@ -1,7 +1,7 @@
 import type { CDPSession, Page } from "playwright-core";
 import type { BrowserSession } from "./pool";
+import type { ImageFormat } from "./engine";
 
-export type ImageFormat = "png" | "jpeg";
 // At Retina density Chrome encodes this 2-3x faster than PNG at about a third
 // of the size; 90 approaches PNG size on text-heavy pages.
 const JPEG_QUALITY = 85;
