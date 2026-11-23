@@ -1015,3 +1015,110 @@
   font-size: 12px;
   color: #8c3a2f;
 }
+/* Where goals branch from: beside New goal on the toolbar, and one quiet line per goal. */
+.roadmap-toolbar {
+  flex-wrap: wrap;
+  row-gap: 12px;
+}
+.roadmap-phases > button {
+  white-space: nowrap;
+}
+.roadmap-toolbar-end {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-left: auto;
+}
+.roadmap-base {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #91a596;
+}
+.roadmap-base > span {
+  font: 9px var(--mono);
+  letter-spacing: 0.75px;
+  text-transform: uppercase;
+  color: #687d6e;
+  white-space: nowrap;
+}
+.roadmap-base-picker.mc-select-trigger {
+  min-width: 92px;
+  max-width: 220px;
+  min-height: 31px;
+  padding: 6px 10px;
+  border-color: #e3ebe0;
+  background: white;
+  font: 11px var(--mono);
+  color: #2f5038;
+  gap: 8px;
+}
+.mc-select-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.mc-select-copy > small {
+  font-size: 10px;
+  line-height: 1.45;
+  color: #7f917f;
+  white-space: normal;
+}
+.epic-branch {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 22px;
+  margin: -3px 19px 14px;
+  font-size: 10px;
+  color: #687d6e;
+}
+.epic-branch > svg {
+  flex: none;
+  color: #9cb19f;
+}
+.epic-branch > code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 2px 6px;
+  border: 1px solid #e3ebe0;
+  border-radius: 4px;
+  background: #f0f5ef;
+  font: 10px var(--mono);
+  color: #3f6650;
+}
+.epic-branch.unused > code {
+  border-color: #f0e7d3;
+  background: #fbf7ee;
+  color: #8a7445;
+  text-decoration: line-through;
+  text-decoration-color: #d8c9a4;
+}
+.epic-branch-fresh {
+  margin-left: auto;
+  flex: none;
+  font-size: 10px;
+  color: #2a7d56;
+}
+.epic-branch-fresh:hover {
+  color: #1d5e40;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.epic-branch-picker.mc-select-trigger {
+  min-height: 22px;
+  padding: 2px 6px;
+  border-color: #e3ebe0;
+  background: #f0f5ef;
+  box-shadow: none;
+  font: 10px var(--mono);
+  color: #3f6650;
+  gap: 4px;
+  max-width: 150px;
+}
+.epic-branch-picker.mc-select-trigger:hover {
+  background: #e8f1e6;
+}
