@@ -69,6 +69,7 @@ const refusals = {
   file_too_large: grpcStatus.INVALID_ARGUMENT,
   project_storage_full: grpcStatus.RESOURCE_EXHAUSTED,
   no_such_file: grpcStatus.NOT_FOUND,
+  unknown_readers: grpcStatus.INVALID_ARGUMENT,
 } as const;
 const refuse = (rule: keyof typeof refusals): never => {
   throw new Refused(refusals[rule], rule);

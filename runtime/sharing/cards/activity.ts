@@ -3,7 +3,11 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { AppState, Message, WorkItem } from "../../../src/shared";
 import type { StoryReviewRun } from "../../../src/code-review";
-import type { SessionActor, TeamSession } from "../../../src/team-session";
+import type {
+  RunSummary,
+  SessionActor,
+  TeamSession,
+} from "../../../src/team-session";
 import type {
   WorkerInputRequest,
   WorkerInputResponse,
@@ -11,15 +15,19 @@ import type {
 import type { SharedAsk } from "../../../src/sharing";
 import { replaceWorkspace } from "../../persistence";
 import type { CardsApi, LoggedCardEntry } from "../memsync/cards-api";
+import type { CardReaders } from "../memsync/cards-contract";
 import type { GrpcStream } from "../memsync/grpc";
 import { SharingRefused } from "../problems";
+import { LARGEST_SHARED_FILE } from "./files";
 import { idOf, nextCall } from "../board/updates";
 import {
   cardPayloads,
+  LONGEST_SUMMARY,
   publicMessage,
   publicText,
   publicValue,
   readCardEntry,
+  readersOf,
   sessionIdOf,
   type CardEntry,
   type CardRecord,
@@ -52,6 +60,8 @@ export interface CardActivityOptions {
   cards: CardsApi;
   /** The latest code review report of a task on this computer. */
   reviewOf(taskId: string): Promise<StoryReviewRun | null>;
+  /** What a task changed here, as its Changes tab shows it, or nothing when it changed nothing. */
+  changesOf?(taskId: string): Promise<Uint8Array | undefined>;
   /** The name of someone on the shared project, when it is known. */
   nameOf(accountId: string): string | undefined;
   /** Asks the sharing service for the name of someone not known yet: they may have joined since. */
@@ -75,12 +85,21 @@ interface Waiting {
   cardId: string;
   id: string;
   payload: Uint8Array;
+  readers: CardReaders;
 }
 /** What was last sent of each run, so only what changed is sent again. */
 interface Sent {
+  /** The run as everyone on the project sees it. */
+  run?: string;
+  /** The run as its own account sees it. */
   head?: string;
   turns: Record<string, string>;
   review?: string;
+  summary?: string;
+  /** What the finished run changed, as last shared. */
+  changes?: string;
+  /** When the run's changes were last looked at: its end, then its code review's. */
+  changesLookedAt?: string;
   inputs?: Record<string, string>;
 }
 /** A message from another computer to a worker run here, and what became of it. */
@@ -102,7 +121,13 @@ interface Outgoing {
 interface KeptFile {
   version: 1;
   sent: Record<string, Sent>;
-  waiting: Array<{ cardId: string; id: string; payload: string }>;
+  /** Readers is missing from what an older MemCode kept: those are sent for their author alone. */
+  waiting: Array<{
+    cardId: string;
+    id: string;
+    payload: string;
+    readers?: CardReaders;
+  }>;
   /** How far the log of each card with a worker run here has been read for messages. */
   hosted?: Record<string, number>;
   handled?: Record<string, Handled>;
@@ -117,6 +142,7 @@ interface RunElsewhere {
   head: Omit<SessionPart, "messages">;
   turns: Map<string, Message>;
   review?: StoryReviewRun;
+  summary?: RunSummary;
   updatedAt: string;
   sequence: number;
   entries: number;
@@ -225,6 +251,22 @@ function sessionOf(task: WorkItem, device: WritingDevice): SessionPart {
 }
 
 /**
+ * What a finished run here says it did: the worker's last message of the run.
+ * The brief asks every worker to end with a summary for the project.
+ */
+function summaryOf(task: WorkItem): RunSummary | undefined {
+  const { state, startedAt } = task.run;
+  if (state !== "finished" || !startedAt) return undefined;
+  const last = task.messages
+    .filter(
+      (message) => message.role === "assistant" && message.at >= startedAt,
+    )
+    .at(-1);
+  const text = last && publicText(last.text).trim().slice(0, LONGEST_SUMMARY);
+  return text ? { text, at: last.at } : undefined;
+}
+
+/**
  * The activity of one connected project's cards at the sharing service.
  *
  * On the computer that runs a worker, every run on a card of this project is
@@ -251,14 +293,26 @@ export class CardActivity {
   private outgoing: Array<Outgoing & { waitingId: string }> = [];
   private stopped = false;
   private pauses = new Set<() => void>();
+  /** Runs whose changes are being shared now, so two captures share them once. */
+  private sharingChanges = new Set<string>();
 
   constructor(private readonly options: CardActivityOptions) {}
 
   // ── This computer's runs ─────────────────────────────────────────────────
 
-  /** Looks at this project's tasks for what a run did since it was last written. */
+  /**
+   * Looks at this project's tasks for what a run did since it was last written, and
+   * shares what a run that finished changed.
+   */
   capture(): Promise<void> {
-    this.capturing ??= this.inTurn(async () => {
+    this.capturing ??= this.captureRuns().then(() =>
+      this.shareChangesOfFinishedRuns(),
+    );
+    return this.capturing;
+  }
+
+  private captureRuns(): Promise<void> {
+    return this.inTurn(async () => {
       this.capturing = undefined;
       await this.load();
       if (this.stopped) return;
@@ -281,7 +335,54 @@ export class CardActivity {
       await this.keep();
       this.send();
     });
-    return this.capturing;
+  }
+
+  /**
+   * What each run here that finished changed, shared with everyone on the project.
+   * They are looked at when the run ends and again when its code review settles, for
+   * changes recorded after the end, and shared when they differ from what was. A run
+   * that changed nothing, or more than a file may hold, shares nothing.
+   */
+  private async shareChangesOfFinishedRuns(): Promise<void> {
+    for (const task of this.tasksRunHere()) {
+      if (this.stopped || task.run.state !== "finished") continue;
+      const sessionId = sessionIdOf(
+        this.options.device.id,
+        task.id,
+        task.run.startedAt!,
+      );
+      const sent = (this.sent[sessionId] ??= { turns: {} });
+      const settledAt =
+        task.codeReview?.updatedAt ?? task.run.finishedAt ?? task.run.startedAt;
+      if (
+        sent.changesLookedAt === settledAt ||
+        this.sharingChanges.has(sessionId)
+      )
+        continue;
+      this.sharingChanges.add(sessionId);
+      try {
+        const bytes = await this.options.changesOf?.(task.id);
+        const print =
+          bytes && fingerprint(Buffer.from(bytes).toString("base64"));
+        if (
+          bytes?.length &&
+          bytes.length <= LARGEST_SHARED_FILE &&
+          print !== sent.changes
+        ) {
+          await this.shareResult(task.id, {
+            name: `${task.identifier}-changes.json`,
+            mime: "application/json",
+            kind: "patch",
+            bytes,
+          });
+          sent.changes = print;
+        }
+        sent.changesLookedAt = settledAt;
+        await this.inTurn(() => this.keep());
+      } finally {
+        this.sharingChanges.delete(sessionId);
+      }
+    }
   }
 
   /** Names a file someone shared from a card in the card's log, once its bytes are kept. */
@@ -332,23 +433,39 @@ export class CardActivity {
       );
   }
 
+  /**
+   * What a run here did since it was last written: how it stands, for everyone, and
+   * what was said and why it failed, for its own account (readersOf).
+   */
   private async changesOf(task: WorkItem): Promise<CardRecord[]> {
     const session = sessionOf(task, this.options.device);
     const sent = (this.sent[session.id] ??= { turns: {} });
     const { messages, ...head } = session;
+    const { error, ...run } = head;
     const changed = messages.filter(
       (message) => sent.turns[message.id] !== fingerprint(message),
     );
     const records: CardRecord[] = [];
+    const runPrint = fingerprint(run);
+    if (runPrint !== sent.run) {
+      records.push({ kind: "session", session: { ...run, messages: [] } });
+      sent.run = runPrint;
+    }
     const headPrint = fingerprint(head);
-    if (headPrint !== sent.head || changed.length) {
+    const failedSinceSent = !!error && headPrint !== sent.head;
+    if (changed.length || failedSinceSent)
       records.push({
         kind: "session",
         session: { ...head, messages: changed },
       });
-      sent.head = headPrint;
-      for (const message of changed)
-        sent.turns[message.id] = fingerprint(message);
+    sent.head = headPrint;
+    for (const message of changed)
+      sent.turns[message.id] = fingerprint(message);
+    const summary = summaryOf(task);
+    const summaryPrint = summary && fingerprint(summary);
+    if (summary && summaryPrint !== sent.summary) {
+      records.push({ kind: "summary", sessionId: session.id, summary });
+      sent.summary = summaryPrint;
     }
     if (task.codeReview) {
       const review = await this.options.reviewOf(task.id).catch(() => null);
@@ -420,9 +537,10 @@ export class CardActivity {
 
   private queue(cardId: string, record: CardRecord): string[] {
     const ids: string[] = [];
+    const readers = readersOf(record);
     for (const payload of cardPayloads(record, this.options.device)) {
       const id = idOf(payload);
-      this.waiting.push({ cardId, id, payload });
+      this.waiting.push({ cardId, id, payload, readers });
       ids.push(id);
     }
     return ids;
@@ -445,7 +563,7 @@ export class CardActivity {
         await this.options.cards.append(
           this.options.sharedProjectId,
           cardId,
-          call.map(({ id, payload }) => ({ id, payload })),
+          call.map(({ id, payload, readers }) => ({ id, payload, readers })),
         );
         failures = 0;
         await this.inTurn(() => this.done(call));
@@ -480,6 +598,7 @@ export class CardActivity {
         this.waiting = (kept.waiting ?? []).map((entry) => ({
           ...entry,
           payload: Buffer.from(entry.payload, "base64"),
+          readers: entry.readers ?? "only-its-author",
         }));
         this.hosted = kept.hosted ?? {};
         this.handled = kept.handled ?? {};
@@ -523,6 +642,7 @@ export class CardActivity {
         cardId: entry.cardId,
         id: entry.id,
         payload: Buffer.from(entry.payload).toString("base64"),
+        readers: entry.readers,
       })),
       hosted: this.hosted,
       handled: this.handled,
@@ -710,7 +830,8 @@ export class CardActivity {
     }
     const run = card.runs.get(entry.sessionId);
     if (!run || run.account !== logged.author) return false;
-    run.review = entry.review;
+    if (entry.kind === "summary") run.summary = entry.summary;
+    else run.review = entry.review;
     run.updatedAt = logged.loggedAt;
     run.entries++;
     return true;
@@ -919,6 +1040,7 @@ export class CardActivity {
       updatedAt: run.updatedAt,
       messages: turns,
       ...(run.review ? { review: { ...run.review, taskId } } : {}),
+      ...(run.summary ? { summary: run.summary } : {}),
     } as TeamSession;
   }
 
@@ -957,6 +1079,10 @@ export class CardActivity {
     if (!card || !run)
       throw new Error(
         "The worker this card shows is not known here yet. Open the card again and send it once more.",
+      );
+    if (run.account !== this.options.me)
+      throw new Error(
+        `Only ${this.hostOf(run).name} can continue this worker. Leave a comment on the card instead.`,
       );
     const message: WorkerMessageRecord = {
       id: randomUUID(),
@@ -1041,9 +1167,9 @@ export class CardActivity {
   }
 
   /**
-   * A message to a worker run here. From the account that started the worker,
-   * it is carried out at once: the same person on another of their computers.
-   * From anyone else it waits for this computer's person to allow it.
+   * A message to a worker run here, from the account that started the worker:
+   * the same person on another of their computers. It is carried out at once.
+   * Nobody else continues a worker; a message in another's name is left alone.
    */
   private async receive(
     taskId: string,
@@ -1051,6 +1177,7 @@ export class CardActivity {
     logged: LoggedCardEntry,
   ): Promise<void> {
     if (entry.kind !== "message" || this.handled[entry.message.id]) return;
+    if (logged.author !== this.options.me) return;
     const { message } = entry;
     const task = this.options
       .state()
@@ -1078,14 +1205,7 @@ export class CardActivity {
       ...(message.answer ? { answer: message.answer } : {}),
     };
     this.handled[message.id] = handled;
-    await this.learnNames([logged.author]);
-    if (logged.author === this.options.me)
-      await this.carryOut(message.id, handled);
-    else
-      this.queue(
-        cardIdOf(taskId),
-        this.delivery(message.id, handled, "asking"),
-      );
+    await this.carryOut(message.id, handled);
     this.showAsks(taskId);
   }
 

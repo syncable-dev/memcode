@@ -1104,6 +1104,7 @@ export class WorkerManager {
         "The fleet right now (who is editing what, recent changes, decisions involving you):\n" +
           contextForPrompt(fleetContext),
         "If a tool or test command is denied, report that exact blocker and continue independent work. Do not repeatedly try equivalent commands or change permission settings to get around it.",
+        "End your last message with a short summary for the rest of the project: what you did, what changed, how you checked it, and anything left open. On a shared project the others read that summary, not this conversation.",
         runbookBrief(task.checklist, !!contextConfig),
         initialContext
           ? "Initial host context (read constraint continuations before editing):\n" +

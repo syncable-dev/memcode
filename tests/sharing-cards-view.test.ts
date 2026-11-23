@@ -5,7 +5,9 @@ import type { SharedCardResult } from "../src/sharing";
 import {
   cardRunElsewhere,
   isUnfetchedSharedFile,
+  onlyItsOwnerContinues,
   runElsewhereNote,
+  runElsewhereStanding,
   sendElsewhereLabel,
   sharedFilesToFetch,
 } from "../src/sharing-cards";
@@ -53,16 +55,12 @@ test("a run from another computer's card log is shown as a worker elsewhere, by 
   assert.equal(owner.local, false);
   assert.equal(owner.session?.state, "running");
   assert.equal(owner.claim.attemptId, "run-1");
+  assert.equal(runElsewhereNote(owner), "Continue the worker on your Mac…");
+  assert.equal(sendElsewhereLabel(owner), "Send to your Mac");
   assert.equal(
-    runElsewhereNote(owner, true),
-    "Continue the worker on your Mac…",
+    onlyItsOwnerContinues(owner),
+    "Only Alex Holm can continue this worker. Comment on the card to reach them.",
   );
-  assert.equal(
-    runElsewhereNote(owner, false),
-    "Message the worker on Alex Holm's Mac. Alex Holm allows it first.",
-  );
-  assert.equal(sendElsewhereLabel(owner, true), "Send to your Mac");
-  assert.equal(sendElsewhereLabel(owner, false), "Send to Alex Holm's Mac");
   // A card without a run from elsewhere, or a Team Sync session, is not one.
   assert.equal(cardRunElsewhere(task("local-web", "task-2")), undefined);
   assert.equal(
@@ -124,4 +122,58 @@ test("the panel for a run from a shared project's card speaks of the project, an
     team,
     /Conversation and review shared with the team\. Execution stays on\s+Mac\./,
   );
+});
+
+test("someone else's run reads, in place of its conversation, how it stands until its summary is in", () => {
+  const owner = { name: "Alex Holm", device: "Mac" };
+  const session = (changes: Record<string, unknown>) =>
+    ({ state: "running", messages: [], ...changes }) as never;
+  assert.equal(
+    runElsewhereStanding(owner, session({})),
+    "Alex Holm is working on this on their Mac. A summary of the work shows here when it's ready for review.",
+  );
+  assert.equal(
+    runElsewhereStanding(
+      owner,
+      session({ state: "finished", summary: { text: "Done.", at } }),
+    ),
+    undefined,
+  );
+  assert.equal(
+    runElsewhereStanding(owner, session({ state: "finished" })),
+    "Alex Holm's worker finished on their Mac without a summary. What it changed and made is in the Changes and Artifacts tabs.",
+  );
+  assert.equal(
+    runElsewhereStanding(owner, session({ state: "failed" })),
+    "Alex Holm's worker on their Mac stopped before it finished.",
+  );
+  assert.equal(
+    runElsewhereStanding(owner, session({ state: "stopped" })),
+    "Alex Holm's worker on their Mac stopped before it finished.",
+  );
+});
+
+test("someone else's run shows how it stands, then its summary with who and when", async () => {
+  const { SharedRunSummary } = await import(
+    "../src/components/SharedRunSummary"
+  );
+  const owner = { name: "Alex Holm", device: "Mac" };
+  const render = (session: Record<string, unknown>) =>
+    renderToStaticMarkup(
+      createElement(SharedRunSummary, {
+        owner,
+        session: { state: "running", messages: [], ...session } as never,
+        onOpenLink: () => {},
+      }),
+    );
+  const working = render({});
+  assert.match(working, /Alex Holm is working on this on their Mac/);
+  assert.doesNotMatch(working, /SUMMARY/);
+  const done = render({
+    state: "finished",
+    summary: { text: "Added the CSV export and its test.", at },
+  });
+  assert.match(done, /SUMMARY/);
+  assert.match(done, /Alex Holm · Mac · /);
+  assert.match(done, /Added the CSV export and its test\./);
 });

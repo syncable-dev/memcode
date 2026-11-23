@@ -39,9 +39,6 @@ export function registerSharing(register: Register, sharing: Sharing) {
     z.object({ taskId: id, artifactId: id }).strict(),
     (input) => sharing.shareResult(input),
   );
-  register("sharing:share-changes", task, ({ taskId }) =>
-    sharing.shareChanges(taskId),
-  );
   register(
     "sharing:decide-message",
     z.object({ taskId: id, messageId: id, allow: z.boolean() }).strict(),

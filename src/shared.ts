@@ -572,7 +572,6 @@ export interface MemCodeAPI extends CodeReviewAPI {
     taskId: string;
     artifactId: string;
   }): Promise<{ id: string; name: string }>;
-  shareCardChanges(taskId: string): Promise<{ id: string; name: string }>;
   /** Fetches a file shared from a card, to open it like the card's own. */
   openSharedCardFile(input: {
     taskId: string;

@@ -51,6 +51,8 @@ export async function cardComputer(
     createdAt: at(0),
   });
   const reviews = new Map<string, StoryReviewRun>();
+  /** What each task changed here, as its Changes tab would share it. */
+  const changes = new Map<string, Uint8Array>();
   const self = {
     state,
     projectId,
@@ -60,6 +62,7 @@ export async function cardComputer(
     asksForNames: 0,
     shown: 0,
     reviews,
+    changes,
     /** What other computers handed to a worker here, as the runtime would take it. */
     delivered: [] as Array<{ taskId: string; message: Message }>,
     answered: [] as Array<{
@@ -114,6 +117,7 @@ export async function cardComputer(
         state: () => state,
         cards,
         reviewOf: async (taskId) => reviews.get(taskId) ?? null,
+        changesOf: async (taskId) => changes.get(taskId),
         nameOf: (account) => names.get(account),
         learnName: async (account) => {
           self.asksForNames++;

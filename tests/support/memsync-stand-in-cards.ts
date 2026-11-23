@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { ServerHttp2Stream } from "node:http2";
 import {
+  cardReaders,
   cardsCalls,
   cardsContract,
 } from "../../runtime/sharing/memsync/cards-contract";
@@ -17,6 +18,7 @@ interface Entry {
   loggedAt: number;
   author: string;
   payload: Uint8Array;
+  readers: number;
 }
 interface KeptFile {
   sha256: string;
@@ -33,7 +35,8 @@ type CardRule =
   | "too_many_updates"
   | "file_too_large"
   | "project_storage_full"
-  | "no_such_file";
+  | "no_such_file"
+  | "unknown_readers";
 interface Watcher {
   project: string;
   card: string;
@@ -66,7 +69,12 @@ const logged = (entry: Entry): WireMessage => ({
   logged_at: moment(entry.loggedAt),
   author_account_id: entry.author,
   payload: entry.payload,
+  readers: entry.readers,
 });
+/** ADR-0019: an entry for its author alone is left out for everyone else. */
+const readableBy = (person: StandInPerson) => (entry: Entry) =>
+  entry.readers === cardReaders.everyone || entry.author === person.accountId;
+const knownReaders: number[] = Object.values(cardReaders);
 const storedFile = (file: KeptFile): WireMessage => ({
   sha256: file.sha256,
   size: file.content.length,
@@ -76,7 +84,8 @@ const storedFile = (file: KeptFile): WireMessage => ({
 
 /**
  * MemSync's Cards service, kept in memory with the rules of ADR-0014: a log per
- * card that works like the board log, and files per project by SHA-256.
+ * card that works like the board log, and files per project by SHA-256. An entry
+ * may be for its author alone (ADR-0019).
  */
 export function standInCards(the: {
   isOnProject(project: string, person: StandInPerson): boolean;
@@ -110,11 +119,13 @@ export function standInCards(the: {
       watchers.delete(watcher);
       return void watcher.stream.end();
     }
+    const readable = readableBy(watcher.person);
     for (const entry of logOf(watcher.project, watcher.card))
       if (entry.sequence > watcher.after) {
-        watcher.stream.write(
-          framed(encodeMessage(cardsContract, "CardEntry", logged(entry))),
-        );
+        if (readable(entry))
+          watcher.stream.write(
+            framed(encodeMessage(cardsContract, "CardEntry", logged(entry))),
+          );
         watcher.after = entry.sequence;
       }
   }
@@ -129,6 +140,8 @@ export function standInCards(the: {
       const payload = entry.payload as Uint8Array;
       if (!payload?.length) the.refuse("empty_update");
       if (payload.length > LARGEST_ENTRY) the.refuse("update_too_large");
+      if (!knownReaders.includes(Number(entry.readers ?? 0)))
+        the.refuse("unknown_readers");
     }
     const log = logOf(project, card);
     const at = Math.max(the.now(), log.at(-1)?.loggedAt ?? 0);
@@ -142,6 +155,7 @@ export function standInCards(the: {
           loggedAt: at,
           author: caller.accountId,
           payload: entry.payload as Uint8Array,
+          readers: Number(entry.readers ?? 0),
         };
         log.push(kept);
       }
@@ -165,6 +179,7 @@ export function standInCards(the: {
     return {
       entries: log
         .filter((entry) => entry.sequence > after)
+        .filter(readableBy(caller))
         .slice(0, PAGE)
         .map(logged),
     };
@@ -277,6 +292,7 @@ export function standInCards(the: {
         loggedAt: Math.max(the.now(), log.at(-1)?.loggedAt ?? 0),
         author,
         payload,
+        readers: cardReaders.everyone,
       });
       for (const watcher of watchers)
         if (watcher.project === project && watcher.card === card) feed(watcher);
