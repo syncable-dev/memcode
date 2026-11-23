@@ -107,6 +107,7 @@ import {
 } from "./components/Dialogs";
 import { hasTeamPage } from "./team-presentation";
 import { DeleteProject } from "./components/DeleteProject";
+import { RepositoryPanel } from "./components/RepositoryPanel";
 
 type View =
   | "board"
@@ -200,7 +201,7 @@ export function App() {
   const [storyStatus, setStoryStatus] = useState<string | undefined>();
   const [storyParent, setStoryParent] = useState<string | undefined>();
   const [dialog, setDialog] = useState<
-    "task" | "project" | "settings" | "search" | "welcome" | null
+    "task" | "project" | "repository" | "settings" | "search" | "welcome" | null
   >(null);
   const [projectMenu, setProjectMenu] = useState(false);
   const [joinTeamRequest, setJoinTeamRequest] = useState(0);
@@ -770,6 +771,17 @@ export function App() {
                 }}
               />
               <div className="menu-divider" />
+              {project.path && !project.example && (
+                <button
+                  onClick={() => {
+                    setDialog("repository");
+                    setProjectMenu(false);
+                  }}
+                >
+                  <GitBranch size={16} />
+                  Repository and branches
+                </button>
+              )}
               <button
                 onClick={() => {
                   setDialog("project");
@@ -1357,6 +1369,13 @@ export function App() {
               });
           }}
           notify={notify}
+        />
+      )}
+      {dialog === "repository" && (
+        <RepositoryPanel
+          project={project}
+          state={state}
+          close={() => setDialog(null)}
         />
       )}
       {dialog === "project" && (

@@ -22,6 +22,7 @@ import { ensureProjectRepository } from "./project-repository";
 import { workerResponseSchema } from "./worker-input";
 import { permissionModes, supportsPermissionMode } from "../src/permissions";
 import { registerDeletion } from "./deletion";
+import { registerBranches } from "./branches";
 import { readArtifactThumbnail } from "./artifact-thumbnail";
 import { reconcileArtifacts } from "./artifact-catalog";
 import { WorkerManager } from "./workers";
@@ -1546,6 +1547,7 @@ export async function createRuntime(
   registerDeletion(register, state, changed, {
     forgetSharing: async (projectId) => sharing?.disconnect(projectId),
   });
+  registerBranches(register, state, changed);
   registerCardComments(register, state, changed, (taskId) => {
     const projectId = taskId
       ? state().tasks.find((task) => task.id === taskId)?.projectId
