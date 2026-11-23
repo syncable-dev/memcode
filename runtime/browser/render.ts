@@ -36,13 +36,17 @@ export class BrowserRendering {
     // Capture the compositor at its actual density. Playwright's screenshot
     // helper otherwise rescales using the context's original density after a
     // display change. CDP also preserves the page's native caret and selection.
+    // The clip is in page coordinates, so it starts where the page is scrolled.
+    const { cssVisualViewport: visible } = await session.send(
+      "Page.getLayoutMetrics",
+    );
     const result = await session.send("Page.captureScreenshot", {
       format: "png",
       fromSurface: true,
       captureBeyondViewport: false,
       clip: {
-        x: 0,
-        y: 0,
+        x: visible.pageX,
+        y: visible.pageY,
         ...viewport,
         scale: scale === "css" ? 1 / deviceScaleFactor : 1,
       },
