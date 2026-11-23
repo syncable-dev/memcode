@@ -58,6 +58,26 @@ The project switcher shows the GitHub repository (owner/name) under the project'
 name, or the folder's name when it has no GitHub remote. Nothing here deletes or
 switches a branch.
 
+### When a goal ships
+
+After a goal's pull request merges, MemCode tidies up its checkout
+(`runtime/shipped-goal.ts`, ADR-0001):
+
+1. It keeps the checkout as it is if a worker is still running there or the checkout
+   has changes that aren't committed.
+2. It stops the goal's own code index and asks the project's engine to count the
+   goal's history (`import_goal_history` with `dry_run`), then to add it to the
+   project's index: the goal's saves, the code versions they made and its Fleet
+   records, under the goal's branch, marked as merged into the pull request's base.
+   Searches on that base then include the goal's steps.
+3. It moves the tasks' records (the change journal behind Changes and code review,
+   and the documents workers made) into MemCode's data folder, so they still open.
+4. Only if the import moved what the count said does it remove the checkout with
+   `git worktree remove`. The branch stays.
+
+If anything stops it, nothing is removed and the Roadmap's shipped note says why,
+for example when the bundled engine can't import goal history yet.
+
 ## Tasks in a goal share it
 
 Tasks in one goal run side by side on the goal's branch and workspace, and their
