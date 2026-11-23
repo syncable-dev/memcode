@@ -46,6 +46,11 @@ export interface SharingOptions {
   state(): AppState;
   /** Saves the workspace and tells the app's window. */
   changed(): Promise<unknown>;
+  /**
+   * A connected shared project is not there for this person any more: its
+   * owner deleted it or took them off it. The app removes it here.
+   */
+  projectGone?(link: SharedProjectLink): Promise<void>;
   /** The Memtrace sign-in to show memtrace.io. Null: nobody is signed in. */
   session(): Promise<BetaSessionProof | null>;
   /** Where the sharing service is, as memtrace.io lists it. Nothing: sharing is not offered. */
@@ -174,6 +179,8 @@ const folderOf = (link: SharedProjectLink) =>
 export class Sharing {
   private service?: Service;
   private readonly boards = new Map<string, RunningBoard>();
+  /** Projects already reported gone, so each is reported once. */
+  private readonly toldGone = new Set<string>();
   private matching: Promise<void> = Promise.resolve();
   private device?: Promise<WritingDevice>;
   private cardsTimer?: NodeJS.Timeout;
@@ -288,6 +295,37 @@ export class Sharing {
     return this.overview();
   }
 
+  /**
+   * Before a shared project is deleted on this computer: its owner deletes it
+   * for everyone, anyone else leaves it. When it is already gone, or was
+   * connected under another account, only the link here goes.
+   */
+  async removeForAccount(projectId: string): Promise<void> {
+    const link = (this.options.state().sharedProjectLinks ?? []).find(
+      (candidate) => candidate.projectId === projectId,
+    );
+    if (!link) return;
+    const service = await this.serviceInUse();
+    if (service && service.address === link.service) {
+      const { accountId } = await service.access.current();
+      if (accountId === link.accountId)
+        await this.endSharing(service, link.sharedProjectId, accountId);
+    }
+    await this.disconnect(projectId);
+  }
+
+  private async endSharing(service: Service, sharedProjectId: string, accountId: string) {
+    try {
+      const shared = await service.projects.getProject(sharedProjectId);
+      if (shared.owner.accountId === accountId)
+        await service.projects.deleteProject(sharedProjectId);
+      else await service.projects.leaveProject(sharedProjectId);
+    } catch (problem) {
+      const alreadyGone = problem instanceof SharingRefused && problem.rule === "no_such_project";
+      if (!alreadyGone) throw problem;
+    }
+  }
+
   /** A guest leaves a shared project. The board stays on this computer, no longer shared. */
   async leave(projectId: string) {
     const { service, link } = await this.linkedProject(projectId);
@@ -400,6 +438,15 @@ export class Sharing {
       if (state !== "starting" || Date.now() > patience) return state;
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
+  }
+
+  /** Says once that a connected project's board found it gone. */
+  private tellGone(link: SharedProjectLink): void {
+    if (this.toldGone.has(link.projectId)) return;
+    this.toldGone.add(link.projectId);
+    void this.options.projectGone?.(link).catch((problem) => {
+      console.error("A gone shared project could not be removed here:", problem);
+    });
   }
 
   /** Forgets the link on this computer. The person stays on the shared project. */
@@ -751,7 +798,10 @@ export class Sharing {
       state: this.options.state,
       boards: service.boards,
       saveWorkspace: this.options.saveWorkspace,
-      shown: () => this.showBoards(),
+      shown: () => {
+        this.showBoards();
+        if (sync.status().state === "gone") this.tellGone(link);
+      },
       people: async () => {
         const shared = await service.projects.getProject(link.sharedProjectId);
         return new Map(

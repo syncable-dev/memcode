@@ -158,6 +158,25 @@ export function projectSharing(
     : { kind: "gone", name: link.sharedProjectName };
 }
 
+/**
+ * How a project stands with sharing: from the sharing service when it could be
+ * asked, otherwise from what this computer remembers.
+ */
+export function projectSharingAsKnown(
+  project: LocalProject,
+  workspace: Workspace,
+  overview: SharingOverview | null,
+): ProjectSharing {
+  if (overview?.state === "ready") return projectSharing(project, workspace, overview);
+  const link = workspace.sharedProjectLinks?.find(
+    (candidate) => candidate.projectId === project.id,
+  );
+  if (link) return { kind: "remembered", name: link.sharedProjectName };
+  if (project.example) return { kind: "example" };
+  const inTeam = workspace.team?.some((room) => room.projectId === project.id);
+  return inTeam ? { kind: "team" } : { kind: "free" };
+}
+
 /** The local project a shared project is connected to on this computer, if any. */
 export function localProjectOf(
   shared: SharedProject,

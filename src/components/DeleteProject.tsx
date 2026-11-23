@@ -1,24 +1,27 @@
 import { useState } from "react";
 import { Trash2 } from "lucide-react";
 import type { Project } from "../shared";
-import { projectDeletionNote } from "../deletion";
+import type { ProjectSharing } from "../sharing";
+import { projectDeletionLabels, projectDeletionNote } from "../deletion";
 import { Modal } from "./Dialogs";
 import "../styles-worker-input.css";
 
 /**
  * A project's delete button in the project switcher, and the confirmation it opens.
- * Deleting removes the project from MemCode on this computer; its folder stays.
+ * Deleting removes the project from MemCode on this computer; its folder stays. A
+ * shared project's owner deletes it for everyone; anyone else leaves it.
  */
 export function DeleteProject({
   project,
-  shared,
+  sharing,
   onDeleted,
 }: {
   project: Project;
-  /** Shared through MemSync: it stays shared for everyone else. */
-  shared: boolean;
+  /** Whom else deleting it reaches, which the confirmation names. */
+  sharing: ProjectSharing;
   onDeleted(): void;
 }) {
+  const labels = projectDeletionLabels(sharing);
   const [confirm, setConfirm] = useState(false),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
@@ -51,21 +54,15 @@ export function DeleteProject({
       {confirm && (
         <Modal
           title={`Delete ${project.name}?`}
-          kicker="REMOVE FROM MEMCODE"
-          description={
-            project.example
-              ? "Example project"
-              : shared
-                ? "Shared project"
-                : "Personal project"
-          }
+          kicker={labels.kicker}
+          description={labels.description}
           close={() => {
             if (!busy) setConfirm(false);
           }}
         >
           <div className="modal-body">
             <p className="delete-explanation">
-              {projectDeletionNote(project, shared)}
+              {projectDeletionNote(project, sharing)}
             </p>
             {error && (
               <p role="alert" className="worker-input-error">
@@ -85,10 +82,10 @@ export function DeleteProject({
               </button>
               <button
                 className="button delete-confirm"
-                disabled={busy}
+                disabled={busy || !labels.canConfirm}
                 onClick={() => void remove()}
               >
-                {busy ? "Deleting…" : "Delete project"}
+                {busy ? "Deleting…" : labels.confirm}
               </button>
             </div>
           </footer>

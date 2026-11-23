@@ -440,6 +440,8 @@ export interface AppState {
     import("./code-review").ReviewWorkflowBinding
   >;
   team?: TeamWorkspaceState[];
+  /** Short messages from MemCode itself, each shown once in the window. */
+  notices?: import("./notices").Notice[];
   workerInputs?: import("./worker-input").WorkerInputRequest[];
   onboarding?: import("./onboarding").OnboardingProgress;
   projectOnboarding?: Record<string, import("./onboarding").OnboardingProgress>;
