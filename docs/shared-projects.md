@@ -30,7 +30,9 @@ Team Sync team, so it can be managed and left, and the project menu no longer of
   conversation is the person's own, on each of their computers. See
   [What happens on a card](#what-happens-on-a-card).
 
-Renaming and deleting a shared project happen at memtrace.io. Workers run only on the
+Renaming and deleting a shared project happen at memtrace.io. Deleting it in MemCode's
+project switcher removes it from this computer only: the computer disconnects, the others
+keep it, and it can be opened again from the switcher. Workers run only on the
 computer that started them. Source changes travel through Git.
 
 A project is the thing people share. There is no team. A person's own computers are never
@@ -648,6 +650,10 @@ For what others read of a run:
     own summary (Alex, 23 November 2026).
 38. **A file shared again is listed once, as its newest version**, by its name and who
     shared it.
+39. **Deleting a project in MemCode never deletes it for others** (Alex, 23 November 2026:
+    "too many projects without being able to delete them"). A shared project is
+    disconnected from this computer and stays shared; deleting it for everyone stays at
+    memtrace.io. A project still in a Team Sync team is left from its Team page first.
 
 ## Not built
 
