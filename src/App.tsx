@@ -106,6 +106,7 @@ import {
   SettingsDialog,
 } from "./components/Dialogs";
 import { hasTeamPage } from "./team-presentation";
+import { DeleteProject } from "./components/DeleteProject";
 
 type View =
   | "board"
@@ -722,27 +723,37 @@ export function App() {
                 <div key={group}>
                   <span className="menu-eyebrow">{group}</span>
                   {items.map((item) => (
-                    <button
-                      key={item.id}
-                      onClick={() => {
-                        void act(() => window.memcode.selectProject(item.id));
-                        setSelectedId(null);
-                        setProjectMenu(false);
-                      }}
-                    >
-                      <span className="project-avatar small">
-                        {isSharedHere(state, item.id) ? (
-                          <Users size={14} aria-label="Shared" />
-                        ) : (
-                          <Folder size={14} />
-                        )}
-                      </span>
-                      <span>
-                        {item.name}
-                        {item.example && <small>Example</small>}
-                      </span>
-                      {project.id === item.id && <Check size={13} />}
-                    </button>
+                    <div className="project-menu-row" key={item.id}>
+                      <button
+                        onClick={() => {
+                          void act(() => window.memcode.selectProject(item.id));
+                          setSelectedId(null);
+                          setProjectMenu(false);
+                        }}
+                      >
+                        <span className="project-avatar small">
+                          {isSharedHere(state, item.id) ? (
+                            <Users size={14} aria-label="Shared" />
+                          ) : (
+                            <Folder size={14} />
+                          )}
+                        </span>
+                        <span>
+                          {item.name}
+                          {item.example && <small>Example</small>}
+                        </span>
+                        {project.id === item.id && <Check size={13} />}
+                      </button>
+                      <DeleteProject
+                        project={item}
+                        shared={isSharedHere(state, item.id)}
+                        onDeleted={() => {
+                          setSelectedId(null);
+                          setProjectMenu(false);
+                          void sharing.refresh();
+                        }}
+                      />
+                    </div>
                   ))}
                 </div>
               ))}

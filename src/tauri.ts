@@ -263,6 +263,7 @@ export async function installNativeBridge(): Promise<void> {
     deleteStory: (id, cascade) => call("story:delete", { id, cascade }),
     deleteEpic: (id) => call("epic:delete", { id }),
     deleteCycle: (id) => call("cycle:delete", { id }),
+    deleteProject: (id) => call("project:delete", { id }),
     respondToWorker: (taskId, requestId, response) =>
       call("worker:respond", { taskId, requestId, response }),
     updateOnboarding: (patch) => call("onboarding:update", patch),

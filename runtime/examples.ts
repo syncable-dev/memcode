@@ -3,6 +3,8 @@ import { join } from "node:path";
 import { LocalStore, now } from "./local";
 export async function createExampleArtifacts(store: LocalStore): Promise<void> {
   if (store.state.artifacts.some((a) => a.id === "example-preview")) return;
+  // Someone deleted the example project: its sample files are not made again.
+  if (!store.state.projects.some((project) => project.id === "example")) return;
   const root = join(store.dir, "examples");
   await mkdir(root, { recursive: true });
   const html = join(root, "workspace-preview.html");
