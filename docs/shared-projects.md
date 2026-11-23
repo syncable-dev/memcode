@@ -650,10 +650,21 @@ For what others read of a run:
     own summary (Alex, 23 November 2026).
 38. **A file shared again is listed once, as its newest version**, by its name and who
     shared it.
-39. **Deleting a project in MemCode never deletes it for others** (Alex, 23 November 2026:
-    "too many projects without being able to delete them"). A shared project is
-    disconnected from this computer and stays shared; deleting it for everyone stays at
-    memtrace.io. A project still in a Team Sync team is left from its Team page first.
+39. **The owner deleting a shared project deletes it for everyone** (Alex, 23 November
+    2026, replacing the earlier "deleting never deletes it for others": "if the user who
+    made a project … deletes it … it should automatically get deleted for everyone",
+    and "the person deleting a project others participate in should know the risk").
+    - The owner's Delete calls MemSync's `DeleteProject`. The confirmation names who
+      loses it ("Anna and Bo lose it too, on all their computers"), and its button reads
+      Delete for everyone.
+    - Anyone else's Delete leaves the project (`LeaveProject`); the owner and the others
+      keep it.
+    - On every other computer, board sync hears `no_such_project`, and MemCode removes
+      the project there and says so once: its owner deleted it, or took the person off
+      it, because MemSync answers the same for both. A project with a worker running, or
+      the last project, stays until it can go. Folders and files are never touched.
+    - A project in an old Team Sync team leaves its team, then goes; the teammates keep
+      it.
 
 ## Not built
 
