@@ -157,8 +157,10 @@ test("the sharing guide explains Share, guests, own computers and what stays pri
     "choose Open",
     "approves their own coding tool in Workers",
     "Its conversation stays yours",
-    "its summary, its changes and its review",
+    "the request, how it stands, a summary of each round of work, its changes and its review",
+    "Documents and images a worker makes are shared by themselves",
     "up to 5 MB each",
+    "Share other files from a card’s Artifacts tab",
     "Use Git to exchange code",
     "Only you can continue your workers",
   ])

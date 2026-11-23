@@ -29,7 +29,7 @@ import {
 import { RemoteWorker, remoteActivityLabel } from "./RemoteWorker";
 import { useRuntimeHealth } from "../useRuntimeHealth";
 import { ConversationMessages } from "./ConversationMessage";
-import { SharedRunSummary } from "./SharedRunSummary";
+import { OthersRun } from "./OthersRun";
 import { followsConversationTail } from "../conversation-performance";
 import { useConversationDraft } from "../useConversationDraft";
 import { modifierLabel, primaryModifier, shortcutLabel } from "../platform";
@@ -45,7 +45,7 @@ import {
   onlyItsOwnerContinues,
   runElsewhereNote,
   sendElsewhereLabel,
-  sharedFilesToFetch,
+  cardFileList,
 } from "../sharing-cards";
 import { StoryTabBar, type StoryTab, type StoryTabItem } from "./StoryTabBar";
 import { isCodeReviewTask } from "../code-review-workflow";
@@ -177,10 +177,7 @@ export function WorkDetail({
   const sharedProjectName = state.sharedProjectLinks?.find(
     (link) => link.projectId === localTask.projectId,
   )?.sharedProjectName;
-  const artifacts = [
-    ...ownArtifacts,
-    ...sharedFilesToFetch(localTask, ownArtifacts),
-  ];
+  const artifacts = cardFileList(localTask, ownArtifacts);
   const [sharing, setSharing] = useState("");
   // While a card of a shared project is open, what happens to it elsewhere is followed.
   useEffect(() => {
@@ -878,8 +875,9 @@ export function WorkDetail({
                     <i />
                   </div>
                   {othersRun && shared ? (
-                    <SharedRunSummary
+                    <OthersRun
                       owner={othersRun}
+                      request={localTask.description.trim() || localTask.title}
                       session={shared}
                       onOpenLink={(href) => void openLink(href)}
                     />

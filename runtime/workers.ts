@@ -66,6 +66,7 @@ import {
   queuedFollowups,
   settleFollowupQueue,
 } from "./followup-queue";
+import { SUMMARY_HEADING } from "./sharing/cards/summary";
 
 /** Team claims guard official runs; local Fleet still coordinates source edits. */
 export interface TeamWorkerClaims {
@@ -1099,7 +1100,7 @@ export class WorkerManager {
         "The fleet right now (who is editing what, recent changes, decisions involving you):\n" +
           contextForPrompt(fleetContext),
         "If a tool or test command is denied, report that exact blocker and continue independent work. Do not repeatedly try equivalent commands or change permission settings to get around it.",
-        "End your last message with a short summary for the rest of the project: what you did, what changed, how you checked it, and anything left open. On a shared project the others read that summary, not this conversation.",
+        `End your last message with a short section that starts with the line "${SUMMARY_HEADING}". On a shared project the others read only that section, not this conversation, and they can't open files on this computer, so write it for them in plain words: what you did, what changed, how you checked it, and anything left open. Name files by their path in the project, without links.`,
         runbookBrief(task.checklist, !!contextConfig),
         initialContext
           ? "Initial host context (read constraint continuations before editing):\n" +

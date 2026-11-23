@@ -2,8 +2,9 @@ import { Check, LoaderCircle, Send } from "lucide-react";
 import type { Artifact } from "../shared";
 
 /**
- * On the computer that ran a card's worker: the card's files, each shared with
- * everyone on the shared project only when the person says so.
+ * On the computer that ran a card's worker: the card's files. Documents and images go
+ * to everyone on the shared project by themselves when the run finishes; any other
+ * file when the person shares it.
  */
 export function ShareFromCard({
   projectName,
@@ -28,8 +29,9 @@ export function ShareFromCard({
         SHARE WITH THE PROJECT
       </div>
       <p>
-        Files stay on this computer until you share them. Everyone on{" "}
-        <strong>{projectName}</strong> can then open them from this card.
+        Documents and images the worker makes are shared with everyone on{" "}
+        <strong>{projectName}</strong> when its run finishes. Share any other
+        file yourself.
       </p>
       <ul>
         {artifacts.map((artifact) => (
