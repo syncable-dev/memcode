@@ -3,6 +3,7 @@ import { join, resolve, relative, isAbsolute } from "node:path";
 import { createHash } from "node:crypto";
 import type { Project, WorkItem } from "../src/shared";
 import { within, now, git } from "./local";
+import { workerRecordsFolder } from "./worker-records";
 
 /**
  * A Class B refresh reads the current bounded source, rather than escalating overlap.
@@ -110,8 +111,8 @@ export async function rereadFleetSource(
     files: records,
     truncated,
   };
-  if (task.run.workspace) {
-    const directory = join(task.run.workspace, ".memcode", "workers", task.id);
+  const directory = workerRecordsFolder(task);
+  if (directory) {
     await mkdir(directory, { recursive: true });
     await writeFile(
       join(directory, "fleet-reread.json"),
