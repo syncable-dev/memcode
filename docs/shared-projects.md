@@ -24,10 +24,11 @@ Team Sync team, so it can be managed and left, and the project menu no longer of
 - Keeps the board of a connected project in step with the shared project: goals, cycles,
   tasks with their runbooks, comments, lanes, custom fields and saved views. See
   [Keeping the board in step](#keeping-the-board-in-step).
-- Shows what happened on a card to everyone on the project: who runs a worker on it and how
-  it stands, then the summary the worker ended with, what it changed, its code review and
-  the files someone shared, with who did each. The conversation is the person's own, on
-  each of their computers. See [What happens on a card](#what-happens-on-a-card).
+- Shows what happened on a card to everyone on the project: the request, who runs a worker
+  on it and how it stands, then the summary of each round of work, what it changed, its
+  code review and the documents and images its worker made, with who did each. The
+  conversation is the person's own, on each of their computers. See
+  [What happens on a card](#what-happens-on-a-card).
 
 Renaming and deleting a shared project happen at memtrace.io. Workers run only on the
 computer that started them. Source changes travel through Git.
@@ -229,18 +230,23 @@ What a run writes, and who reads it (`readersOf` in `entries.ts`):
 | --- | --- |
 | The run: state, what it is doing, the harness and models | Everyone |
 | The person's and the worker's turns, and why a run failed | The person's own account |
-| The summary of a finished run | Everyone |
+| The summary of each finished round of work | Everyone |
 | Its code review | Everyone |
-| A file someone shared, and what the run changed | Everyone |
+| A file its worker made or someone shared, and what the run changed | Everyone |
 | A message to the worker, what became of it, what the worker waits for | The person's own account |
 
 On the computer that runs a worker on a card, MemCode writes the run to the card's log as
 it happens, at most once a second. Tool output, local references and review notes stay on
 the computer, and paths in a home folder and tokens are blotted out of the text.
 
-**The summary.** Every worker's brief asks it to end with a short summary for the rest of
-the project: what it did, what changed, how it checked it, and anything left open. When a
-run finishes, its last message is the summary, and everyone on the project reads it.
+**The summary.** Every worker's brief asks it to end its last message with a section that
+starts "Summary for the project:", written for people who see neither the conversation nor
+the worker's computer: what it did, what changed, how it checked it, and anything left
+open, naming files by their path in the project. When a round of work finishes, that
+section is the summary (the whole message when a worker leaves the heading out), and
+everyone on the project reads it. A link to a file on the worker's computer becomes the
+file's name, and a path in the project the path in the project (`summary.ts`). Each round,
+a follow-up in the same run or a new run, adds a summary; none replaces another.
 
 **The changes.** When a run finishes, what it changed, as its Changes tab shows it, is
 shared with the project. They are looked at again when the run's code review settles, and
@@ -260,19 +266,27 @@ What the Conversation tab shows depends on whose run it is:
 
 - **Your own, from another of your computers:** the whole conversation, your turns as
   "Alex Holm · Mac", and the message box continues the worker, as the next section says.
-- **Someone else's:** in place of the conversation, "Alex Holm is working on this on their
-  Mac. A summary of the work shows here when it's ready for review.", then the summary
-  under SUMMARY with who and when. In place of the message box: "Only Alex Holm can
-  continue this worker. Comment on the card to reach them." and a **Comment** button.
+- **Someone else's:** in place of the conversation, the card's request (its description,
+  or its title when it has none), then each round's summary under SUMMARY with who and
+  when, oldest first, then how it stands: "Alex Holm is working on this on their Mac. A
+  summary of the work shows here when it's ready for review.", or "…working on this again
+  …" once there is a summary. In place of the message box: "Only Alex Holm can continue
+  this worker. Comment on the card to reach them." and a **Comment** button. The worker
+  panel says the conversation stays with Alex Holm.
 
 A run shows only what the account that started it wrote. A turn, a summary or a review that
 someone else on the project writes into it is not shown. A computer never shows its own run
 back to itself, and a run started here takes over the card.
 
-**Files are shared on purpose**, as in Team Sync. On the computer that ran the worker, the
-Artifacts tab lists the card's files with a **Share** button each. A file is at most 5 MB,
-and a project keeps at most 50 MB. On other computers, a shared file is listed among the
-card's files with who shared it, and opening it fetches it beside the card.
+**Documents and images are shared on their own.** When a round of work finishes, the
+files its worker saved that are made for people (Markdown, text, PDF, HTML, CSV, images,
+Word, Excel and PowerPoint: `isForPeople` in `files.ts`) are shared with everyone, and a
+file the worker writes again in a later round is shared again. Code and data files stay on
+the computer; the Artifacts tab there lists every file with **Share** for those. A file is
+at most 5 MB, and a project keeps at most 50 MB; a larger file, or one the service turns
+down when the project is full, is not shared and not tried again. On other
+computers, a shared file is listed among the card's files with who shared it, only its
+newest version, and opening it fetches it beside the card.
 
 What a computer sent and what still waits is in `cards.json` in the board's folder, so a
 restart sends only what is new and nothing is lost offline. An entry waiting there from a
@@ -400,11 +414,12 @@ with `[sharing]`.
 | Writing this computer's runs, following an open card, sending and hosting messages to workers | `runtime/sharing/cards/activity.ts` |
 | Where a message to a worker stands, in words; what a worker waits for, as shared | `runtime/sharing/cards/worker-messages.ts` |
 | Allow and Decline on the host's card. Nothing reaches it since only a worker's own account continues it; it is to be removed | `src/components/WorkerAsks.tsx` |
-| Which of a task's files may be shared | `runtime/sharing/cards/files.ts` |
+| Which of a task's files may be shared, and which are shared on their own | `runtime/sharing/cards/files.ts` |
+| A round of work's summary, from the worker's last message | `runtime/sharing/cards/summary.ts` |
 | MemSync's Cards API as MemCode uses it | `runtime/sharing/memsync/cards-api.ts`, `cards-contract.ts`, `cards.proto` |
 | A run from a card's log, in the shape the card's views take, and what someone else's run says in place of its conversation | `src/sharing-cards.ts` |
-| Someone else's run: how it stands, then its summary | `src/components/SharedRunSummary.tsx` |
-| The Share buttons on a card's files | `src/components/ShareFromCard.tsx` |
+| Someone else's run: the request, each round's summary, how it stands | `src/components/OthersRun.tsx` |
+| The card's files on the computer that ran the worker, with Share for the rest | `src/components/ShareFromCard.tsx` |
 | gRPC over Node's own HTTP/2 | `runtime/sharing/memsync/grpc.ts` |
 | Protocol Buffers on the wire | `runtime/sharing/memsync/wire.ts` |
 | The contract, and the part of it MemCode uses | `runtime/sharing/memsync/projects.proto`, `projects-contract.ts`, `boards.proto`, `boards-contract.ts` |
@@ -594,9 +609,11 @@ For what happens on a card:
 
 23. **A card is read when it is opened and followed while open**, not for every card all
     the time. The board does not show who is running what across the project.
-24. **Files are shared with one click each**, not on their own, as in Team Sync. A run's
-    changes are shared when it finishes, as a file of the Changes tab's own format, not a
-    Git patch.
+24. **Documents and images a worker makes are shared on their own; code and data with one
+    click each** (Alex, 23 November 2026: clicking Share on images, Markdown, slides and
+    sheets "seems weird"; it is "not .js files"). Superseded the one-click-each rule. A
+    run's changes are shared when it finishes, as a file of the Changes tab's own format,
+    not a Git patch.
 25. **A run's turns and review count only from the account that wrote its first entry.**
 26. **The person's turns of a run from elsewhere carry the run owner's name.**
 27. **This computer is named by its kind, "Mac", "Windows" or "Linux"**, never its host name.
@@ -605,8 +622,11 @@ For what happens on a card:
 29. **Only the person who runs a worker reads its conversation** (Alex, 23 November 2026:
     "I can't see what the agents has been had conversations about" in Linear). Everyone
     else reads how it stands and its summary. Why a run failed is the person's too.
-30. **The summary is the run's last message**, which the brief asks to be a summary. It
-    is not written by another model.
+30. **The summary is the section of the run's last message headed for the project**,
+    which the brief asks for, or the whole message without one. It is not written by
+    another model. Links and paths on the worker's computer are turned into file names,
+    since nobody else can open them (Alex: the first summaries were "not very user
+    friendly").
 31. **A run's changes are looked at when it ends and when its code review settles**, not
     on every save.
 
@@ -621,6 +641,13 @@ For continuing a worker from another computer:
 35. **A message sent from another computer cannot be edited or cancelled**: the log keeps
     what was written.
 36. **A secret answer never travels.** The question shows; it is answered on the host.
+
+For what others read of a run:
+
+37. **Others see the request above the summaries**, and every round of work keeps its
+    own summary (Alex, 23 November 2026).
+38. **A file shared again is listed once, as its newest version**, by its name and who
+    shared it.
 
 ## Not built
 
