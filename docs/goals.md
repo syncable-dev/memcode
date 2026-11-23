@@ -39,20 +39,24 @@ exists, and otherwise the repository's default branch. Branch names follow the
 team's prefix (for example `feat/`); a taken name gets a numeric suffix, so new
 work never picks up an old branch.
 
-**Repository and branches**, in the project switcher, shows all of this for the open
-project (`runtime/branches.ts`, `src/components/RepositoryPanel.tsx`):
+You can change where goals start on the **Roadmap** (`runtime/branches.ts`,
+`src/components/Roadmap.tsx`):
 
-- the folder and its GitHub repository;
-- the branch the folder is on, how far behind the base it is, and how many changed
-  files are not committed;
-- **New work starts from**: what MemCode works out, or a branch you choose (saved as
-  the project's `baseBranch`). A goal can also carry its own `baseBranch`, which wins;
-- each goal's branch. A goal that already names a branch no worker here has used,
-  such as one copied from another project, can **start fresh**: its next work gets a
-  new branch from the base. A goal whose work has started keeps its branch; use
-  Update from its base instead.
+- **Goals branch from**, beside New goal, shows the base. Opening it says which
+  rule chose it, for example "34 of your last 40 merged pull requests went to
+  dev". Pick a branch to always use it (saved as the project's `baseBranch`), or
+  go back to letting MemCode work it out.
+- Each goal card has a branch line. Before a goal's work starts it reads "New
+  branch from dev when work starts", and you can pick another branch for that goal
+  alone (its own `baseBranch`, which wins over the project's). Once a worker has
+  run, it shows the goal's branch. A goal that names a branch no worker here has
+  used, such as one copied from another project, offers **Start fresh from dev**:
+  its next work gets a new branch from the base. A goal whose work has started
+  keeps its branch; use Update from its base instead.
 
-The panel never deletes or switches a branch.
+The project switcher shows the GitHub repository (owner/name) under the project's
+name, or the folder's name when it has no GitHub remote. Nothing here deletes or
+switches a branch.
 
 ## Tasks in a goal share it
 
