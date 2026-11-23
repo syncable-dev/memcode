@@ -53,6 +53,7 @@ import { ArtifactCollection } from "./components/ArtifactCollection";
 import { groupedArtifacts } from "./artifact-purpose";
 import { WorkDetail } from "./components/WorkDetail";
 import { Roadmap } from "./components/Roadmap";
+import { BaseBranchPicker } from "./components/BaseBranchPicker";
 import { PullRequestSheet } from "./components/PullRequest";
 import { NewWork } from "./components/NewWork";
 import { FleetDecisions } from "./components/FleetDecisions";
@@ -872,6 +873,9 @@ export function App() {
         <header className="workspace-topbar">
           <div>
             <span className="breadcrumb-project">{project.name}</span>
+            {repository && (
+              <BaseBranchPicker project={project} repository={repository} notify={notify} />
+            )}
             <ChevronRight size={12} />
             <span>
               {view === "board"
