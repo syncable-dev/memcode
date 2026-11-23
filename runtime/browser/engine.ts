@@ -42,6 +42,8 @@ export interface BrowserPage {
 
 /** A card's browser: its own storage, its tabs and the popups they open. */
 export interface BrowserTabs {
+  /** Brings page state up to date for engines that have to ask for it. */
+  sync(): Promise<void>;
   newPage(): Promise<BrowserPage>;
   onPage(listener: (page: BrowserPage, replaces?: BrowserPage) => void): void;
   interact(page: BrowserPage, request: InteractionRequest): Promise<InteractionFeedback>;
