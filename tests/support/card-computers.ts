@@ -7,8 +7,12 @@ import type { AppState, Message, WorkItem } from "../../src/shared";
 import type { StoryReviewRun } from "../../src/code-review";
 import type { WorkerInputResponse } from "../../src/worker-input";
 import { CardActivity } from "../../runtime/sharing/cards/activity";
+import { fileTypeOf } from "../../runtime/sharing/cards/files";
 import type { CardsApi } from "../../runtime/sharing/memsync/cards-api";
-import { SharingUnavailable } from "../../runtime/sharing/problems";
+import {
+  SharingRefused,
+  SharingUnavailable,
+} from "../../runtime/sharing/problems";
 import { task } from "./board-computers";
 import type { StandInPerson } from "./memsync-stand-in";
 import { signedInTo, type SharingWorld } from "./projects-api-scenarios";
@@ -53,11 +57,16 @@ export async function cardComputer(
   const reviews = new Map<string, StoryReviewRun>();
   /** What each task changed here, as its Changes tab would share it. */
   const changes = new Map<string, Uint8Array>();
+  /** The bytes of each file a worker saved here, by the file's artifact id. */
+  const files = new Map<string, Uint8Array>();
   const self = {
     state,
     projectId,
     folder,
     isOffline: false,
+    /** The service turns down every file this computer uploads, as when the project is full. */
+    refusesFiles: false,
+    uploads: 0,
     appends: 0,
     asksForNames: 0,
     shown: 0,
@@ -85,6 +94,25 @@ export async function cardComputer(
     find(id: string): WorkItem {
       return state.tasks.find((item) => item.id === id)!;
     },
+    /** A file a task's worker saves here, or saves again with new contents. */
+    saveFile(taskId: string, name: string, text: string): void {
+      const saved = state.artifacts.find(
+        (one) => one.taskId === taskId && one.name === name,
+      );
+      const artifact = saved ?? {
+        id: randomUUID(),
+        name,
+        kind: "text" as const,
+        path: join(folder, name),
+        taskId,
+        projectId,
+        createdAt: at(1),
+        source: "codex",
+      };
+      artifact.revision = `${files.size}:${text.length}:${text}`;
+      if (!saved) state.artifacts.push(artifact);
+      files.set(artifact.id, new TextEncoder().encode(text));
+    },
     start() {
       const cards: CardsApi = {
         append: async (...args) => {
@@ -103,7 +131,11 @@ export async function cardComputer(
           return signedIn.cards.readAfter(...args);
         },
         watchAfter: (...args) => signedIn.cards.watchAfter(...args),
-        upload: (...args) => signedIn.cards.upload(...args),
+        upload: async (...args) => {
+          self.uploads++;
+          if (self.refusesFiles) throw new SharingRefused("file_too_large");
+          return signedIn.cards.upload(...args);
+        },
         download: (...args) => signedIn.cards.download(...args),
       };
       const names = new Map(
@@ -118,6 +150,17 @@ export async function cardComputer(
         cards,
         reviewOf: async (taskId) => reviews.get(taskId) ?? null,
         changesOf: async (taskId) => changes.get(taskId),
+        savedFileOf: async (taskId, artifactId) => {
+          const artifact = state.artifacts.find(
+            (one) => one.id === artifactId && one.taskId === taskId,
+          )!;
+          return {
+            name: artifact.name,
+            mime: fileTypeOf(artifact.name),
+            kind: "artifact",
+            bytes: files.get(artifactId)!,
+          };
+        },
         nameOf: (account) => names.get(account),
         learnName: async (account) => {
           self.asksForNames++;

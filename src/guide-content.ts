@@ -301,8 +301,8 @@ export const guideArticles: GuideArticle[] = [
       "Invite people by email. A project has you and two guests, and an open invitation holds a place.",
       "They find the project in the project switcher and choose Join. On your own other computers, choose Open: signing in is enough.",
       "Plan and comment together right away. To build, each person connects their own copy of the code and approves their own coding tool in Workers.",
-      "A worker runs only on the computer that started it. Its conversation stays yours; everyone else sees how it stands, then its summary, its changes and its review.",
-      "Share the files you choose from a card’s Artifacts tab, up to 5 MB each. Use Git to exchange code.",
+      "A worker runs only on the computer that started it. Its conversation stays yours; everyone else sees the request, how it stands, a summary of each round of work, its changes and its review.",
+      "Documents and images a worker makes are shared by themselves when it finishes, up to 5 MB each. Share other files from a card’s Artifacts tab. Use Git to exchange code.",
     ],
     note: "Only you can continue your workers, from any of your own computers. Others comment on the card.",
     details: [

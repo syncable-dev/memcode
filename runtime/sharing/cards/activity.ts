@@ -1,11 +1,17 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { AppState, Message, WorkItem } from "../../../src/shared";
+import type {
+  AppState,
+  Artifact,
+  Message,
+  WorkItem,
+} from "../../../src/shared";
 import type { StoryReviewRun } from "../../../src/code-review";
 import type {
   RunSummary,
   SessionActor,
+  SharedSummary,
   TeamSession,
 } from "../../../src/team-session";
 import type {
@@ -18,11 +24,11 @@ import type { CardsApi, LoggedCardEntry } from "../memsync/cards-api";
 import type { CardReaders } from "../memsync/cards-contract";
 import type { GrpcStream } from "../memsync/grpc";
 import { SharingRefused } from "../problems";
-import { LARGEST_SHARED_FILE } from "./files";
+import { isForPeople, LARGEST_SHARED_FILE } from "./files";
 import { idOf, nextCall } from "../board/updates";
+import { summaryOf } from "./summary";
 import {
   cardPayloads,
-  LONGEST_SUMMARY,
   publicMessage,
   publicText,
   publicValue,
@@ -62,6 +68,8 @@ export interface CardActivityOptions {
   reviewOf(taskId: string): Promise<StoryReviewRun | null>;
   /** What a task changed here, as its Changes tab shows it, or nothing when it changed nothing. */
   changesOf?(taskId: string): Promise<Uint8Array | undefined>;
+  /** A file a task's worker saved here, read to share it. Throws a sentence when it may not be shared. */
+  savedFileOf?(taskId: string, artifactId: string): Promise<SavedFile>;
   /** The name of someone on the shared project, when it is known. */
   nameOf(accountId: string): string | undefined;
   /** Asks the sharing service for the name of someone not known yet: they may have joined since. */
@@ -118,9 +126,18 @@ interface Outgoing {
   taskId: string;
   message: WorkerMessageRecord;
 }
+/** A file to share from a card. */
+interface SavedFile {
+  name: string;
+  mime: string;
+  kind: SharedResultRecord["kind"];
+  bytes: Uint8Array;
+}
 interface KeptFile {
   version: 1;
   sent: Record<string, Sent>;
+  /** The version of each file a worker saved here that was shared on its own, by the file's id. */
+  sharedFiles?: Record<string, string>;
   /** Readers is missing from what an older MemCode kept: those are sent for their author alone. */
   waiting: Array<{
     cardId: string;
@@ -142,7 +159,8 @@ interface RunElsewhere {
   head: Omit<SessionPart, "messages">;
   turns: Map<string, Message>;
   review?: StoryReviewRun;
-  summary?: RunSummary;
+  /** One per round of work in the run, by when its worker wrote it. */
+  summaries: Map<string, RunSummary>;
   updatedAt: string;
   sequence: number;
   entries: number;
@@ -194,6 +212,16 @@ const progressLabels: Record<string, string> = {
   finishing: "Finishing the worker turn",
   stopping: "Stopping the worker",
 };
+/**
+ * A file the service turned down, as when the project is full, is not sent again; one
+ * that could not reach it is, on the next look.
+ */
+const skipRefused = (problem: unknown) => {
+  if (problem instanceof SharingRefused) return;
+  throw problem;
+};
+/** Which version of a worker's file this is: it changes when the worker writes the file again. */
+const versionOf = (file: Artifact) => file.revision ?? file.createdAt;
 const fingerprint = (value: unknown) =>
   createHash("sha256")
     .update(JSON.stringify(value) ?? "null")
@@ -251,22 +279,6 @@ function sessionOf(task: WorkItem, device: WritingDevice): SessionPart {
 }
 
 /**
- * What a finished run here says it did: the worker's last message of the run.
- * The brief asks every worker to end with a summary for the project.
- */
-function summaryOf(task: WorkItem): RunSummary | undefined {
-  const { state, startedAt } = task.run;
-  if (state !== "finished" || !startedAt) return undefined;
-  const last = task.messages
-    .filter(
-      (message) => message.role === "assistant" && message.at >= startedAt,
-    )
-    .at(-1);
-  const text = last && publicText(last.text).trim().slice(0, LONGEST_SUMMARY);
-  return text ? { text, at: last.at } : undefined;
-}
-
-/**
  * The activity of one connected project's cards at the sharing service.
  *
  * On the computer that runs a worker, every run on a card of this project is
@@ -295,6 +307,10 @@ export class CardActivity {
   private pauses = new Set<() => void>();
   /** Runs whose changes are being shared now, so two captures share them once. */
   private sharingChanges = new Set<string>();
+  /** The version of each worker's file shared on its own, by the file's id. */
+  private sharedFiles: Record<string, string> = {};
+  /** Files being shared now, so two captures share each once. */
+  private sharingFiles = new Set<string>();
 
   constructor(private readonly options: CardActivityOptions) {}
 
@@ -302,12 +318,12 @@ export class CardActivity {
 
   /**
    * Looks at this project's tasks for what a run did since it was last written, and
-   * shares what a run that finished changed.
+   * shares what a run that finished changed and the files its worker made for people.
    */
   capture(): Promise<void> {
-    this.capturing ??= this.captureRuns().then(() =>
-      this.shareChangesOfFinishedRuns(),
-    );
+    this.capturing ??= this.captureRuns()
+      .then(() => this.shareChangesOfFinishedRuns())
+      .then(() => this.shareFilesOfFinishedRuns());
     return this.capturing;
   }
 
@@ -382,6 +398,50 @@ export class CardActivity {
       } finally {
         this.sharingChanges.delete(sessionId);
       }
+    }
+  }
+
+  /**
+   * The documents, images, sheets and slides a worker made, shared with everyone on
+   * the project once its run finishes, and again when a later round of work changes
+   * one. Code and data stay here unless someone shares them, and so does a file
+   * larger than the service keeps.
+   */
+  private async shareFilesOfFinishedRuns(): Promise<void> {
+    for (const task of this.tasksRunHere()) {
+      if (task.run.state !== "finished") continue;
+      for (const file of this.filesForPeople(task)) {
+        if (this.stopped) return;
+        await this.shareFileOnce(task, file);
+      }
+    }
+  }
+
+  private filesForPeople(task: WorkItem): Artifact[] {
+    return this.options
+      .state()
+      .artifacts.filter(
+        (file) =>
+          file.taskId === task.id &&
+          !file.id.startsWith("shared:") &&
+          isForPeople(file.name) &&
+          this.sharedFiles[file.id] !== versionOf(file),
+      );
+  }
+
+  private async shareFileOnce(task: WorkItem, file: Artifact): Promise<void> {
+    if (this.sharingFiles.has(file.id) || !this.options.savedFileOf) return;
+    this.sharingFiles.add(file.id);
+    try {
+      const saved = await this.options
+        .savedFileOf(task.id, file.id)
+        .catch(() => undefined);
+      if (saved && saved.bytes.length <= LARGEST_SHARED_FILE)
+        await this.shareResult(task.id, saved).catch(skipRefused);
+      this.sharedFiles[file.id] = versionOf(file);
+      await this.inTurn(() => this.keep());
+    } finally {
+      this.sharingFiles.delete(file.id);
     }
   }
 
@@ -461,7 +521,7 @@ export class CardActivity {
     sent.head = headPrint;
     for (const message of changed)
       sent.turns[message.id] = fingerprint(message);
-    const summary = summaryOf(task);
+    const summary = summaryOf(task, this.projectFolders());
     const summaryPrint = summary && fingerprint(summary);
     if (summary && summaryPrint !== sent.summary) {
       records.push({ kind: "summary", sessionId: session.id, summary });
@@ -477,6 +537,14 @@ export class CardActivity {
       }
     }
     return records;
+  }
+
+  /** Where this project's code is on this computer, so a summary names files by their path in it. */
+  private projectFolders(): string[] {
+    const path = this.options
+      .state()
+      .projects.find((project) => project.id === this.options.projectId)?.path;
+    return path ? [path] : [];
   }
 
   /** What a run here waits for, when it is new or has changed since it was written. */
@@ -603,6 +671,7 @@ export class CardActivity {
         this.hosted = kept.hosted ?? {};
         this.handled = kept.handled ?? {};
         this.outgoing = (kept.outgoing ?? []) as typeof this.outgoing;
+        this.sharedFiles = kept.sharedFiles ?? {};
       } catch {
         // Nothing kept yet, or nothing usable: what runs here is written again in full.
       }
@@ -647,6 +716,7 @@ export class CardActivity {
       hosted: this.hosted,
       handled: this.handled,
       outgoing: this.outgoing,
+      sharedFiles: this.sharedFiles,
     };
     await mkdir(this.options.folder, { recursive: true });
     const path = join(this.options.folder, "cards.json");
@@ -816,6 +886,7 @@ export class CardActivity {
         device: entry.device,
         head,
         turns: new Map(),
+        summaries: new Map(),
         updatedAt: logged.loggedAt,
         sequence: logged.sequence,
         entries: 0,
@@ -830,7 +901,8 @@ export class CardActivity {
     }
     const run = card.runs.get(entry.sessionId);
     if (!run || run.account !== logged.author) return false;
-    if (entry.kind === "summary") run.summary = entry.summary;
+    if (entry.kind === "summary")
+      run.summaries.set(entry.summary.at, entry.summary);
     else run.review = entry.review;
     run.updatedAt = logged.loggedAt;
     run.entries++;
@@ -1040,8 +1112,22 @@ export class CardActivity {
       updatedAt: run.updatedAt,
       messages: turns,
       ...(run.review ? { review: { ...run.review, taskId } } : {}),
-      ...(run.summary ? { summary: run.summary } : {}),
+      summaries: this.summariesOf(card),
     } as TeamSession;
+  }
+
+  /** The summary of every round of work on the card, by whoever ran it, oldest first. */
+  private summariesOf(card: Followed): SharedSummary[] {
+    return [...card.runs.values()]
+      .flatMap((run) => {
+        const { name, device } = this.hostOf(run);
+        return [...run.summaries.values()].map((summary) => ({
+          ...summary,
+          by: name,
+          device,
+        }));
+      })
+      .sort((left, right) => left.at.localeCompare(right.at));
   }
 
   // ── Messages to workers (MemSync ADR-0015) ───────────────────────────────

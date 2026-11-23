@@ -159,7 +159,7 @@ export function cardActivityScenarios(
   scenario(
     "when a run finishes, everyone on the project sees its summary: the worker's last word",
     async (world, later) => {
-      const { mac, laptop, id } = await project(world, later);
+      const { people, mac, laptop, id } = await project(world, later);
       laptop.activity.follow(id);
       const onMac = mac.find(id);
       onMac.run = { state: "running", startedAt: at(1) } as never;
@@ -172,12 +172,13 @@ export function cardActivityScenarios(
         () => laptop.find(id).sharedSession?.state === "running",
         "the laptop to see the run",
       );
-      assert.equal(laptop.find(id).sharedSession!.summary, undefined);
+      assert.deepEqual(laptop.find(id).sharedSession!.summaries ?? [], []);
 
+      onMac.run.workspace = "/Users/alex/work/website";
       onMac.messages.push(
         turn(
           "m3",
-          "Added a CSV export in /Users/alex/work/website/src/export.ts, with a test. All tests pass.",
+          "Added a CSV export in [export.ts](/Users/alex/work/website/src/export.ts), with a test. All tests pass.",
           "assistant",
           4,
         ),
@@ -186,16 +187,57 @@ export function cardActivityScenarios(
       onMac.run.finishedAt = at(5);
       await mac.activity.capture();
       await until(
-        () => !!laptop.find(id).sharedSession?.summary,
+        () => !!laptop.find(id).sharedSession?.summaries?.length,
         "the laptop to see the summary",
       );
-      const { summary } = laptop.find(id).sharedSession!;
-      assert.equal(
-        summary!.text,
-        "Added a CSV export in <local-home>/work/website/src/export.ts, with a test. All tests pass.",
-      );
-      assert.equal(summary!.at, at(4));
+      assert.deepEqual(laptop.find(id).sharedSession!.summaries, [
+        {
+          text: "Added a CSV export in export.ts, with a test. All tests pass.",
+          at: at(4),
+          by: people.alex.name,
+          device: "Mac",
+        },
+      ]);
       assert.deepEqual(laptop.find(id).sharedSession!.messages, []);
+    },
+  );
+
+  scenario(
+    "every round of work on a card adds its own summary, and others read them all in order",
+    async (world, later) => {
+      const { mac, laptop, id } = await project(world, later);
+      laptop.activity.follow(id);
+      const onMac = mac.find(id);
+      const finishRound = async (text: string, minute: number) => {
+        onMac.messages.push(turn(`m${minute}`, text, "assistant", minute));
+        onMac.run.state = "finished";
+        onMac.run.finishedAt = at(minute + 1);
+        await mac.activity.capture();
+      };
+      const summaries = () =>
+        (laptop.find(id).sharedSession?.summaries ?? []).map(
+          (summary) => summary.text,
+        );
+      onMac.run = { state: "running", startedAt: at(1) } as never;
+      await finishRound("Added the export.", 2);
+      await until(() => summaries().length === 1, "the first summary");
+
+      // A follow-up the worker takes in the same run.
+      onMac.run.state = "running";
+      onMac.messages.push(turn("f1", "Also export as TSV.", "user", 4));
+      await mac.activity.capture();
+      await finishRound("Added TSV too.", 5);
+      await until(() => summaries().length === 2, "the second summary");
+
+      // A follow-up that starts a new run.
+      onMac.run = { state: "running", startedAt: at(7) } as never;
+      await finishRound("Fixed the header row.", 8);
+      await until(() => summaries().length === 3, "the third summary");
+      assert.deepEqual(summaries(), [
+        "Added the export.",
+        "Added TSV too.",
+        "Fixed the header row.",
+      ]);
     },
   );
 
@@ -233,6 +275,73 @@ export function cardActivityScenarios(
       await until(() => mac.activity.unsent === 0, "everything to be sent");
       await new Promise((resolve) => setTimeout(resolve, 100));
       assert.equal(laptop.find(id).sharedResults!.length, 1);
+    },
+  );
+
+  scenario(
+    "when a run finishes, the documents and images its worker made are shared with everyone, and its code is not",
+    async (world, later) => {
+      const { mac, laptop, id } = await project(world, later);
+      laptop.activity.follow(id);
+      const onMac = mac.find(id);
+      const shared = () =>
+        (laptop.find(id).sharedResults ?? [])
+          .map((result) => `${result.name} ${result.kind}`)
+          .sort();
+      onMac.run = { state: "running", startedAt: at(1) } as never;
+      mac.saveFile(id, "verification.md", "# Verified");
+      mac.saveFile(id, "chart.png", "a chart");
+      mac.saveFile(id, "count.sh", "awk 'NF' | wc -l");
+      await mac.activity.capture();
+      await until(
+        () => laptop.find(id).sharedSession?.state === "running",
+        "the laptop to see the run",
+      );
+      assert.deepEqual(shared(), []);
+
+      onMac.run.state = "finished";
+      onMac.run.finishedAt = at(5);
+      await mac.activity.capture();
+      await until(() => shared().length === 2, "the worker's files");
+      assert.deepEqual(shared(), [
+        "chart.png artifact",
+        "verification.md artifact",
+      ]);
+
+      // A file is shared once, and again when a later round of work changes it.
+      await mac.activity.capture();
+      await until(() => mac.activity.unsent === 0, "everything to be sent");
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      assert.equal(shared().length, 2);
+      mac.saveFile(id, "verification.md", "# Verified again");
+      await mac.activity.capture();
+      await until(() => shared().length === 3, "the changed file");
+    },
+  );
+
+  scenario(
+    "a worker's file the service turns down is not tried again, and the rest of the run still goes out",
+    async (world, later) => {
+      const { mac, laptop, id } = await project(world, later);
+      laptop.activity.follow(id);
+      const onMac = mac.find(id);
+      mac.refusesFiles = true;
+      mac.saveFile(id, "report.pdf", "a report");
+      onMac.run = {
+        state: "finished",
+        startedAt: at(1),
+        finishedAt: at(2),
+      } as never;
+      await mac.activity.capture();
+      await until(
+        () => laptop.find(id).sharedSession?.state === "finished",
+        "the laptop to see the run",
+      );
+      assert.equal(mac.uploads, 1);
+      await mac.activity.capture();
+      await mac.activity.capture();
+      assert.equal(mac.uploads, 1);
+      assert.deepEqual(laptop.find(id).sharedResults ?? [], []);
     },
   );
 
