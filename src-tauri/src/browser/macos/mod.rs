@@ -8,6 +8,7 @@ mod focus;
 mod human_input;
 mod input;
 mod script;
+mod self_close;
 mod surface;
 
 use serde_json::Value;
@@ -29,6 +30,7 @@ pub async fn call(app: AppHandle, method: String, input: Value) -> Result<Value,
 
 fn dispatch(app: &AppHandle, method: &str, input: Value, reply: Reply) {
     focus::give_back();
+    surface::remove_self_closed();
     match method {
         "browser_create" => surface::create(app, input, reply),
         "browser_capture" => capture::capture(&input, reply),

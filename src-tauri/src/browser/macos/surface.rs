@@ -16,7 +16,7 @@ use wry::{
     WebViewBuilderExtMacos, WebViewExtMacOS,
 };
 
-use super::{address_policy, focus, human_input, input, Reply};
+use super::{address_policy, focus, human_input, input, self_close::SelfCloseListener, Reply};
 use crate::native::Bounds;
 
 const INITIAL_BOUNDS: Bounds = Bounds {
@@ -35,6 +35,7 @@ pub(super) struct Surface {
     bounds: Bounds,
     visible: bool,
     loads: Rc<Cell<u64>>,
+    self_close: Retained<SelfCloseListener>,
 }
 
 thread_local! {
@@ -128,6 +129,7 @@ fn build(
         unsafe { view.manager().addContentRuleList(&rules) };
     }
     let wk = Retained::into_super(view.webview());
+    let self_close = SelfCloseListener::install(&wk);
     Ok(Surface {
         owner: owner.to_owned(),
         wk,
@@ -136,7 +138,19 @@ fn build(
         bounds: INITIAL_BOUNDS,
         visible: false,
         loads,
+        self_close,
     })
+}
+
+/// Drops the pages that called `window.close()`. This runs at the start of a browser
+/// call, outside WebKit's own callback. The runtime then sees them missing from
+/// `browser_pages` and closes their tabs.
+pub(super) fn remove_self_closed() {
+    SURFACES.with(|surfaces| {
+        if let Ok(mut surfaces) = surfaces.try_borrow_mut() {
+            surfaces.retain(|_, surface| !surface.self_close.requested());
+        }
+    });
 }
 
 fn open_popup(
