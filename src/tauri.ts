@@ -211,7 +211,6 @@ export async function installNativeBridge(): Promise<void> {
     followSharedCard: (taskId) => call("sharing:follow-card", { taskId }),
     unfollowSharedCard: (taskId) => call("sharing:unfollow-card", { taskId }),
     shareCardFile: (input) => call("sharing:share-result", input),
-    shareCardChanges: (taskId) => call("sharing:share-changes", { taskId }),
     openSharedCardFile: (input) => call("sharing:open-result", input),
     shareProject: (projectId) => call("sharing:share", { projectId }),
     decideSharedMessage: (input) => call("sharing:decide-message", input),

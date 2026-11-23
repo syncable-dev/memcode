@@ -2,9 +2,11 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { Message } from "../../../src/shared";
 import type { StoryReviewRun } from "../../../src/code-review";
+import type { RunSummary } from "../../../src/team-session";
 import { sessionPayload } from "../../team/session-protocol";
 import { LARGEST_UPDATE } from "../board/document";
 import { workerResponseSchema } from "../../worker-input";
+import type { CardReaders } from "../memsync/cards-contract";
 
 /**
  * What MemCode writes into a card's activity log at the sharing service
@@ -16,6 +18,7 @@ import { workerResponseSchema } from "../../worker-input";
  *   turns of the conversation. An entry holds the run's latest state and the
  *   turns that are new or changed since the run's last entry.
  * - `review`: the code review report of that run.
+ * - `summary`: a finished run's last word: what the worker says it did.
  * - `result`: a file someone shared from the card, kept at the service by its
  *   SHA-256.
  * - `message`: something for a worker run on another computer, written by the
@@ -44,6 +47,7 @@ export type InputRecord = z.infer<typeof inputRecord>;
 export type CardRecord =
   | { kind: "session"; session: SessionPart }
   | { kind: "review"; sessionId: string; review: StoryReviewRun }
+  | { kind: "summary"; sessionId: string; summary: RunSummary }
   | { kind: "result"; result: SharedResultRecord }
   | { kind: "message"; message: WorkerMessageRecord }
   | { kind: "delivery"; delivery: DeliveryRecord }
@@ -98,6 +102,14 @@ const resultRecord = z
   })
   .strict();
 const moment = z.string().datetime();
+/** The longest summary the shared format holds. */
+export const LONGEST_SUMMARY = 20_000;
+const summaryRecord = z
+  .object({
+    text: z.string().trim().min(1).max(LONGEST_SUMMARY),
+    at: moment,
+  })
+  .strict();
 /** The longest follow-up a card carries; the app's own message box holds as much. */
 export const LONGEST_WORKER_MESSAGE = 20_000;
 const messageRecord = z
@@ -186,6 +198,14 @@ const entryShape = z.discriminatedUnion("kind", [
     })
     .strict(),
   z
+    .object({
+      ...envelope,
+      kind: z.literal("summary"),
+      sessionId: uuid,
+      summary: summaryRecord,
+    })
+    .strict(),
+  z
     .object({ ...envelope, kind: z.literal("result"), result: resultRecord })
     .strict(),
   z
@@ -202,6 +222,29 @@ const entryShape = z.discriminatedUnion("kind", [
     .object({ ...envelope, kind: z.literal("input"), input: inputRecord })
     .strict(),
 ]);
+/**
+ * Who reads each kind of entry (MemSync ADR-0019). What a worker and its person said,
+ * why a run failed, and what continues it stay with the person's own account, on any of
+ * their computers. Everyone on the project sees that a run happens and how it stands,
+ * its review and the files shared from its card.
+ */
+export function readersOf(record: CardRecord): CardReaders {
+  switch (record.kind) {
+    case "session":
+      return record.session.messages.length || record.session.error
+        ? "only-its-author"
+        : "everyone";
+    case "message":
+    case "delivery":
+    case "input":
+      return "only-its-author";
+    case "review":
+    case "summary":
+    case "result":
+      return "everyone";
+  }
+}
+
 /** A message is a follow-up or an answer, never both and never neither. */
 const sensible = (entry: CardEntry) =>
   entry.kind !== "message" || !entry.message.text !== !entry.message.answer;

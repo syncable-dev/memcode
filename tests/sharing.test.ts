@@ -1063,8 +1063,15 @@ test("a file and the changes shared from a card open on the other computer, with
       deletions: 0,
       files: 1,
     };
+    // The run finished: its changes are shared with the project, without a click.
     mac.world.changes.set("task-1", changes);
-    await mac.sharing.shareChanges("task-1");
+    onMac().codeReview = {
+      runId: "r1",
+      state: "completed",
+      updatedAt: at,
+      findingCount: 0,
+    } as never;
+    await mac.sharing.captureCards();
     await until(
       () => !!onPc().sharedResults?.some((item) => item.kind === "patch"),
       "the shared changes",
@@ -1126,15 +1133,6 @@ test("only a task's own saved file, at most 5 MB, can be shared, and only from a
     await assert.rejects(
       mac.sharing.shareResult({ taskId: "task-1", artifactId: "empty" }),
       /^Error: That file is empty, so there is nothing in it to share\.$/,
-    );
-    await assert.rejects(
-      mac.sharing.shareChanges("task-1"),
-      /no recorded changes to share yet/,
-    );
-    mac.state.tasks.push(task("local-app", "task-9"));
-    await assert.rejects(
-      mac.sharing.shareChanges("task-9"),
-      /not being shared/,
     );
   } finally {
     await close();

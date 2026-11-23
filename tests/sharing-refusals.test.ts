@@ -7,7 +7,8 @@ import {
 } from "../src/sharing-refusals";
 
 // The table in MemSync's docs/08_crosscutting_concepts.md, as of 21 November 2026,
-// and the four the Cards service added on 22 November (ADR-0014).
+// the four the Cards service added on 22 November (ADR-0014), and the one for a card
+// entry's readers added on 23 November (ADR-0019).
 const namedByMemsync = [
   "no_such_project",
   "no_such_invitation",
@@ -30,6 +31,7 @@ const namedByMemsync = [
   "file_too_large",
   "project_storage_full",
   "no_such_file",
+  "unknown_readers",
 ];
 
 test("every rule MemSync can refuse by is known by name", () => {

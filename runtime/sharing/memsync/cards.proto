@@ -13,7 +13,8 @@ import "memsync/v1/boards.proto";
 // an entry. A file is kept per project under the SHA-256 of its bytes.
 //
 // Calls are signed in and turned down as in the Projects service. Anyone on the project
-// can read and add. Messages of this service may be up to 6 MiB.
+// can add, and read everything but the entries only their author reads (ADR-0019).
+// Messages of this service may be up to 6 MiB.
 service Cards {
   // Adds entries to the end of a card's log. An entry whose id is already in that log
   // is not added again, so a call can be sent again when its answer was lost.
@@ -30,22 +31,36 @@ service Cards {
   rpc DownloadFile(DownloadFileRequest) returns (DownloadFileResponse);
 }
 
+// Who may read an entry of a card's log.
+enum Readers {
+  // Everyone on the project.
+  READERS_EVERYONE = 0;
+  // Only the account that sent it, on any of its computers. Reading and watching leave it
+  // out for everyone else, so the numbers they see have gaps where it is.
+  READERS_ONLY_ITS_AUTHOR = 1;
+}
+
 message NewCardEntry {
-  // A UUID chosen by the sender. Sending the same id again to the same card adds nothing.
+  // A UUID chosen by the sender. Sending the same id again to the same card adds nothing,
+  // and does not change who reads it.
   string id = 1;
   // MemCode's own record, at most 1 MiB. MemSync does not read it.
   bytes payload = 2;
+  // Any other value is turned down.
+  Readers readers = 3;
 }
 
 message CardEntry {
   string id = 1;
-  // Its place in the card's log, from 1, with no gaps.
+  // Its place in the card's log, from 1. The log has no gaps, but a reader sees one where
+  // an entry only its author reads was left out.
   uint64 sequence = 2;
   // When MemSync logged it. Never earlier than the entry before it.
   google.protobuf.Timestamp logged_at = 3;
   // The `Person.account_id` of whoever sent it.
   string author_account_id = 4;
   bytes payload = 5;
+  Readers readers = 6;
 }
 
 message AppendCardEntriesRequest {

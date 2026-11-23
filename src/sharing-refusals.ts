@@ -25,6 +25,7 @@ export const refusalRules = [
   "file_too_large",
   "project_storage_full",
   "no_such_file",
+  "unknown_readers",
 ] as const;
 export type RefusalRule = (typeof refusalRules)[number];
 
@@ -70,4 +71,6 @@ export const refusalSentences: Record<RefusalRule, string> = {
     "This project already shares 50 MB of files, which is all it can keep. The file stays on this computer.",
   no_such_file:
     "That file is no longer kept for this project. Ask whoever shared it to share it again.",
+  unknown_readers:
+    "MemCode named readers for a card entry that the sharing service does not know. This is a fault in MemCode, not something you did.",
 };

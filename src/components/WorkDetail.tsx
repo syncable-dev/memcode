@@ -29,6 +29,7 @@ import {
 import { RemoteWorker, remoteActivityLabel } from "./RemoteWorker";
 import { useRuntimeHealth } from "../useRuntimeHealth";
 import { ConversationMessages } from "./ConversationMessage";
+import { SharedRunSummary } from "./SharedRunSummary";
 import { followsConversationTail } from "../conversation-performance";
 import { useConversationDraft } from "../useConversationDraft";
 import { modifierLabel, primaryModifier, shortcutLabel } from "../platform";
@@ -41,6 +42,7 @@ import { ShareFromCard } from "./ShareFromCard";
 import {
   cardRunElsewhere,
   isUnfetchedSharedFile,
+  onlyItsOwnerContinues,
   runElsewhereNote,
   sendElsewhereLabel,
   sharedFilesToFetch,
@@ -200,6 +202,8 @@ export function WorkDetail({
           (input) => input.taskId === task.id && input.status === "pending",
         );
   const yours = !!localTask.sharedRunIsYours;
+  // Someone else's run: its conversation is theirs alone (MemSync ADR-0019).
+  const othersRun = elsewhere && !yours ? elsewhere : undefined;
   const [tab, setTab] = useState<StoryTab>(
     () =>
       initialTab ?? (isCodeReviewTask(state, task) ? "review" : "conversation"),
@@ -462,11 +466,6 @@ export function WorkDetail({
       } finally {
         setSharing("");
       }
-    });
-  const shareChanges = () =>
-    act(async () => {
-      await window.memcode.shareCardChanges(task.id);
-      notify(`These changes are shared with ${sharedProjectName}`);
     });
   // Sharing is offered on the computer that ran the worker, for a shared project.
   const mayShare = !!sharedBoard && !elsewhere && !task.example;
@@ -878,18 +877,26 @@ export function WorkDetail({
                     <span>THE WORK STARTS WITH A CLEAR BRIEF</span>
                     <i />
                   </div>
-                  <ConversationMessages
-                    key={task.id}
-                    messages={task.messages}
-                    harness={task.harness}
-                    onOpenLink={(href) => void openLink(href)}
-                    comments={comments}
-                    onOpenReference={(reference, id) => {
-                      const note = comments.find((c) => c.id === id);
-                      if (note) void focusComment(note);
-                      else if (reference.path) void openLink(reference.path);
-                    }}
-                  />
+                  {othersRun && shared ? (
+                    <SharedRunSummary
+                      owner={othersRun}
+                      session={shared}
+                      onOpenLink={(href) => void openLink(href)}
+                    />
+                  ) : (
+                    <ConversationMessages
+                      key={task.id}
+                      messages={task.messages}
+                      harness={task.harness}
+                      onOpenLink={(href) => void openLink(href)}
+                      comments={comments}
+                      onOpenReference={(reference, id) => {
+                        const note = comments.find((c) => c.id === id);
+                        if (note) void focusComment(note);
+                        else if (reference.path) void openLink(reference.path);
+                      }}
+                    />
+                  )}
                   {!remote &&
                     health.available &&
                     task.run.state === "running" && (
@@ -957,141 +964,159 @@ export function WorkDetail({
                       ))}
                     </div>
                   )}
-                  <div
-                    className={
-                      "composer-box " +
-                      (dictation.phase === "recording" ? "recording" : "")
-                    }
-                  >
-                    {attachedComments.length > 0 && (
-                      <div className="followup-comment-chips">
-                        {attachedComments.map((id) => {
-                          const note = comments.find((c) => c.id === id);
-                          return note ? (
-                            <span key={id}>
-                              <MessageSquare size={11} />
-                              {note.reference.name} ·{" "}
-                              {reviewLocation(note.reference)}
-                              <button
-                                className="icon-button"
-                                aria-label="Remove attached comment"
-                                onClick={() =>
-                                  setAttachedComments((values) =>
-                                    values.filter((value) => value !== id),
-                                  )
-                                }
-                              >
-                                <X size={10} />
-                              </button>
-                            </span>
-                          ) : null;
-                        })}
-                      </div>
-                    )}
-                    <textarea
-                      aria-label="Message to worker"
-                      placeholder={
-                        elsewhere
-                          ? runElsewhereNote(elsewhere, yours)
-                          : task.example
-                            ? "Explore the conversation, or add a note…"
-                            : active
-                              ? "Queue a follow-up for the next worker pass…"
-                              : "Add context, ask a follow-up, or describe the next step…"
-                      }
-                      value={draft}
-                      onChange={(e) => setDraft(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && primaryModifier(e)) {
-                          e.preventDefault();
-                          void send();
+                  {othersRun && (
+                    <p className="shared-only-owner" role="note">
+                      <span>{onlyItsOwnerContinues(othersRun)}</span>
+                      <button
+                        className="button secondary"
+                        onClick={() => setTab("comments")}
+                      >
+                        <MessageSquare size={12} />
+                        Comment
+                      </button>
+                    </p>
+                  )}
+                  {!othersRun && (
+                    <>
+                      <div
+                        className={
+                          "composer-box " +
+                          (dictation.phase === "recording" ? "recording" : "")
                         }
-                      }}
-                    />
-                    <div className="composer-controls">
-                      <div>
-                        <WorkerMark task={task} small />
-                        <span>
-                          {task.route
-                            ? `${harnessNames[task.route.harness]} · ${task.route.modelLabel || task.route.model}`
-                            : task.assignment === "auto"
-                              ? "Choosing a harness"
-                              : harnessNames[task.harness]}
-                        </span>
-                        {dictation.phase !== "idle" && (
-                          <span className="recording-label">
-                            {dictation.label}
-                          </span>
+                      >
+                        {attachedComments.length > 0 && (
+                          <div className="followup-comment-chips">
+                            {attachedComments.map((id) => {
+                              const note = comments.find((c) => c.id === id);
+                              return note ? (
+                                <span key={id}>
+                                  <MessageSquare size={11} />
+                                  {note.reference.name} ·{" "}
+                                  {reviewLocation(note.reference)}
+                                  <button
+                                    className="icon-button"
+                                    aria-label="Remove attached comment"
+                                    onClick={() =>
+                                      setAttachedComments((values) =>
+                                        values.filter((value) => value !== id),
+                                      )
+                                    }
+                                  >
+                                    <X size={10} />
+                                  </button>
+                                </span>
+                              ) : null;
+                            })}
+                          </div>
                         )}
+                        <textarea
+                          aria-label="Message to worker"
+                          placeholder={
+                            elsewhere
+                              ? runElsewhereNote(elsewhere)
+                              : task.example
+                                ? "Explore the conversation, or add a note…"
+                                : active
+                                  ? "Queue a follow-up for the next worker pass…"
+                                  : "Add context, ask a follow-up, or describe the next step…"
+                          }
+                          value={draft}
+                          onChange={(e) => setDraft(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" && primaryModifier(e)) {
+                              e.preventDefault();
+                              void send();
+                            }
+                          }}
+                        />
+                        <div className="composer-controls">
+                          <div>
+                            <WorkerMark task={task} small />
+                            <span>
+                              {task.route
+                                ? `${harnessNames[task.route.harness]} · ${task.route.modelLabel || task.route.model}`
+                                : task.assignment === "auto"
+                                  ? "Choosing a harness"
+                                  : harnessNames[task.harness]}
+                            </span>
+                            {dictation.phase !== "idle" && (
+                              <span className="recording-label">
+                                {dictation.label}
+                              </span>
+                            )}
+                          </div>
+                          <div>
+                            <button
+                              className={"dictation-button " + dictation.phase}
+                              title={
+                                dictation.label || "Dictate a note locally"
+                              }
+                              aria-label="Dictate a note"
+                              onClick={() => void dictation.toggle()}
+                              disabled={
+                                !health.available ||
+                                dictation.phase === "preparing" ||
+                                dictation.phase === "transcribing"
+                              }
+                            >
+                              {dictation.phase === "preparing" ||
+                              dictation.phase === "transcribing" ? (
+                                <Spinner />
+                              ) : dictation.phase === "recording" ? (
+                                <Square size={11} />
+                              ) : (
+                                <AudioLines size={16} />
+                              )}
+                            </button>
+                            <button
+                              className="send-button"
+                              title={
+                                !health.available
+                                  ? "Reopen MemCode to reconnect before sending"
+                                  : elsewhere
+                                    ? sendElsewhereLabel(elsewhere)
+                                    : !remote && !active && teamBlock
+                                      ? teamBlock
+                                      : !remote &&
+                                          !task.example &&
+                                          !active &&
+                                          !connection.canStart
+                                        ? "Connect in Workers before sending this task"
+                                        : active
+                                          ? `Queue follow-up · ${shortcutLabel("Enter")}`
+                                          : `Send follow-up · ${shortcutLabel("Enter")}`
+                              }
+                              aria-label={
+                                active ? "Queue follow-up" : "Send follow-up"
+                              }
+                              disabled={
+                                !health.available ||
+                                !draft.trim() ||
+                                (!remote && !active && !!teamBlock) ||
+                                (!remote &&
+                                  !task.example &&
+                                  !active &&
+                                  !connection.canStart)
+                              }
+                              onClick={() => void send()}
+                            >
+                              <ArrowUp size={15} />
+                            </button>
+                          </div>
+                        </div>
                       </div>
-                      <div>
-                        <button
-                          className={"dictation-button " + dictation.phase}
-                          title={dictation.label || "Dictate a note locally"}
-                          aria-label="Dictate a note"
-                          onClick={() => void dictation.toggle()}
-                          disabled={
-                            !health.available ||
-                            dictation.phase === "preparing" ||
-                            dictation.phase === "transcribing"
-                          }
-                        >
-                          {dictation.phase === "preparing" ||
-                          dictation.phase === "transcribing" ? (
-                            <Spinner />
-                          ) : dictation.phase === "recording" ? (
-                            <Square size={11} />
-                          ) : (
-                            <AudioLines size={16} />
-                          )}
-                        </button>
-                        <button
-                          className="send-button"
-                          title={
-                            !health.available
-                              ? "Reopen MemCode to reconnect before sending"
-                              : elsewhere
-                                ? sendElsewhereLabel(elsewhere, yours)
-                                : !remote && !active && teamBlock
-                                  ? teamBlock
-                                  : !remote &&
-                                      !task.example &&
-                                      !active &&
-                                      !connection.canStart
-                                    ? "Connect in Workers before sending this task"
-                                    : active
-                                      ? `Queue follow-up · ${shortcutLabel("Enter")}`
-                                      : `Send follow-up · ${shortcutLabel("Enter")}`
-                          }
-                          aria-label={
-                            active ? "Queue follow-up" : "Send follow-up"
-                          }
-                          disabled={
-                            !health.available ||
-                            !draft.trim() ||
-                            (!remote && !active && !!teamBlock) ||
-                            (!remote &&
-                              !task.example &&
-                              !active &&
-                              !connection.canStart)
-                          }
-                          onClick={() => void send()}
-                        >
-                          <ArrowUp size={15} />
-                        </button>
+                      <div className="composer-hint">
+                        <span>
+                          <ShieldCheck size={10} />
+                          Your conversation stays in this workspace.
+                        </span>
+                        <span>
+                          <kbd>{modifierLabel()}</kbd>
+                          <kbd>↵</kbd> to send
+                        </span>
                       </div>
-                    </div>
-                  </div>
-                  <div className="composer-hint">
-                    <span>
-                      <ShieldCheck size={10} />
-                      Your conversation stays in this workspace.
-                    </span>
-                    <span>
-                      <kbd>{modifierLabel()}</kbd>
-                      <kbd>↵</kbd> to send
-                    </span>
-                  </div>
+                    </>
+                  )}
                 </div>
               </>
             )}
@@ -1175,9 +1200,6 @@ export function WorkDetail({
             {tab === "changes" && (
               <WorkerChanges
                 task={task}
-                onShare={
-                  mayShare && localTask.run.startedAt ? shareChanges : undefined
-                }
                 focusTarget={changeTarget}
                 onComment={comment}
                 comments={comments.filter(

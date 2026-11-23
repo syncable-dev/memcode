@@ -304,10 +304,6 @@
   font-size: 11px;
   color: var(--muted);
 }
-.worker-changes-share {
-  margin-left: 8px;
-  white-space: nowrap;
-}
 
 /* A message someone else sent to a worker run here, waiting for this person. */
 .worker-asks {

@@ -2259,4 +2259,10 @@ kbd {
 .shared-session-status strong { color:var(--ink); font-weight:500; }
 .shared-session-status > span:last-child { margin-left:auto; max-width:55%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .shared-session-error { margin:0 0 8px; font-size:11px; color:#986a34; }
+/* Someone else's run: how it stands, then its summary, in place of the conversation. */
+.shared-run-standing { margin:18px 4px; color:var(--muted); font-size:13px; line-height:1.55; }
+.shared-run-summary { margin:18px 0; padding:18px 20px; border:1px solid var(--line); border-radius:12px; background:var(--white); }
+.shared-run-summary-by { margin:6px 0 12px; color:var(--muted); font-size:11px; }
+.shared-only-owner { display:flex; align-items:center; gap:12px; margin:0 0 10px; padding:12px 14px; border:1px solid var(--line); border-radius:10px; background:var(--paper); color:var(--muted); font-size:12px; }
+.shared-only-owner > span { flex:1; }
 .message-origin { font-size:10px; color:var(--muted); font-weight:400; }
