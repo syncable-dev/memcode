@@ -51,6 +51,8 @@ export interface ProjectsApi {
   removeGuest(projectId: string, accountId: string): Promise<ProjectRecord>;
   /** A guest leaves a project. The owner cannot. */
   leaveProject(projectId: string): Promise<void>;
+  /** Deletes the project for everyone on it, for good. Only its owner can. */
+  deleteProject(projectId: string): Promise<void>;
 }
 
 const unreadable = () =>
@@ -150,6 +152,13 @@ export class MemsyncProjects implements ProjectsApi {
   async leaveProject(projectId: string) {
     await this.calls.unary(
       call("LeaveProject"),
+      { project_id: projectId },
+      () => undefined,
+    );
+  }
+  async deleteProject(projectId: string) {
+    await this.calls.unary(
+      call("DeleteProject"),
       { project_id: projectId },
       () => undefined,
     );

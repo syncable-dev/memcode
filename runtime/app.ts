@@ -21,7 +21,8 @@ import { MemtraceEngine } from "./memtrace";
 import { ensureProjectRepository } from "./project-repository";
 import { workerResponseSchema } from "./worker-input";
 import { permissionModes, supportsPermissionMode } from "../src/permissions";
-import { registerDeletion } from "./deletion";
+import { deleteProject, registerDeletion } from "./deletion";
+import { tellPerson } from "./notices";
 import { registerBranches } from "./branches";
 import { readArtifactThumbnail } from "./artifact-thumbnail";
 import { reconcileArtifacts } from "./artifact-catalog";
@@ -780,6 +781,16 @@ export async function createRuntime(
   sharing = new Sharing({
     state,
     changed,
+    projectGone: async (link) => {
+      await deleteProject(store.state, link.projectId, {
+        removeSharing: (projectId) => sharing!.disconnect(projectId),
+      });
+      tellPerson(
+        store.state,
+        `“${link.sharedProjectName}” was removed here: its owner deleted it, or took you off it. Its folder stays on your computer.`,
+      );
+      await changed();
+    },
     session: () => beta!.sessionProof(),
     // memtrace.io lists where the sharing service is. No list entry: no sharing.
     addresses: options?.findSharing ?? sharingFinder(),
@@ -1545,7 +1556,12 @@ export async function createRuntime(
   registerPlanning(register, state, project, changed);
   registerOnboarding(register, state, changed);
   registerDeletion(register, state, changed, {
-    forgetSharing: async (projectId) => sharing?.disconnect(projectId),
+    removeSharing: async (projectId) => {
+      await sharing?.removeForAccount(projectId);
+    },
+    leaveTeam: async (projectId) => {
+      await team?.leave(projectId);
+    },
   });
   registerBranches(register, state, changed);
   registerCardComments(register, state, changed, (taskId) => {

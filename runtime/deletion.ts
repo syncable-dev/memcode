@@ -212,29 +212,42 @@ function deleteCycle(state: AppState, id: string): DeletionResult {
   };
 }
 
+/** What deleting a project asks of sharing before the project goes. */
+export interface ProjectDeletionSharing {
+  /**
+   * Takes a shared project off the sharing service for this account: its owner
+   * deletes it for everyone, anyone else leaves it.
+   */
+  removeSharing?(projectId: string): Promise<void>;
+  /** Leaves the project's old Team Sync team; the teammates keep it. */
+  leaveTeam?(projectId: string): Promise<void>;
+}
+
 /**
  * Removes a project from MemCode on this computer: its board and everything kept
  * for it. Its folder, its code and the files workers made stay on disk. A shared
- * project is disconnected from this computer first; it stays shared for the others.
+ * project is taken off the sharing service first (deleted for everyone by its
+ * owner, left by anyone else), and a Team Sync project leaves its team.
  */
-async function deleteProject(
+export async function deleteProject(
   state: AppState,
   id: string,
-  forgetSharing?: (projectId: string) => Promise<void>,
+  sharing: ProjectDeletionSharing = {},
 ): Promise<DeletionResult> {
   const project = state.projects.find((item) => item.id === id);
   if (!project) throw Error("Project not found.");
   if (state.projects.length === 1)
     throw Error("Add another project before deleting the last one.");
-  if (state.team?.some((room) => room.projectId === id))
-    throw Error(
-      `${project.name} is in a Team Sync team. Leave the team on its Team page first.`,
-    );
   const tasks = state.tasks.filter((task) => task.projectId === id);
   if (tasks.some(isActive))
     throw Error(`Stop the workers running in ${project.name} before deleting it.`);
+  if (state.team?.some((room) => room.projectId === id)) {
+    if (!sharing.leaveTeam)
+      throw Error(`${project.name} is in a Team Sync team, which MemCode can't leave right now.`);
+    await sharing.leaveTeam(id);
+  }
   if (state.sharedProjectLinks?.some((link) => link.projectId === id))
-    await forgetSharing?.(id);
+    await sharing.removeSharing?.(id);
   removeStories(state, new Set(tasks.map((task) => task.id)));
   removeProjectRecords(state, id);
   return { deletedIds: [id], reassignedStoryIds: [] };
@@ -262,6 +275,7 @@ function removeProjectRecords(state: AppState, id: string): void {
   if (state.fleetProposals)
     state.fleetProposals = ofOtherProjects(state.fleetProposals);
   if (state.sharedBoards) state.sharedBoards = ofOtherProjects(state.sharedBoards);
+  if (state.team) state.team = ofOtherProjects(state.team);
   if (state.pullRequests)
     state.pullRequests = state.pullRequests.filter(
       (request) => !goalIds.has(request.epicId),
@@ -283,13 +297,10 @@ export function registerDeletion(
   register: Register,
   state: () => AppState,
   changed: () => Promise<void>,
-  options: {
-    /** Disconnects a shared project from this computer; the others keep it. */
-    forgetSharing?(projectId: string): Promise<void>;
-  } = {},
+  options: ProjectDeletionSharing = {},
 ): void {
   register("project:delete", deleteEntitySchema, async ({ id }) => {
-    const result = await deleteProject(state(), id, options.forgetSharing);
+    const result = await deleteProject(state(), id, options);
     await changed();
     return result;
   });
