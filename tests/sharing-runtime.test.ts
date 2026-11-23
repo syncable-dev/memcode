@@ -690,11 +690,19 @@ test("a worker run on the Mac is on the PC's card when it is opened there, and a
       onMac.messages.find((message) => message.id === messageId)!.actor?.name,
       mac.me.name,
     );
+    // Both computers run in this one process, so the "Mac" names itself after
+    // the platform the test runs on.
+    const macDevice =
+      process.platform === "win32"
+        ? "Windows"
+        : process.platform === "darwin"
+          ? "Mac"
+          : "Linux";
     await until(
       () =>
         onPc().sharedSession?.messages.find(
           (message) => message.id === messageId,
-        )?.deliveryLine === "Queued on your Mac",
+        )?.deliveryLine === `Queued on your ${macDevice}`,
       "the PC to see it queued on the Mac",
     );
     // Nothing runs on the PC: its own task holds no new turn.
