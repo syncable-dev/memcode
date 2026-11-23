@@ -185,7 +185,9 @@ test("public packaging signs the native libraries bundled beside the app, which 
     await place("dist-desktop-runtime/node", macho);
     await place("src-tauri/target/release/memcode", macho);
     assert.deepEqual(
-      (await bundledLibrariesToSign(root)).map((path: string) => path.slice(root.length + 1)).sort(),
+      (await bundledLibrariesToSign(root))
+        .map((path: string) => path.slice(root.length + 1).replaceAll("\\", "/"))
+        .sort(),
       [`${onnx}/libonnxruntime.1.23.2.dylib`, `${onnx}/onnxruntime_binding.node`],
     );
   } finally {
