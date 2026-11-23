@@ -105,6 +105,7 @@ import {
   SearchDialog,
   SettingsDialog,
 } from "./components/Dialogs";
+import { hasTeamPage } from "./team-presentation";
 
 type View =
   | "board"
@@ -617,13 +618,18 @@ export function App() {
       count: groupedArtifacts(artifacts).primary.length,
     },
     { id: "activity", label: "Activity", icon: Radio },
-    {
-      id: "team",
-      label: "Team",
-      icon: Users,
-      count: state.team?.find((item) => item.projectId === project.id)
-        ?.unreadCount,
-    },
+    // Sharing replaces Team Sync: the Team page stays only for a project still in a team.
+    ...(hasTeamPage(state, project.id)
+      ? [
+          {
+            id: "team" as const,
+            label: "Team",
+            icon: Users,
+            count: state.team?.find((item) => item.projectId === project.id)
+              ?.unreadCount,
+          },
+        ]
+      : []),
     { id: "docs", label: "Docs", icon: BookOpen },
   ];
   const projectGroups = new Map<string, typeof state.projects>();
@@ -761,16 +767,6 @@ export function App() {
               >
                 <Plus size={16} />
                 Add a project
-              </button>
-              <button
-                onClick={() => {
-                  setView("team");
-                  setJoinTeamRequest((value) => value + 1);
-                  setProjectMenu(false);
-                }}
-              >
-                <Users size={16} />
-                Join a team project
               </button>
             </div>
           )}
