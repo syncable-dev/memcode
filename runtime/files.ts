@@ -8,6 +8,7 @@ import {
   resolve,
 } from "node:path";
 import type { AppState } from "../src/shared";
+import { workerRecordsBoundary, workerRecordsFolder } from "./worker-records";
 import { artifactFormat } from "../src/artifact-format";
 import { fileLink, type FileReference } from "../src/file-reference";
 import { within } from "./local";
@@ -16,8 +17,8 @@ export function outputRoots(dataDir: string, task: AppState["tasks"][number]) {
   return [
     join(dataDir, "examples"),
     join(dataDir, "captures", task.id),
-    ...(task.run.workspace
-      ? [join(task.run.workspace, ".memcode", "workers", task.id, "artifacts")]
+    ...(workerRecordsFolder(task)
+      ? [join(workerRecordsFolder(task)!, "artifacts")]
       : []),
     ...(task.run.worktree
       ? [join(task.run.worktree, ".memcode", "artifacts")]
@@ -65,17 +66,11 @@ export async function canonicalArtifactRoots(
     ...(singleId
       ? [[dataDir, join(dataDir, "captures", task.id)] as [string, string]]
       : []),
-    ...(singleId && task.run.workspace
+    ...(singleId && workerRecordsFolder(task)
       ? [
           [
-            task.run.workspace,
-            join(
-              task.run.workspace,
-              ".memcode",
-              "workers",
-              task.id,
-              "artifacts",
-            ),
+            workerRecordsBoundary(task)!,
+            join(workerRecordsFolder(task)!, "artifacts"),
           ] as [string, string],
         ]
       : []),
