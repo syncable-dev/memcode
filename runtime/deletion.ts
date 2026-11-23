@@ -42,8 +42,16 @@ function deleteStories(
     for (const child of children) ids.add(child.id);
   }
   requireStopped(state.tasks.filter((task) => ids.has(task.id)));
-  // All validation precedes mutation. Source files, branches, output files and Git
-  // history are deliberately outside this metadata-only operation.
+  // All validation precedes mutation.
+  removeStories(state, ids);
+  return { deletedIds: [...ids], reassignedStoryIds: [] };
+}
+
+/**
+ * Removes tasks and every record that names them. Source files, branches, output
+ * files and Git history are deliberately outside this metadata-only operation.
+ */
+function removeStories(state: AppState, ids: Set<string>): void {
   const artifactIds = new Set(
     state.artifacts
       .filter((artifact) => ids.has(artifact.taskId))
@@ -139,7 +147,6 @@ function deleteStories(
   for (const id of ids) delete state.planning.observations[id];
   if (state.onboarding?.storyId && ids.has(state.onboarding.storyId))
     delete state.onboarding.storyId;
-  return { deletedIds: [...ids], reassignedStoryIds: [] };
 }
 
 function deleteEpic(state: AppState, id: string): DeletionResult {
