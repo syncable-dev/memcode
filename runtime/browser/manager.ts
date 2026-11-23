@@ -15,7 +15,7 @@ import { BrowserPool, type BrowserSession } from "./pool";
 import { NativeBrowserPool } from "./native-pool";
 import type { NativeHost } from "../host";
 import { inspectPage, interact } from "./inspect";
-import { BrowserRendering } from "./render";
+import { BrowserRendering, type ImageFormat } from "./render";
 import { browserDeadline } from "./capture";
 
 interface Session {
@@ -459,7 +459,7 @@ export class AgentBrowserManager {
       return {
         state: this.view(session),
         ...(page && page.url() !== "about:blank"
-          ? { image: await this.image(session, page, "device") }
+          ? { image: await this.image(session, page, "device", "jpeg") }
           : {}),
       };
     } else if (request.action === "capture")
@@ -467,7 +467,12 @@ export class AgentBrowserManager {
     session.state.action = undefined;
     return { state: this.view(session) };
   }
-  private async image(session: Session, page: Page, scale: "css" | "device") {
+  private async image(
+    session: Session,
+    page: Page,
+    scale: "css" | "device",
+    format: ImageFormat = "png",
+  ) {
     const actual = this.pool.native
       ? await browserDeadline(
           page.evaluate(() => ({
@@ -478,29 +483,37 @@ export class AgentBrowserManager {
           "Browser viewport observation",
         )
       : undefined;
-    const data =
+    // The native WebView2 capture is always PNG; only Chrome's frames change.
+    const encoded =
       this.pool instanceof NativeBrowserPool
-        ? await this.pool.capture(
-            session.state.taskId,
-            page,
-            scale,
-            actual!.viewport,
-            actual!.density,
-          )
-        : await browserDeadline(
-            this.rendering.capture(
-              session.context!,
+        ? {
+            format: "png" as const,
+            data: await this.pool.capture(
+              session.state.taskId,
               page,
-              actual?.viewport ?? session.state.viewport,
-              actual?.density ?? session.state.deviceScaleFactor,
               scale,
+              actual!.viewport,
+              actual!.density,
             ),
-            10000,
-            "Browser screenshot",
-          );
+          }
+        : {
+            format,
+            data: await browserDeadline(
+              this.rendering.capture(
+                session.context!,
+                page,
+                actual?.viewport ?? session.state.viewport,
+                actual?.density ?? session.state.deviceScaleFactor,
+                scale,
+                format,
+              ),
+              10000,
+              "Browser screenshot",
+            ),
+          };
     return {
-      mimeType: "image/png" as const,
-      data,
+      mimeType: `image/${encoded.format}` as const,
+      data: encoded.data,
       ...(actual?.viewport ?? session.state.viewport),
     };
   }

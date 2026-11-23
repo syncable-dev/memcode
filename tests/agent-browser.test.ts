@@ -8,6 +8,7 @@ import { initialState } from "../src/seed";
 import { browserURL } from "../src/browser";
 import { BrowserPool } from "../runtime/browser/pool";
 import { AgentBrowserManager } from "../runtime/browser/manager";
+import { pixelSize } from "./support/browser-image";
 
 test("shared browser addresses permit HTTPS while keeping privileged URLs and remote plaintext out", () => {
   assert.equal(browserURL("google.com").href, "https://google.com/");
@@ -159,7 +160,7 @@ test(
       );
       assert.match(observed.snapshot!.text, /Late.*\[selected\]/);
       const frame = await manager.execute(first.id, { action: "frame" });
-      assert.equal(frame.image?.mimeType, "image/png");
+      assert.equal(frame.image?.mimeType, "image/jpeg");
       await manager.execute(first.id, {
         action: "resize",
         width: 800,
@@ -167,9 +168,7 @@ test(
         deviceScaleFactor: 2,
       });
       const retina = await manager.execute(first.id, { action: "frame" });
-      const pixels = Buffer.from(retina.image!.data, "base64");
-      assert.equal(pixels.readUInt32BE(16), 1600);
-      assert.equal(pixels.readUInt32BE(20), 1200);
+      assert.deepEqual(pixelSize(retina.image!), { width: 1600, height: 1200 });
       const logical = await manager.execute(first.id, {
         action: "observe",
         screenshot: true,
