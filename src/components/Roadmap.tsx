@@ -18,11 +18,11 @@ import { isActive, isQuickChanges } from "../domain";
 import { Empty, PriorityMark, Spinner, StageIcon } from "./UI";
 import { Select } from "./Select";
 import {
-  baseReasonText,
   goalBranchStanding,
   type GoalBranch,
   type RepositoryStatus,
 } from "../branches";
+import { WORKED_OUT } from "./BaseBranchPicker";
 import { Modal } from "./Dialogs";
 import { DeleteAction } from "./DeleteAction";
 
@@ -42,8 +42,6 @@ interface Props {
   repository?: RepositoryStatus;
 }
 
-/** The branch pickers' value for "MemCode decides", marked like every other automatic choice. */
-const WORKED_OUT = "auto";
 const phases = [
   { id: "now", name: "Now", detail: "Build the useful core", number: "01" },
   {
@@ -70,10 +68,6 @@ export function Roadmap({
   repository,
 }: Props) {
   const base = repository?.base.branch ?? "dev";
-  const chooseBase = (value: string) =>
-    void window.memcode
-      .setBaseBranch(project.id, value === WORKED_OUT ? null : value)
-      .catch((error: Error) => notify(error.message));
   const chooseGoalStart = (epic: Epic, value: string) =>
     void window.memcode
       .startGoalFresh(epic.id, value === WORKED_OUT ? null : value)
@@ -186,40 +180,6 @@ export function Roadmap({
           ))}
         </div>
         <div className="roadmap-toolbar-end">
-          {repository && (
-            <div className="roadmap-base" title={baseReasonText(repository.base)}>
-              <GitBranch size={12} aria-hidden="true" />
-              <span>Goals branch from</span>
-              <Select
-                aria-label="Where new goals branch from"
-                className="roadmap-base-picker"
-                value={repository.base.chosen ? repository.base.branch : WORKED_OUT}
-                onValueChange={chooseBase}
-              >
-                <optgroup label="MemCode decides">
-                  <option
-                    value={WORKED_OUT}
-                    data-detail={
-                      repository.base.chosen
-                        ? "From your merged pull requests and branches."
-                        : baseReasonText(repository.base)
-                    }
-                  >
-                    {repository.base.chosen ? "Work it out for me" : base}
-                  </option>
-                </optgroup>
-                <optgroup label="Or always use">
-                  {repository.branches
-                    .filter((branch) => repository.base.chosen || branch !== base)
-                    .map((branch) => (
-                      <option key={branch} value={branch}>
-                        {branch}
-                      </option>
-                    ))}
-                </optgroup>
-              </Select>
-            </div>
-          )}
           <button
             className="button secondary"
             data-guide="new-epic"
