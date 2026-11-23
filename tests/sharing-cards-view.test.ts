@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import type { Artifact, WorkItem } from "../src/shared";
 import type { SharedCardResult } from "../src/sharing";
 import {
+  cardFileList,
   cardRunElsewhere,
   isUnfetchedSharedFile,
   onlyItsOwnerContinues,
@@ -113,7 +114,7 @@ test("the panel for a run from a shared project's card speaks of the project, an
   assert.match(project, /SHARED/);
   assert.match(
     project,
-    /Conversation and review shared with the project\. It runs on Mac\./,
+    /The conversation stays with Alex Holm\. Everyone on the project sees its summaries, changes and review\. It runs on Mac\./,
   );
   assert.doesNotMatch(project, /\bteam\b/i);
   const team = text();
@@ -132,12 +133,14 @@ test("someone else's run reads, in place of its conversation, how it stands unti
     runElsewhereStanding(owner, session({})),
     "Alex Holm is working on this on their Mac. A summary of the work shows here when it's ready for review.",
   );
+  const done = [{ text: "Done.", at, by: "Alex Holm", device: "Mac" }];
   assert.equal(
-    runElsewhereStanding(
-      owner,
-      session({ state: "finished", summary: { text: "Done.", at } }),
-    ),
+    runElsewhereStanding(owner, session({ state: "finished", summaries: done })),
     undefined,
+  );
+  assert.equal(
+    runElsewhereStanding(owner, session({ summaries: done })),
+    "Alex Holm is working on this again on their Mac. A new summary shows here when it's ready for review.",
   );
   assert.equal(
     runElsewhereStanding(owner, session({ state: "finished" })),
@@ -153,27 +156,86 @@ test("someone else's run reads, in place of its conversation, how it stands unti
   );
 });
 
-test("someone else's run shows how it stands, then its summary with who and when", async () => {
-  const { SharedRunSummary } = await import(
-    "../src/components/SharedRunSummary"
+test("someone else's run shows the request first, then how it stands", async () => {
+  const { OthersRun } = await import("../src/components/OthersRun");
+  const markup = renderToStaticMarkup(
+    createElement(OthersRun, {
+      owner: { name: "Alex Holm", device: "Mac" },
+      request: "Count the nonblank lines read from standard input.",
+      session: { state: "running", messages: [] } as never,
+      onOpenLink: () => {},
+    }),
   );
-  const owner = { name: "Alex Holm", device: "Mac" };
-  const render = (session: Record<string, unknown>) =>
-    renderToStaticMarkup(
-      createElement(SharedRunSummary, {
-        owner,
-        session: { state: "running", messages: [], ...session } as never,
-        onOpenLink: () => {},
-      }),
-    );
-  const working = render({});
-  assert.match(working, /Alex Holm is working on this on their Mac/);
-  assert.doesNotMatch(working, /SUMMARY/);
-  const done = render({
-    state: "finished",
-    summary: { text: "Added the CSV export and its test.", at },
+  const text = markup.replace(/<[^>]+>/g, " ");
+  assert.match(text, /Request\s+Count the nonblank lines read from standard input\./);
+  assert.match(text, /Alex Holm is working on this on their Mac/);
+  assert.doesNotMatch(text, /SUMMARY/);
+  assert.ok(
+    text.indexOf("Count the nonblank") < text.indexOf("is working on this"),
+  );
+});
+
+test("someone else's run lists a summary for each round of work, oldest first, with who and when", async () => {
+  const { OthersRun } = await import("../src/components/OthersRun");
+  const later = "2026-11-22T11:00:00.000Z";
+  const text = renderToStaticMarkup(
+    createElement(OthersRun, {
+      owner: { name: "Alex Holm", device: "Mac" },
+      request: "Export the report.",
+      session: {
+        state: "running",
+        messages: [],
+        summaries: [
+          { text: "Added the CSV export.", at, by: "Dana Lee", device: "Windows" },
+          { text: "Added TSV too.", at: later, by: "Alex Holm", device: "Mac" },
+        ],
+      } as never,
+      onOpenLink: () => {},
+    }),
+  ).replace(/<[^>]+>/g, " ");
+  assert.equal(text.match(/SUMMARY/g)?.length, 2);
+  assert.match(text, /Dana Lee · Windows · /);
+  assert.ok(text.indexOf("Added the CSV export.") < text.indexOf("Added TSV too."));
+  assert.ok(text.indexOf("Added TSV too.") < text.indexOf("working on this again"));
+});
+
+test("on the computer that ran the worker, the card says documents and images go to everyone by themselves", async () => {
+  const { ShareFromCard } = await import("../src/components/ShareFromCard");
+  const file = (name: string) =>
+    ({ id: name, name, kind: "text", path: `/x/${name}`, taskId: "t", projectId: "p", createdAt: at, source: "codex" }) as Artifact;
+  const text = renderToStaticMarkup(
+    createElement(ShareFromCard, {
+      projectName: "Website",
+      artifacts: [file("verification.md"), file("count.sh")],
+      sharedNames: new Set(["verification.md"]),
+      busy: "",
+      onShare: () => {},
+    }),
+  ).replace(/<[^>]+>/g, " ");
+  assert.match(
+    text,
+    /Documents and images the worker makes are shared with everyone on\s+Website\s+when its run finishes\. Share any other file yourself\./,
+  );
+  assert.match(text, /verification\.md\s+Shared/);
+  assert.match(text, /count\.sh\s+Share/);
+});
+
+test("a file shared again after a later round is listed once, as its newest version", () => {
+  const later = "2026-11-22T11:00:00.000Z";
+  const card = withRun({
+    sharedResults: [
+      result({ id: "old", name: "verification.md", sharedAt: at }),
+      result({ id: "new", name: "verification.md", sharedAt: later }),
+      result({ id: "other", name: "verification.md", sharedBy: "Dana Lee" }),
+    ],
   });
-  assert.match(done, /SUMMARY/);
-  assert.match(done, /Alex Holm · Mac · /);
-  assert.match(done, /Added the CSV export and its test\./);
+  const listed = (own: Artifact[]) =>
+    cardFileList(card, own).map((file) => `${file.id} ${file.source}`);
+  assert.deepEqual(listed([]), ["shared:new Alex Holm", "shared:other Dana Lee"]);
+  // The older version was opened before the newer one came: only the newer one is listed.
+  const openedOld = {
+    ...sharedFilesToFetch(withRun({ sharedResults: [card.sharedResults![0]] }), [])[0],
+    path: "/profile/captures/task-1/shared-old-verification.md",
+  };
+  assert.deepEqual(listed([openedOld]), ["shared:new Alex Holm", "shared:other Dana Lee"]);
 });

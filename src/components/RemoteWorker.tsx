@@ -120,8 +120,8 @@ export function RemoteWorker({
       {owner.session &&
         (scope === "project" ? (
           <p>
-            Conversation and review shared with the project. It runs on{" "}
-            {owner.device}.
+            The conversation stays with {owner.name}. Everyone on the project
+            sees its summaries, changes and review. It runs on {owner.device}.
           </p>
         ) : (
           <p>

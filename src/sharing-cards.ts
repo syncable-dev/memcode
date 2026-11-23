@@ -1,4 +1,5 @@
 import type { Artifact, WorkItem } from "./shared";
+import type { SharedCardResult } from "./sharing";
 import type { teamClaimForStory } from "./team-presentation";
 import type { TeamSession } from "./team-session";
 
@@ -47,19 +48,23 @@ export const onlyItsOwnerContinues = (owner: Owner) =>
   `Only ${owner.name} can continue this worker. Comment on the card to reach them.`;
 
 /**
- * What someone else's card says in place of a run's conversation, which only its
- * owner reads (MemSync ADR-0019). Nothing once the run's summary is in: the
- * summary is shown instead.
+ * How someone else's worker stands, said under the card's summaries in place of its
+ * conversation, which only its owner reads (MemSync ADR-0019). Nothing once a round
+ * finished with its summary: the summary says it.
  */
 export function runElsewhereStanding(
   owner: Owner,
-  session: Pick<TeamSession, "state" | "summary">,
+  session: Pick<TeamSession, "state" | "summaries">,
 ): string | undefined {
-  if (session.summary) return undefined;
+  const summarized = !!session.summaries?.length;
   if (["preparing", "running", "stopping", "blocked"].includes(session.state))
-    return `${owner.name} is working on this on their ${owner.device}. A summary of the work shows here when it's ready for review.`;
+    return summarized
+      ? `${owner.name} is working on this again on their ${owner.device}. A new summary shows here when it's ready for review.`
+      : `${owner.name} is working on this on their ${owner.device}. A summary of the work shows here when it's ready for review.`;
   if (session.state === "finished")
-    return `${owner.name}'s worker finished on their ${owner.device} without a summary. What it changed and made is in the Changes and Artifacts tabs.`;
+    return summarized
+      ? undefined
+      : `${owner.name}'s worker finished on their ${owner.device} without a summary. What it changed and made is in the Changes and Artifacts tabs.`;
   return `${owner.name}'s worker on their ${owner.device} stopped before it finished.`;
 }
 
@@ -75,13 +80,8 @@ export function sharedFilesToFetch(
   artifacts: Artifact[],
 ): Artifact[] {
   const fetched = new Set(artifacts.map((artifact) => artifact.id));
-  return (task.sharedResults ?? [])
-    .filter(
-      (result) =>
-        result.kind !== "patch" &&
-        !result.sharedHere &&
-        !fetched.has(sharedFileId(result.id)),
-    )
+  return newestSharedFiles(task)
+    .filter((result) => !fetched.has(sharedFileId(result.id)))
     .map((result) => ({
       id: sharedFileId(result.id),
       projectId: task.projectId,
@@ -101,5 +101,35 @@ export function sharedFilesToFetch(
 }
 
 /** Whether a listed file is one shared from elsewhere that still has to be fetched. */
+/**
+ * The files a card lists: its own, and of each file someone shared from another
+ * computer only the newest version, opened here or not. A worker that writes a file
+ * again in a later round shares it again; the earlier version is not listed.
+ */
+export function cardFileList(task: WorkItem, own: Artifact[]): Artifact[] {
+  const newest = new Set(
+    newestSharedFiles(task).map((result) => sharedFileId(result.id)),
+  );
+  const older = new Set(
+    (task.sharedResults ?? [])
+      .map((result) => sharedFileId(result.id))
+      .filter((id) => !newest.has(id)),
+  );
+  const listed = own.filter((artifact) => !older.has(artifact.id));
+  return [...listed, ...sharedFilesToFetch(task, listed)];
+}
+
+/** Of each file shared to a card from another computer, by its name and who shared it, the newest. */
+function newestSharedFiles(task: WorkItem) {
+  const newest = new Map<string, SharedCardResult>();
+  for (const result of task.sharedResults ?? []) {
+    if (result.kind === "patch" || result.sharedHere) continue;
+    const key = `${result.sharedBy}\n${result.name}`;
+    const known = newest.get(key);
+    if (!known || known.sharedAt <= result.sharedAt) newest.set(key, result);
+  }
+  return [...newest.values()];
+}
+
 export const isUnfetchedSharedFile = (artifact: Artifact) =>
   artifact.path === "" && artifact.id.startsWith("shared:");

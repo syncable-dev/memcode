@@ -24,9 +24,38 @@ const fileTypes: Record<string, string> = {
   ".csv": "text/csv",
   ".patch": "text/x-diff",
   ".diff": "text/x-diff",
+  ".docx":
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  ".pptx":
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
 };
 export const fileTypeOf = (name: string) =>
   fileTypes[extname(name).toLowerCase()] ?? "application/octet-stream";
+
+// What a worker makes for people to read or look at, not for the code: documents,
+// images, sheets and slides.
+const madeForPeople = new Set([
+  ".md",
+  ".txt",
+  ".pdf",
+  ".html",
+  ".htm",
+  ".csv",
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".webp",
+  ".gif",
+  ".svg",
+  ".docx",
+  ".xlsx",
+  ".pptx",
+]);
+
+/** Whether a file a worker saved is shared with the project on its own when the run finishes. */
+export const isForPeople = (name: string) =>
+  madeForPeople.has(extname(name).toLowerCase());
 
 /** How a file from a card is previewed, by its type. */
 export const previewKindOf = (mime: string): Artifact["kind"] =>

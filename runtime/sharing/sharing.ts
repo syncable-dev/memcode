@@ -776,6 +776,8 @@ export class Sharing {
         if (!changes.checkpoints.length) return undefined;
         return new TextEncoder().encode(JSON.stringify(changes));
       },
+      savedFileOf: (taskId, artifactId) =>
+        this.cardHost().shareableFile(taskId, artifactId),
       nameOf: (account) => sync.nameOf(account),
       learnName: (account) => sync.learnName(account),
       shown: () => this.options.shown?.(),
