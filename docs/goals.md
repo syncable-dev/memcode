@@ -39,6 +39,21 @@ exists, and otherwise the repository's default branch. Branch names follow the
 team's prefix (for example `feat/`); a taken name gets a numeric suffix, so new
 work never picks up an old branch.
 
+**Repository and branches**, in the project switcher, shows all of this for the open
+project (`runtime/branches.ts`, `src/components/RepositoryPanel.tsx`):
+
+- the folder and its GitHub repository;
+- the branch the folder is on, how far behind the base it is, and how many changed
+  files are not committed;
+- **New work starts from**: what MemCode works out, or a branch you choose (saved as
+  the project's `baseBranch`). A goal can also carry its own `baseBranch`, which wins;
+- each goal's branch. A goal that already names a branch no worker here has used,
+  such as one copied from another project, can **start fresh**: its next work gets a
+  new branch from the base. A goal whose work has started keeps its branch; use
+  Update from its base instead.
+
+The panel never deletes or switches a branch.
+
 ## Tasks in a goal share it
 
 Tasks in one goal run side by side on the goal's branch and workspace, and their
