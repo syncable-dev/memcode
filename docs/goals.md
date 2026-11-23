@@ -39,13 +39,13 @@ exists, and otherwise the repository's default branch. Branch names follow the
 team's prefix (for example `feat/`); a taken name gets a numeric suffix, so new
 work never picks up an old branch.
 
-You can change where goals start on the **Roadmap** (`runtime/branches.ts`,
-`src/components/Roadmap.tsx`):
+You can see and change where goals start (`runtime/branches.ts`,
+`src/components/BaseBranchPicker.tsx`, `src/components/Roadmap.tsx`):
 
-- **Goals branch from**, beside New goal, shows the base. Opening it says which
-  rule chose it, for example "34 of your last 40 merged pull requests went to
-  dev". Pick a branch to always use it (saved as the project's `baseBranch`), or
-  go back to letting MemCode work it out.
+- The **branch beside the project's name** in the top bar, on every view, shows the
+  base. Opening it says which rule chose it, for example "34 of your last 40 merged
+  pull requests went to dev". Pick a branch to always use it (saved as the project's
+  `baseBranch`), or go back to letting MemCode work it out.
 - Each goal card has a branch line. Before a goal's work starts it reads "New
   branch from dev when work starts", and you can pick another branch for that goal
   alone (its own `baseBranch`, which wins over the project's). Once a worker has
