@@ -1029,30 +1029,6 @@
   gap: 16px;
   margin-left: auto;
 }
-.roadmap-base {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: #91a596;
-}
-.roadmap-base > span {
-  font: 9px var(--mono);
-  letter-spacing: 0.75px;
-  text-transform: uppercase;
-  color: #687d6e;
-  white-space: nowrap;
-}
-.roadmap-base-picker.mc-select-trigger {
-  min-width: 92px;
-  max-width: 220px;
-  min-height: 31px;
-  padding: 6px 10px;
-  border-color: #e3ebe0;
-  background: white;
-  font: 11px var(--mono);
-  color: #2f5038;
-  gap: 8px;
-}
 .mc-select-copy {
   display: flex;
   flex-direction: column;
@@ -1121,4 +1097,25 @@
 }
 .epic-branch-picker.mc-select-trigger:hover {
   background: #e8f1e6;
+}
+/* The branch new goals start from, beside the project's name in the top bar. */
+.base-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #91a596;
+}
+.base-branch-picker.mc-select-trigger {
+  min-height: 25px;
+  max-width: 200px;
+  padding: 3px 8px;
+  border-color: #e3ebe0;
+  background: #f4f8f3;
+  box-shadow: none;
+  font: 11px var(--mono);
+  color: #2f5038;
+  gap: 6px;
+}
+.base-branch-picker.mc-select-trigger:hover {
+  background: #ecf3ea;
 }

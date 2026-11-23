@@ -17,6 +17,8 @@ interface Props {
   disabled?: boolean;
   "aria-label"?: string;
   className?: string;
+  /** Which edge of the trigger the menu lines up with. */
+  align?: "start" | "end";
 }
 
 interface SelectOptionItem {
@@ -113,6 +115,7 @@ export function Select({
   disabled,
   "aria-label": label,
   className = "",
+  align = "end",
 }: Props) {
   const elements = flattenElements(children);
   const hasOptgroup = elements.some((element) => element.type === "optgroup");
@@ -173,7 +176,7 @@ export function Select({
           position="popper"
           sideOffset={6}
           collisionPadding={12}
-          align="end"
+          align={align}
           onEscapeKeyDown={(event) => event.stopPropagation()}
         >
           <Primitive.ScrollUpButton className="mc-select-scroll">
