@@ -8,6 +8,14 @@ import { inspectDshDesktopCli, installDshDesktopCli } from "../runtime/dsh-deskt
 
 async function placeBundledNode(target: string): Promise<void> {
   await mkdir(dirname(target), { recursive: true });
+  if (process.platform !== "win32") {
+    // A Node built against a shared libnode, as Homebrew's is, cannot start from a
+    // copy or a link elsewhere: the fixture's node starts the real one instead.
+    await writeFile(target, `#!/bin/sh\nexec "${process.execPath}" "$@"\n`, {
+      mode: 0o755,
+    });
+    return;
+  }
   try {
     await link(process.execPath, target);
   } catch {
