@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { TeamWorkspace } from "../src/components/TeamWorkspace";
 import { guideArticles } from "../src/guide-content";
 import {
+  hasTeamPage,
   teamClaimForStory,
   teamStartBlocked,
   teamSyncLabel,
@@ -140,9 +141,9 @@ test("legacy standalone setup explains current-state joining and its preview ide
   assert.doesNotMatch(markup, /Alice|Bob|Account connected/);
 });
 
-test("Team guide explains named teams, current-state joining and separate local-code approval", () => {
+test("the sharing guide explains Share, guests, own computers and what stays private", () => {
   const article = guideArticles.find((item) => item.id === "team")!;
-  assert.equal(article.destination, "team");
+  assert.equal(article.destination, "board");
   assert.ok(
     article.related?.every((id) =>
       guideArticles.some((item) => item.id === id),
@@ -150,24 +151,23 @@ test("Team guide explains named teams, current-state joining and separate local-
   );
   const text = [...article.steps, article.note].join(" ");
   for (const detail of [
-    "Create a team",
-    "approve your Memtrace account in the browser",
-    "verified email",
-    "Current work opens immediately",
-    "no empty project",
-    "Work on this computer",
-    "Existing local changes are preserved",
-    "Git repository access is a separate connection",
-    "approve your own coding tool in Workers",
-    "confirms its task claim before starting",
-    "5 MiB",
+    "Share at the top right",
+    "two guests",
+    "choose Join",
+    "choose Open",
+    "approves their own coding tool in Workers",
+    "Its conversation stays yours",
+    "its summary, its changes and its review",
+    "up to 5 MB each",
     "Use Git to exchange code",
-    "team updates never start a worker automatically",
-    "Planning can queue offline",
-    "Removing Team access blocks future requests",
+    "Only you can continue your workers",
   ])
     assert.ok(text.includes(detail), detail);
-  assert.doesNotMatch(text, /empty MemCode project|enters a display name|Advanced connection/);
+  assert.doesNotMatch(text, /Create a team|Invite teammate|task claim/);
+  assert.doesNotMatch(
+    text,
+    /empty MemCode project|enters a display name|Advanced connection/,
+  );
   assert.ok(
     guideArticles.every(
       (item) =>
@@ -218,4 +218,11 @@ test("published result metadata is escaped and no local source path is exposed",
   assert.match(markup, /&lt;img src=x onerror=alert\(1\)&gt;\.md/);
   assert.doesNotMatch(markup, /<img src=x/);
   assert.match(markup, /does not report live teammate presence/);
+});
+
+test("the Team page is only for a project still in a Team Sync team", () => {
+  const state = { team: [{ projectId: "in-a-team" }] } as never;
+  assert.equal(hasTeamPage(state, "in-a-team"), true);
+  assert.equal(hasTeamPage(state, "personal"), false);
+  assert.equal(hasTeamPage({} as never, "personal"), false);
 });
