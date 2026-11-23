@@ -1,0 +1,367 @@
+/* The Share button at the top right of a project, and its panel. */
+.share-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.share-button.button {
+  padding: 6px 12px;
+  gap: 6px;
+  color: var(--ink);
+}
+.share-button.open {
+  border-color: #adc7b5;
+  background: #f8fcf7;
+}
+.share-avatars {
+  display: flex;
+}
+.share-avatars .share-avatar + .share-avatar {
+  margin-left: -6px;
+}
+.share-avatar {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--mint-wash);
+  border: 1.5px solid #fcfdfb;
+  color: var(--mint-ink);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
+.share-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 340px;
+  z-index: 50;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 12px 40px #0b27151f;
+  animation: appear 0.12s ease;
+}
+.share-panel {
+  padding: 16px;
+  color: var(--ink);
+  font-size: 13px;
+}
+.share-panel h3 {
+  margin: 0 0 12px;
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.share-invite {
+  display: flex;
+  gap: 8px;
+}
+.share-invite input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid #dce5dc;
+  border-radius: 7px;
+  background: #fff;
+  font: inherit;
+  font-size: 12px;
+  color: var(--ink);
+}
+.share-invite input:focus {
+  outline: none;
+  border-color: var(--mint);
+  box-shadow: 0 0 0 3px #18c8b51f;
+}
+.share-invite .button {
+  padding: 8px 12px;
+}
+.share-heading {
+  margin: 16px 0 6px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted);
+}
+.share-people {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.share-person {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 34px;
+  font-size: 12px;
+}
+.share-person > span:nth-child(2) {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.share-person > span:nth-child(2) small {
+  color: var(--muted);
+  font-size: 11px;
+}
+.share-person.invited .share-avatar {
+  background: #f1f4f1;
+  color: #87958b;
+}
+.share-role {
+  font-size: 11px;
+  color: var(--muted);
+}
+.share-person-menu {
+  position: relative;
+}
+.share-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  min-width: 120px;
+  padding: 4px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px #0b27151c;
+  z-index: 2;
+}
+.share-menu button {
+  width: 100%;
+  padding: 7px 9px;
+  border-radius: 5px;
+  text-align: left;
+  font-size: 12px;
+  color: #b4472f;
+}
+.share-menu button:hover {
+  background: #fff4f2;
+}
+.share-cancel {
+  font-size: 11px;
+  color: var(--mint-ink);
+  padding: 4px 6px;
+  border-radius: 5px;
+}
+.share-cancel:hover {
+  background: var(--mint-wash);
+}
+.share-quiet {
+  margin: 12px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.share-note {
+  margin: 0 0 12px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.share-problem {
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  border-radius: 7px;
+  background: #fff4f2;
+  border: 1px solid #f1d8d3;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.share-board {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.share-board p {
+  position: relative;
+  margin: 0 0 4px;
+  padding-left: 14px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+.share-board p:first-child {
+  color: var(--ink);
+}
+.share-board p:first-child::before {
+  content: "";
+  position: absolute;
+  left: 1px;
+  top: 6px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--mint);
+}
+.share-board.working p:first-child::before {
+  background: #7fc8f8;
+}
+.share-board.trouble p:first-child::before {
+  background: #d9a441;
+}
+.share-leave.button {
+  margin-top: 14px;
+  width: 100%;
+  gap: 6px;
+}
+
+/* Shared projects and invitations in the project switcher. */
+.project-menu .switcher-action {
+  margin-left: auto;
+  padding: 2px 7px;
+  border-radius: 5px;
+  font-size: 10px;
+  font-weight: 500;
+  color: #687d6e;
+  border: 1px solid #dce5dc;
+}
+.project-menu .switcher-action.join {
+  color: var(--mint-ink);
+  background: var(--mint-wash);
+  border-color: #bfe6d8;
+}
+.project-menu .switcher-shared > span:nth-child(2) small {
+  display: block;
+  margin: 1px 0 0;
+}
+
+/* A shared project with no folder on this computer yet. */
+.share-folder {
+  max-width: 1180px;
+  margin: 0 auto 18px;
+}
+.share-folder-notice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 1px solid #dce7df;
+  border-radius: 9px;
+  background: #f8fbf8;
+  font-size: 12px;
+  color: var(--ink);
+}
+.share-folder-notice > span {
+  flex: 1;
+}
+.share-folder-notice .button {
+  padding: 6px 10px;
+  gap: 6px;
+}
+.share-folder-notice + * {
+  margin-top: 14px;
+}
+
+/* Sharing a file or the changes from a card of a shared project. */
+.share-from-card {
+  margin-top: 28px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+.share-from-card > p {
+  margin: 6px 0 10px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+.share-from-card ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.share-from-card li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+.share-from-card li > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.share-from-card .button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.share-from-card-done {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* A message someone else sent to a worker run here, waiting for this person. */
+.worker-asks {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.worker-ask {
+  padding: 12px 14px;
+  border: 1px solid #f0dcb0;
+  border-radius: 10px;
+  background: #fffbf1;
+  color: var(--ink);
+}
+.worker-ask header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.worker-ask header svg {
+  color: #b7832a;
+  flex-shrink: 0;
+}
+.worker-ask header strong {
+  flex: 1;
+  font-weight: 550;
+}
+.worker-ask header time {
+  font-size: 11px;
+  color: var(--muted);
+}
+.worker-ask blockquote {
+  margin: 8px 0 10px;
+  padding: 8px 10px;
+  border-left: 2px solid #e6c98a;
+  background: #fff;
+  border-radius: 0 6px 6px 0;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+.worker-ask footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.worker-ask footer > div {
+  display: flex;
+  gap: 6px;
+}
+.worker-ask footer .button {
+  padding: 6px 12px;
+  gap: 6px;
+}
+.board-asks {
+  color: #a26f17;
+}

@@ -46,14 +46,14 @@ Install and sign in to at least one supported coding CLI using that provider's o
 
 You can inspect the board and participate in planning before connecting a worker.
 
-## Join a team
+## Open a shared project
 
-1. Open **Team**. If your team is listed, select the shared project under **Team projects**.
-2. Otherwise, ask a teammate to open that project on their computer and choose **Team → Invite teammate**. On your Mac, open the project selector, choose **Join a team project**, paste the invitation and select **Continue**. Check the team and project names, choose **Accept and open**, and approve the intended Memtrace account if prompted.
-3. Check **Team** for the planning sync status. Open **Cycles** to see current and completed cycles. Look in **Workspace → Done** for completed stories and clear any board filters that hide them.
-4. When you want to run a worker, choose **Work on this computer** and connect your existing checkout or clone the repository. Team sync carries the board and shared results. Git carries source changes.
+1. Open the project selector. A project shared with you, or shared from another of your own computers, is listed there: choose **Join** for an invitation, or **Open** for your own.
+2. To share a project yourself, open it and choose **Share** at the top right, then invite people by email.
+3. Open **Cycles** to see current and completed cycles. Look in **Workspace → Done** for completed stories and clear any board filters that hide them.
+4. When you want to run a worker, connect your existing checkout or clone the repository. Sharing carries the board, summaries, changes and the files you share. Git carries source changes.
 
-See [the Team Sync guide](team-sync-preview.md) for hosting and sharing boundaries.
+See [shared projects](shared-projects.md). The **Team** page is only shown for a project still in a Team Sync team, so it can be left; see [the Team Sync guide](team-sync-preview.md).
 
 ## Find the product tour and review guide
 

@@ -43,9 +43,12 @@ function UpdatedAt({ at }: { at: string }) {
 export function RemoteWorker({
   owner,
   offline,
+  scope = "team",
 }: {
   owner: Owner;
   offline: boolean;
+  /** "project": a run read from a shared project's card log, where there is no team. */
+  scope?: "team" | "project";
 }) {
   const { activity, session } = owner;
   const harness = session?.harness ?? activity?.harness;
@@ -55,7 +58,7 @@ export function RemoteWorker({
       aria-label="Worker on another device"
     >
       <div className="inspector-label">
-        WORKER ASSIGNMENT <span>TEAM</span>
+        WORKER ASSIGNMENT <span>{scope === "project" ? "SHARED" : "TEAM"}</span>
       </div>
       <div className="assigned-worker">
         {harness ? <HarnessMark id={harness} /> : <Laptop size={19} />}
@@ -114,12 +117,18 @@ export function RemoteWorker({
           <p>Waiting for this device's first shared session update.</p>
         )
       )}
-      {owner.session && (
-        <p>
-          Conversation and review shared with the team. Execution stays on{" "}
-          {owner.device}.
-        </p>
-      )}
+      {owner.session &&
+        (scope === "project" ? (
+          <p>
+            The conversation stays with {owner.name}. Everyone on the project
+            sees its summaries, changes and review. It runs on {owner.device}.
+          </p>
+        ) : (
+          <p>
+            Conversation and review shared with the team. Execution stays on{" "}
+            {owner.device}.
+          </p>
+        ))}
       {activity?.recent && activity.recent.length > 1 && (
         <details>
           <summary>Recent activity</summary>

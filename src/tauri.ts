@@ -203,6 +203,25 @@ export async function installNativeBridge(): Promise<void> {
     },
     localAnalysisDiagnostics: (projectId) =>
       call("project:local-diagnostics", { projectId }),
+    sharingOverview: () => call("sharing:overview"),
+    acceptSharedInvitation: (input) => call("sharing:accept-invitation", input),
+    connectSharedProject: (input) => call("sharing:connect", input),
+    disconnectSharedProject: (projectId) =>
+      call("sharing:disconnect", { projectId }),
+    followSharedCard: (taskId) => call("sharing:follow-card", { taskId }),
+    unfollowSharedCard: (taskId) => call("sharing:unfollow-card", { taskId }),
+    shareCardFile: (input) => call("sharing:share-result", input),
+    openSharedCardFile: (input) => call("sharing:open-result", input),
+    shareProject: (projectId) => call("sharing:share", { projectId }),
+    decideSharedMessage: (input) => call("sharing:decide-message", input),
+    inviteToProject: (input) => call("sharing:invite", input),
+    cancelProjectInvitation: (input) =>
+      call("sharing:cancel-invitation", input),
+    removeFromProject: (input) => call("sharing:remove-person", input),
+    leaveProject: (projectId) => call("sharing:leave", { projectId }),
+    openSharedProject: (sharedProjectId) =>
+      call("sharing:open", { sharedProjectId }),
+    joinSharedProject: (input) => call("sharing:join", input),
     teamsList: () => call("team:list"),
     createTeamWorkspace: (input) => call("team:create-workspace", input),
     shareTeamProject: (input) => call("team:share-project", input),
@@ -244,6 +263,7 @@ export async function installNativeBridge(): Promise<void> {
     deleteStory: (id, cascade) => call("story:delete", { id, cascade }),
     deleteEpic: (id) => call("epic:delete", { id }),
     deleteCycle: (id) => call("cycle:delete", { id }),
+    deleteProject: (id) => call("project:delete", { id }),
     respondToWorker: (taskId, requestId, response) =>
       call("worker:respond", { taskId, requestId, response }),
     updateOnboarding: (patch) => call("onboarding:update", patch),
@@ -259,6 +279,14 @@ export async function installNativeBridge(): Promise<void> {
     deleteStoryComment: (taskId, id) =>
       call("story-comment:delete", { taskId, id }),
     refreshWorkerCatalog: () => call("connection:refresh-catalog"),
+    dshSetupStatus: () => call("dsh:setup-status"),
+    installDshCli: () => call("dsh:install-cli"),
+    createDshProfile: (name) => call("dsh:create-profile", { name }),
+    selectDshProfile: (name) => call("dsh:select-profile", { name }),
+    dshDesktopDiff: (targetProfile) =>
+      call("dsh:desktop-diff", { targetProfile }),
+    dryRunDshMigration: (input) => call("dsh:dry-run-migrate", input),
+    applyDshMigration: (input) => call("dsh:apply-migrate", input),
     installationStatus: () => call("installation:status"),
     showInstallationSource: () => call("installation:show-source"),
     showApplications: () => call("installation:show-applications"),

@@ -8,6 +8,7 @@ import { initialState } from "../src/seed";
 import { browserURL } from "../src/browser";
 import { BrowserPool } from "../runtime/browser/pool";
 import { AgentBrowserManager } from "../runtime/browser/manager";
+import { pixelSize } from "./support/browser-image";
 
 test("shared browser addresses permit HTTPS while keeping privileged URLs and remote plaintext out", () => {
   assert.equal(browserURL("google.com").href, "https://google.com/");
@@ -159,7 +160,7 @@ test(
       );
       assert.match(observed.snapshot!.text, /Late.*\[selected\]/);
       const frame = await manager.execute(first.id, { action: "frame" });
-      assert.equal(frame.image?.mimeType, "image/png");
+      assert.equal(frame.image?.mimeType, "image/jpeg");
       await manager.execute(first.id, {
         action: "resize",
         width: 800,
@@ -167,9 +168,7 @@ test(
         deviceScaleFactor: 2,
       });
       const retina = await manager.execute(first.id, { action: "frame" });
-      const pixels = Buffer.from(retina.image!.data, "base64");
-      assert.equal(pixels.readUInt32BE(16), 1600);
-      assert.equal(pixels.readUInt32BE(20), 1200);
+      assert.deepEqual(pixelSize(retina.image!), { width: 1600, height: 1200 });
       const logical = await manager.execute(first.id, {
         action: "observe",
         screenshot: true,
@@ -271,6 +270,91 @@ test(
     } finally {
       await manager.close();
       await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  },
+);
+
+async function fixtureServer(page: (port: number) => string) {
+  const requests: string[] = [];
+  const server = createServer((request, response) => {
+    requests.push(request.url ?? "");
+    response.setHeader("Content-Type", "text/html");
+    response.end(page((server.address() as { port: number }).port));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as { port: number };
+  return {
+    url: `http://127.0.0.1:${port}`,
+    requests,
+    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+  };
+}
+
+test(
+  "a card page cannot load plaintext from a host outside the local machine",
+  { timeout: 30000 },
+  async () => {
+    // Chrome sends "localhost." to this machine, but it is not an allowed address.
+    const fixture = await fixtureServer(
+      (port) => `<title>Policy</title><img src="http://127.0.0.1:${port}/allowed.png"><img src="http://localhost.:${port}/blocked.png">`,
+    );
+    const state = initialState(),
+      task = state.tasks[0];
+    const manager = new AgentBrowserManager(
+      () => state,
+      await mkdtemp(join(tmpdir(), "memcode-browser-policy-")),
+      async () => {},
+    );
+    try {
+      await manager.execute(task.id, { action: "open", url: fixture.url });
+      for (let wait = 0; wait < 50 && !fixture.requests.includes("/allowed.png"); wait++)
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      assert.ok(fixture.requests.includes("/allowed.png"));
+      assert.ok(!fixture.requests.includes("/blocked.png"));
+    } finally {
+      await manager.close();
+      await fixture.close();
+    }
+  },
+);
+
+test(
+  "a link that opens a new window becomes another tab of the same card",
+  { timeout: 30000 },
+  async () => {
+    const fixture = await fixtureServer(
+      () => `<title>Opener</title><a href="/second" target="_blank">Open second</a>`,
+    );
+    const state = initialState(),
+      task = state.tasks[0];
+    const manager = new AgentBrowserManager(
+      () => state,
+      await mkdtemp(join(tmpdir(), "memcode-browser-popup-")),
+      async () => {},
+    );
+    manager.attach(task.id, "codex", await mkdtemp(join(tmpdir(), "memcode-browser-popup-log-")));
+    try {
+      await manager.execute(task.id, { action: "open", url: fixture.url }, "worker");
+      const observed = await manager.execute(task.id, { action: "observe" }, "worker");
+      await manager.execute(
+        task.id,
+        {
+          action: "act",
+          input: { action: "click", ref: "m1", revision: observed.snapshot!.revision },
+        },
+        "worker",
+      );
+      let tabs = observed.state.tabs;
+      for (let wait = 0; wait < 50 && tabs.length < 2; wait++) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        tabs = (await manager.execute(task.id, { action: "state" })).state.tabs;
+      }
+      assert.equal(tabs.length, 2);
+      assert.equal(tabs.find((tab) => tab.active)?.url, fixture.url + "/second");
+    } finally {
+      await manager.close();
+      await fixture.close();
     }
   },
 );

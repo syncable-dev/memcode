@@ -24,6 +24,7 @@ import {
 } from "../permissions";
 import { HarnessMark, Spinner } from "./UI";
 import { Select } from "./Select";
+import { DshSetupFlow } from "./DshSetupFlow";
 import { useRuntimeHealth } from "../useRuntimeHealth";
 import { approvedRuntime } from "../worker-availability";
 import { desktopPlatform } from "../platform";
@@ -62,7 +63,8 @@ export function WorkerConnections({
     [loading, setLoading] = useState(true),
     [error, setError] = useState(""),
     [dialogError, setDialogError] = useState(""),
-    [savingDefault, setSavingDefault] = useState<Harness>();
+    [savingDefault, setSavingDefault] = useState<Harness>(),
+    [dshReady, setDshReady] = useState(false);
   const selectedHarness = selected?.harness;
   const readyToApprove =
     selected?.auth === "authenticated" || selected?.auth === "local" || selected?.auth === "provider-managed";
@@ -134,20 +136,55 @@ export function WorkerConnections({
   useEffect(() => {
     if (!selectedHarness) return;
     const frame = requestAnimationFrame(() =>
-      document
-        .querySelector<HTMLElement>(
-          readyToApprove
-            ? ".connection-approval input"
-            : ".connection-sign-in button",
+      (
+        document.querySelector<HTMLElement>(
+          selectedHarness === "dsh"
+            ? ".dsh-setup-flow button:not([disabled]), .dsh-setup-flow input:not([disabled]), .connection-approval input"
+            : readyToApprove
+              ? ".connection-approval input"
+              : ".connection-sign-in button",
+        ) ??
+        // While setup is still loading only a spinner renders; keep keyboard
+        // focus inside the modal on its always-present Close button.
+        document.querySelector<HTMLElement>(
+          'button[aria-label="Close connection approval"]',
         )
-        ?.focus(),
+      )?.focus(),
     );
     return () => cancelAnimationFrame(frame);
   }, [selectedHarness, readyToApprove]);
   const showConnection = (status: WorkerConnectionStatus) => {
     setSelected(status);
     setApproved(false);
+    setDshReady(false);
     setDialogError("");
+  };
+  const openConnectionModal = (
+    installed: RuntimeInfo["harnesses"][number],
+    status?: WorkerConnectionStatus,
+  ) => {
+    showConnection(
+      status ?? {
+        harness: installed.id,
+        installed: installed.available,
+        connected: false,
+        runtimePath: installed.path,
+        desktopAppPath: installed.desktopAppPath,
+        auth: installed.id === "dsh" ? "provider-managed" : "unknown",
+        note:
+          installed.id === "dsh"
+            ? "Set up DeepSeek Harness and choose an ACP profile."
+            : "Check your existing sign-in before connecting.",
+        loginCommand:
+          installed.id === "cursor"
+            ? "agent login"
+            : installed.id === "claude"
+              ? "claude auth login"
+              : installed.id === "dsh"
+                ? "dsh --help"
+                : "codex login",
+      },
+    );
   };
   const checkConnection = async () => {
     setDialogError("");
@@ -311,7 +348,8 @@ export function WorkerConnections({
                     "Connection saved"
                   ) : available ? (
                     "Installed"
-                  ) : cursorNeedsAgent && desktopFound ? (
+                  ) : (cursorNeedsAgent || installed.id === "dsh") &&
+                    desktopFound ? (
                     "Desktop app installed"
                   ) : desktopFound ? (
                     "App found"
@@ -326,16 +364,20 @@ export function WorkerConnections({
                   ? "Runtime disconnected. Your saved connection approval is unchanged."
                   : cursorNeedsAgent && desktopFound
                     ? "Cursor is installed. MemCode runs workers through the separate Cursor Agent CLI. Install it, then refresh here."
-                    : !available && desktopFound && !approvalSaved
-                      ? "Your desktop app is installed. Set up its agent command to run workers here, then refresh."
-                      : (status?.note ??
-                        (loading
-                          ? "Checking your installed setup…"
-                          : "Connect your installed worker to use it here."))}
+                    : installed.id === "dsh" && !available && desktopFound && !approvalSaved
+                      ? "DeepSeek Harness Desktop is installed. Install its dsh CLI and choose an ACP profile to run workers here."
+                      : !available && desktopFound && !approvalSaved
+                        ? "Your desktop app is installed. Set up its agent command to run workers here, then refresh."
+                        : (status?.note ??
+                          (loading
+                            ? "Checking your installed setup…"
+                            : "Connect your installed worker to use it here."))}
               </p>
-              {connected && status?.accountLabel && (
+              {connected && (status?.accountLabel || installed.id === "dsh") && (
                 <small className="connection-account-label">
-                  {status.accountLabel}
+                  {installed.id === "dsh"
+                    ? `ACP profile: ${installed.activeProfile || "acp"} · ${installed.models.length} model${installed.models.length === 1 ? "" : "s"}`
+                    : status?.accountLabel}
                 </small>
               )}
               {(available || approvalSaved) && (
@@ -395,6 +437,15 @@ export function WorkerConnections({
                         ? active + " active"
                         : "Ready for your next task"}
                     </span>
+                    {installed.id === "dsh" && (
+                      <button
+                        type="button"
+                        className="text-button"
+                        onClick={() => openConnectionModal(installed, status)}
+                      >
+                        Sync Desktop models
+                      </button>
+                    )}
                     {onCreateWork && (
                       <button
                         type="button"
@@ -434,7 +485,8 @@ export function WorkerConnections({
                       type="button"
                       className="text-button"
                       onClick={() => {
-                        if (status?.installed) showConnection(status);
+                        if (status?.installed || installed.id === "dsh")
+                          openConnectionModal(installed, status);
                         else
                           void window.memcode
                             .openWorkerSetup(installed.id)
@@ -463,11 +515,15 @@ export function WorkerConnections({
                     type="button"
                     className="button secondary worker-connect-button"
                     disabled={loading || busy}
-                    onClick={() =>
-                      void window.memcode
-                        .openWorkerSetup(installed.id)
-                        .catch((error) => notify((error as Error).message))
-                    }
+                    onClick={() => {
+                      if (installed.id === "dsh") {
+                        openConnectionModal(installed, status);
+                      } else {
+                        void window.memcode
+                          .openWorkerSetup(installed.id)
+                          .catch((error) => notify((error as Error).message));
+                      }
+                    }}
                   >
                     <ArrowUpRight size={12} />
                     {cursorNeedsAgent
@@ -479,24 +535,7 @@ export function WorkerConnections({
                     type="button"
                     className="button secondary worker-connect-button"
                     disabled={busy || loading}
-                    onClick={() => {
-                      showConnection(
-                        status ?? {
-                          harness: installed.id,
-                          installed: true,
-                          connected: false,
-                          runtimePath: installed.path,
-                          auth: "unknown",
-                          note: "Check your existing sign-in before connecting.",
-                          loginCommand:
-                            installed.id === "cursor"
-                              ? "agent login"
-                              : installed.id === "claude"
-                                ? "claude auth login"
-                                : "codex login",
-                        },
-                      );
-                    }}
+                    onClick={() => openConnectionModal(installed, status)}
                   >
                     <Link2 size={12} />
                     Connect {installed.name}
@@ -534,14 +573,43 @@ export function WorkerConnections({
               </button>
             </header>
             <h2 id="connection-consent-title">
-              Connect {harnessNames[selected.harness]}.
+              {selected.harness === "dsh"
+                ? selected.connected
+                  ? "Configure DeepSeek Harness."
+                  : !selected.installed
+                    ? "Set up DeepSeek Harness."
+                    : "Connect DeepSeek Harness."
+                : `Connect ${harnessNames[selected.harness]}.`}
             </h2>
             {dialogError && (
               <p className="connection-error" role="alert">
                 {dialogError}
               </p>
             )}
-            {!readyToApprove ? (
+            {selected.harness === "dsh" && (
+              <DshSetupFlow
+                alreadyConnected={selected.connected}
+                notify={notify}
+                onRuntime={onRuntime}
+                onRefreshStatus={async () => {
+                  await refresh(true);
+                }}
+                onReadyChange={setDshReady}
+                onClose={() => setSelected(undefined)}
+              />
+            )}
+            {selected.harness === "dsh" && selected.connected ? (
+              <footer>
+                <small>Profile and provider changes take effect immediately.</small>
+                <button
+                  type="button"
+                  className="button secondary"
+                  onClick={() => setSelected(undefined)}
+                >
+                  Done
+                </button>
+              </footer>
+            ) : selected.harness === "dsh" && !dshReady ? null : !readyToApprove ? (
               <div className="connection-sign-in">
                 {selected.connectionIssue ? (
                   <p>{selected.note}</p>
@@ -665,11 +733,15 @@ export function WorkerConnections({
                   <span>I allow MemCode to use this installed worker.</span>
                 </label>
                 <footer>
-                  <small>Connecting does not start a coding task.</small>
+                  <small>
+                    {selected.harness === "dsh" && !dshReady
+                      ? "Finish the DeepSeek Harness setup above before connecting."
+                      : "Connecting does not start a coding task."}
+                  </small>
                   <button
                     type="button"
                     className="button primary"
-                    disabled={!approved || busy}
+                    disabled={!approved || busy || (selected.harness === "dsh" && !dshReady)}
                     onClick={() => void connect()}
                   >
                     {busy ? <Spinner /> : <Link2 size={13} />}Approve & connect

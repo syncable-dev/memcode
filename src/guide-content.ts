@@ -58,7 +58,8 @@ export const guideArticles: GuideArticle[] = [
     id: "projects",
     group: "Start here",
     title: "Add a project",
-    summary: "A project is a folder on your computer and the idea you’re working on.",
+    summary:
+      "A project is a folder on your computer and the idea you’re working on.",
     image: "project",
     caption: "Start a new idea or open code you already have.",
     steps: [
@@ -66,8 +67,9 @@ export const guideArticles: GuideArticle[] = [
       "For a new idea, pick where it should live, give it a name and say what it’s for. MemCode sets up the folder and an empty board.",
       "For existing code, pick its folder. Memtrace reads the code so later work has context.",
       "Switch projects from the same selector. Each project keeps its own goals, tasks and results.",
+      "To remove a project you no longer need, point at it in the selector and choose the bin. Its folder stays on your computer.",
     ],
-    note: "Adding a project never changes your files. Work you haven’t saved to Git stays as it is.",
+    note: "Adding or deleting a project never changes your files. Work you haven’t saved to Git stays as it is.",
     details: [
       "A new or empty folder gets a Git repository automatically. For a folder that already has files, initialize Git first or choose the repository’s root folder.",
     ],
@@ -104,8 +106,7 @@ export const guideArticles: GuideArticle[] = [
     summary:
       "Describe what you want in plain words. Your worker plans it, and you check the plan before anything starts.",
     image: "story",
-    caption:
-      "New work shows the plan and where it goes before you add it.",
+    caption: "New work shows the plan and where it goes before you add it.",
     steps: [
       "Choose New work, or press C anywhere outside a text field.",
       "Write what you want, as briefly or fully as you like: “Customers can export reports as CSV.” Your connected worker reads the code and plans it. Nothing changes yet.",
@@ -127,7 +128,8 @@ export const guideArticles: GuideArticle[] = [
     summary:
       "A task is one piece of work. Its card keeps the brief, the worker’s conversation and the results together.",
     image: "story",
-    caption: "The brief, the conversation and the results stay inside the same card.",
+    caption:
+      "The brief, the conversation and the results stay inside the same card.",
     steps: [
       "Open a task from the board or the Roadmap. Task guide on the card walks you through its tabs.",
       "Read the brief: what should change, and how you’ll know it worked.",
@@ -289,28 +291,26 @@ export const guideArticles: GuideArticle[] = [
   {
     id: "team",
     group: "Your workspace",
-    title: "Work with your team",
+    title: "Share a project",
     summary:
-      "Share a project with your team. Everyone plans together, and each person runs their own workers on their own computer.",
+      "Share a project with up to two people. Everyone plans on the same board, and each person runs their own workers on their own computer.",
     image: "team",
     caption:
-      "Open the team’s work first. Connect your copy of the code and a worker when you’re ready to build.",
+      "Share starts a shared project from the one you have open, with its current board.",
     steps: [
-      "Open your project, then Team → Create a team. Name it, approve your Memtrace account in the browser, and share the project’s current board.",
-      "Choose Invite teammate. You can limit the invitation to their verified email. Send the link privately.",
-      "Your teammate chooses Join with invitation, checks the team and project, and accepts. Current work opens immediately, with no empty project to set up. Their personal projects stay separate.",
-      "Plan and comment right away. To build, choose Work on this computer to reuse or download the project’s code. Existing local changes are preserved; Git repository access is a separate connection.",
-      "Then approve your own coding tool in Workers and start a task. MemCode confirms its task claim before starting, so two people never run the same task, and team updates never start a worker automatically.",
-      "Open a running task to see its conversation, model, progress and review. Send follow-ups from either computer; the worker keeps running where it started.",
-      "Publish the results you choose, up to 5 MiB each. Use Git to exchange code.",
+      "Open your project and choose Share at the top right. The shared project takes the project’s name and its current board.",
+      "Invite people by email. A project has you and two guests, and an open invitation holds a place.",
+      "They find the project in the project switcher and choose Join. On your own other computers, choose Open: signing in is enough.",
+      "Plan and comment together right away. To build, each person connects their own copy of the code and approves their own coding tool in Workers.",
+      "A worker runs only on the computer that started it. Its conversation stays yours; everyone else sees the request, how it stands, a summary of each round of work, its changes and its review.",
+      "Documents and images a worker makes are shared by themselves when it finishes, up to 5 MB each. Share other files from a card’s Artifacts tab. Use Git to exchange code.",
     ],
-    note: "Planning can queue offline; starting a shared worker needs a connection. Removing Team access blocks future requests, but it can’t erase downloaded files or change Git access.",
+    note: "Only you can continue your workers, from any of your own computers. Others comment on the card.",
     details: [
-      "MemCode finds the official Team service when it’s enabled. Members don’t set up a server or receive a setup secret. If creating a team isn’t available yet, keep working locally and try again later.",
-      "Worker conversations and saved reviews are visible to project members. Raw tool output, approvals, browser sessions, terminals and credentials stay on each computer.",
+      "Renaming or deleting a shared project happens at memtrace.io.",
       "The board doesn’t sync your code, and coordination between workers happens on each computer.",
     ],
-    destination: "team",
+    destination: "board",
     related: ["projects", "comments", "artifacts", "account"],
   },
   {
@@ -380,8 +380,7 @@ export const guideArticles: GuideArticle[] = [
     summary:
       "See exactly what the worker edited, and leave feedback on a specific line.",
     image: "changes",
-    caption:
-      "Line numbers and plus and minus signs show exactly what changed.",
+    caption: "Line numbers and plus and minus signs show exactly what changed.",
     steps: [
       "Open Changes on a task and choose a file. Green lines were added, red lines removed. Scroll sideways for long lines.",
       "Select the lines you want to talk about and save a comment. Add it to a follow-up when you want the worker to act.",
@@ -392,8 +391,7 @@ export const guideArticles: GuideArticle[] = [
     id: "annotations",
     group: "Working with workers",
     title: "Highlight and comment",
-    summary:
-      "Point at the exact text, line, cell, element or moment you mean.",
+    summary: "Point at the exact text, line, cell, element or moment you mean.",
     image: "annotations",
     caption:
       "Save a comment next to what you selected. Add the ones you want to a follow-up, then send.",
@@ -434,8 +432,7 @@ export const guideArticles: GuideArticle[] = [
     summary:
       "Use a terminal in your project, and see the long-running processes a worker starts.",
     image: "terminal",
-    caption:
-      "A dev server shares the same process and output with the worker.",
+    caption: "A dev server shares the same process and output with the worker.",
     steps: [
       "Open Terminal and pick a shell. Add another session when you need one.",
       "Dev servers, watchers and REPLs run in terminals you share with the worker. Short commands stay in the conversation’s tool history.",
@@ -514,8 +511,7 @@ export const guideArticles: GuideArticle[] = [
     title: "Labels, estimates and fields",
     summary: "Add structure only when it helps you decide what to do next.",
     image: "workspace",
-    caption:
-      "The same task details power filters, lists and planning views.",
+    caption: "The same task details power filters, lists and planning views.",
     steps: [
       "Use priority and labels to find related work. Add start and due dates for calendar and timeline views.",
       "Add estimates for planning. They’re separate from Memtrace’s code measurements.",

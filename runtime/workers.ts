@@ -26,6 +26,7 @@ import type { Command } from "./local";
 import { commandIdentity } from "./commands";
 import type { MemtraceEngine } from "./memtrace";
 import { discoverHarnesses } from "./catalog";
+import { inspectDshProfiles } from "./dsh-profiles";
 import { assignedHarness, planRoute } from "./router";
 import { readRoutingCalibration, readRoutingLanguage } from "./story-route";
 import { assertWorkerConnected, connectedRuntimes } from "./worker-connections";
@@ -66,6 +67,7 @@ import {
   queuedFollowups,
   settleFollowupQueue,
 } from "./followup-queue";
+import { SUMMARY_HEADING } from "./sharing/cards/summary";
 
 /** Team claims guard official runs; local Fleet still coordinates source edits. */
 export interface TeamWorkerClaims {
@@ -104,6 +106,7 @@ export function harnessArgs(
   briefPath = ".memcode/brief.md",
   contextConfig?: string,
   toolArgs: string[] = [],
+  dshProfile?: string,
 ): { args: string[]; stdin?: string } {
   if (id === "codex")
     return {
@@ -156,7 +159,7 @@ export function harnessArgs(
       ],
     };
   if (id === "copilot") return { args: ["--acp", "--stdio"] };
-  if (id === "dsh") return { args: ["--profile", "acp"] };
+  if (id === "dsh") return { args: ["--profile", dshProfile?.trim() || "acp"] };
   throw new Error("Unsupported worker harness.");
 }
 
@@ -237,12 +240,15 @@ export class WorkerManager {
       name: string,
     ) => Promise<Command | null> = findCommand,
     private readonly catalog: (only?: WorkItem["harness"]) => Promise<HarnessRuntime[]> =
-      (only) => discoverHarnesses(false, only),
+      (only) =>
+        discoverHarnesses(false, only, {
+          dshProfile: this.state().settings.dshProfile,
+        }),
     private readonly browsers?: AgentBrowserManager,
     private readonly terminals?: TerminalManager,
     private readonly sessionFactory: typeof startHarnessSession = startHarnessSession,
     private readonly teamClaims?: TeamWorkerClaims,
-    private readonly assertAccountSession?: () => void,
+    private readonly assertAccountSession?: (harness?: WorkItem["harness"]) => void,
     private readonly mayDispatch: (project?: Project) => boolean = () => true,
     private readonly telemetry?: WorkerTelemetry,
     private readonly retrievalAssistant?: () => Promise<RetrievalAssistant>,
@@ -562,7 +568,7 @@ export class WorkerManager {
     let permissionMode = effectivePermissionMode(task, permissionSettings);
     // Keep this synchronous with the Preparing transition: account changes
     // reject active workers, and queued passes use this same entry point.
-    this.assertAccountSession?.();
+    this.assertAccountSession?.(task.harness);
     // A personal record and an invitation-created record may reuse the same
     // checkout. Only one project identity may drive its branch at a time.
     const checkoutKey = (value: string) =>
@@ -588,7 +594,7 @@ export class WorkerManager {
       try {
         await this.reviewStarting(task);
         continuing();
-        this.assertAccountSession?.();
+        this.assertAccountSession?.(task.harness);
         if (task.assignment !== "auto")
           assertWorkerConnected(this.state(), task.harness);
         if (isActive(task) || this.children.has(task.id))
@@ -1099,6 +1105,7 @@ export class WorkerManager {
         "The fleet right now (who is editing what, recent changes, decisions involving you):\n" +
           contextForPrompt(fleetContext),
         "If a tool or test command is denied, report that exact blocker and continue independent work. Do not repeatedly try equivalent commands or change permission settings to get around it.",
+        `End your last message with a short section that starts with the line "${SUMMARY_HEADING}". On a shared project the others read only that section, not this conversation, and they can't open files on this computer, so write it for them in plain words: what you did, what changed, how you checked it, and anything left open. Name files by their path in the project, without links.`,
         runbookBrief(task.checklist, !!contextConfig),
         initialContext
           ? "Initial host context (read constraint continuations before editing):\n" +
@@ -1114,6 +1121,17 @@ export class WorkerManager {
         .join("\n\n");
       const briefPath = join(workerRoot, "brief.md").replaceAll("\\", "/");
       await writeFile(join(workspace, briefPath), prompt, "utf8");
+      if (task.harness === "dsh") {
+        this.assertAccountSession?.("dsh");
+      }
+      const dshProfile =
+        task.harness === "dsh"
+          ? (
+              await inspectDshProfiles(this.state().settings.dshProfile).catch(
+                () => undefined,
+              )
+            )?.activeProfile ?? this.state().settings.dshProfile
+          : undefined;
       const invocation = harnessArgs(
         task.harness,
         workspace,
@@ -1124,6 +1142,7 @@ export class WorkerManager {
         briefPath,
         contextConfig,
         toolProfile.args,
+        dshProfile,
       );
       continuing();
       closeArtifacts = watchArtifacts(
@@ -1244,6 +1263,7 @@ export class WorkerManager {
         effort: task.route.effort,
         calibratedModel: task.route.selection?.calibratedModel,
         localModel: task.route.localModel,
+        ...(launchedHarness === "dsh" ? { dshProfile } : {}),
         permissionMode,
         prompt,
         briefPath,

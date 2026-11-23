@@ -27,6 +27,21 @@ export interface TeamSession {
   error?: string;
   messages: Message[];
   review?: StoryReviewRun;
+  /**
+   * On a shared project, the summary of each round of work on the card, oldest first:
+   * what everyone reads in place of the conversation.
+   */
+  summaries?: SharedSummary[];
+}
+/** What a round of work says it did, as its worker wrote it for the project. */
+export interface RunSummary {
+  text: string;
+  at: string;
+}
+/** A summary as a card shows it: who ran the worker, and on which computer. */
+export interface SharedSummary extends RunSummary {
+  by: string;
+  device: string;
 }
 export interface SessionCommand {
   id: string;

@@ -14,6 +14,7 @@ import {
   probeStandardCatalog,
   type StandardHarness,
 } from "./agents/standard-acp";
+import { inspectDshProfiles } from "./dsh-profiles";
 import type { NativeHost } from "./host";
 import {
   harnessNames,
@@ -68,20 +69,53 @@ type WorkerReadiness = Pick<
 async function probeStandardConnection(
   harness: StandardHarness,
   command: Command,
-): Promise<WorkerReadiness> {
+  dshProfile?: string,
+): Promise<{ readiness: WorkerReadiness; note?: string }> {
+  let profile: string | undefined;
+  if (harness === "dsh") {
+    let info;
+    try {
+      info = await inspectDshProfiles(dshProfile);
+    } catch {
+      return {
+        readiness: { auth: "unknown", connectionIssue: "unavailable" },
+        note: "The configured DeepSeek Harness profile name is invalid. Choose or create an ACP profile in DeepSeek Harness setup.",
+      };
+    }
+    profile = info.activeProfile;
+    if (info.activeProfileIssue === "non-acp") {
+      return {
+        readiness: { auth: "unknown", connectionIssue: "unavailable" },
+        note: `DeepSeek Harness profile "${profile}" is not an ACP profile. Choose or create an ACP profile in DeepSeek Harness setup.`,
+      };
+    }
+    if (info.activeProfileIssue === "missing" && profile !== "acp") {
+      return {
+        readiness: { auth: "unknown", connectionIssue: "unavailable" },
+        note: `DeepSeek Harness profile "${profile}" does not exist. Choose or create an ACP profile in DeepSeek Harness setup.`,
+      };
+    }
+  }
   try {
-    const models = await probeStandardCatalog(harness, command);
+    const models = await probeStandardCatalog(harness, command, profile);
     // The CLI confirms provider access at the first model call.
-    if (models.length) return { auth: "provider-managed" };
+    if (models.length) return { readiness: { auth: "provider-managed" } };
   } catch (error) {
     if (
       harness === "dsh" &&
+      profile === "acp" &&
       error instanceof Error &&
       /profile ["']acp["'] does not exist/i.test(clean(error.message))
     )
-      return { auth: "unknown", connectionIssue: "unsupported-cli" };
+      return { readiness: { auth: "unknown", connectionIssue: "unsupported-cli" } };
+    if (harness === "dsh" && profile && profile !== "acp") {
+      return {
+        readiness: { auth: "unknown", connectionIssue: "unavailable" },
+        note: `MemCode couldn’t read the model list from DeepSeek Harness profile "${profile}". Check the profile setup and providers, then try again.`,
+      };
+    }
   }
-  return { auth: "unknown", connectionIssue: "unavailable" };
+  return { readiness: { auth: "unknown", connectionIssue: "unavailable" } };
 }
 
 function connectionIssueNote(
@@ -232,11 +266,18 @@ export function registerConnections(
         loginCommand: loginCommands[harness],
       };
     let auth: WorkerReadiness;
+    let customIssueNote: string | undefined;
     if (harness === "codex" && state().settings.localModel)
       auth = { auth: "local", accountLabel: "Configured local model" };
-    else if (harness === "copilot" || harness === "dsh")
-      auth = await probeStandardConnection(harness, command);
-    else {
+    else if (harness === "copilot" || harness === "dsh") {
+      const probed = await probeStandardConnection(
+        harness,
+        command,
+        harness === "dsh" ? state().settings.dshProfile : undefined,
+      );
+      auth = probed.readiness;
+      customIssueNote = probed.note;
+    } else {
       const args =
         harness === "codex"
           ? ["login", "status"]
@@ -294,7 +335,7 @@ export function registerConnections(
       ...auth,
       approvedAt: approved ? receipt?.approvedAt : undefined,
       note: connectionIssue
-        ? connectionIssueNote(harness, connectionIssue)
+        ? (customIssueNote ?? connectionIssueNote(harness, connectionIssue))
         : connected
           ? connectedNote(authStatus)
         : approved

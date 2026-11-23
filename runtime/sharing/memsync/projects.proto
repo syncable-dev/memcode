@@ -1,0 +1,122 @@
+syntax = "proto3";
+
+package memsync.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// Projects and the people on them.
+//
+// Every call carries the caller's Memtrace access token as
+// `authorization: Bearer <token>`. A call that is turned down returns a gRPC
+// status whose `memsync-refusal` metadata names the rule that turned it down,
+// so MemCode and memtrace.io can show their own wording for it.
+service Projects {
+  // Starts a personal project owned by the caller.
+  rpc StartProject(StartProjectRequest) returns (Project);
+  // Lists the projects the caller owns or is a guest on, by name.
+  rpc ListProjects(ListProjectsRequest) returns (ListProjectsResponse);
+  // Shows one project the caller is on.
+  rpc GetProject(GetProjectRequest) returns (Project);
+  // Invites a person by email address. Only the owner can invite.
+  rpc InvitePerson(InvitePersonRequest) returns (Invitation);
+  // Lists the open invitations sent to the caller's verified email address.
+  rpc ListInvitations(ListInvitationsRequest) returns (ListInvitationsResponse);
+  // Makes the caller a guest on the project that invited them.
+  rpc AcceptInvitation(AcceptInvitationRequest) returns (Project);
+  // Takes back an invitation nobody has accepted, open or expired. Only the owner can.
+  rpc CancelInvitation(CancelInvitationRequest) returns (Project);
+  // Takes a guest off the project. Only the owner can.
+  rpc RemoveGuest(RemoveGuestRequest) returns (Project);
+  // Takes the caller off a project they are a guest on. The owner cannot leave.
+  rpc LeaveProject(LeaveProjectRequest) returns (LeaveProjectResponse);
+  // Gives the project a new name. Only the owner can.
+  rpc RenameProject(RenameProjectRequest) returns (Project);
+  // Deletes the project for everyone on it, at once and for good. Only the owner can.
+  rpc DeleteProject(DeleteProjectRequest) returns (DeleteProjectResponse);
+}
+
+message Person {
+  string account_id = 1;
+  string name = 2;
+  // Empty until the person has verified an address at memtrace.io.
+  string email = 3;
+}
+
+message Project {
+  string id = 1;
+  string name = 2;
+  Person owner = 3;
+  repeated Person guests = 4;
+  // Invitations that can still be accepted.
+  repeated Invitation open_invitations = 5;
+  // How many guests and open invitations the project can hold together.
+  uint32 guest_limit = 6;
+}
+
+message Invitation {
+  string id = 1;
+  string project_id = 2;
+  string project_name = 3;
+  string email = 4;
+  Person invited_by = 5;
+  google.protobuf.Timestamp sent_at = 6;
+  google.protobuf.Timestamp expires_at = 7;
+}
+
+message StartProjectRequest {
+  string name = 1;
+}
+
+message ListProjectsRequest {}
+
+message ListProjectsResponse {
+  repeated Project projects = 1;
+}
+
+message GetProjectRequest {
+  string project_id = 1;
+}
+
+message InvitePersonRequest {
+  string project_id = 1;
+  string email = 2;
+}
+
+message ListInvitationsRequest {}
+
+message ListInvitationsResponse {
+  repeated Invitation invitations = 1;
+}
+
+message AcceptInvitationRequest {
+  string project_id = 1;
+  string invitation_id = 2;
+}
+
+message CancelInvitationRequest {
+  string project_id = 1;
+  string invitation_id = 2;
+}
+
+message RemoveGuestRequest {
+  string project_id = 1;
+  // The guest's `Person.account_id`.
+  string account_id = 2;
+}
+
+message LeaveProjectRequest {
+  string project_id = 1;
+}
+
+message LeaveProjectResponse {}
+
+message RenameProjectRequest {
+  string project_id = 1;
+  string name = 2;
+}
+
+message DeleteProjectRequest {
+  string project_id = 1;
+}
+
+message DeleteProjectResponse {}

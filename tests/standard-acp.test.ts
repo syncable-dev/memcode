@@ -5,9 +5,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { standardACPCatalog, selectStandardACPModel, standardModelMeasurement } from "../runtime/agents/acp-models";
-import { startStandardSession, readonlyACPTransport } from "../runtime/agents/standard-acp";
+import {
+  probeStandardCatalog,
+  readonlyACPTransport,
+  standardTransport,
+  startStandardSession,
+} from "../runtime/agents/standard-acp";
+import { discoverHarnesses, invalidateHarnessCache } from "../runtime/catalog";
 import type { AgentEvent } from "../runtime/agents/types";
 import { workerToolProfile } from "../runtime/worker-profile";
+import { mkdir } from "node:fs/promises";
 
 test("ACP preserves exact provider IDs, requires selection acknowledgment, and never measures Auto as a model", async () => {
   const tuple = '["deepseek-official","deepseek-v4-flash"]';
@@ -101,4 +108,186 @@ test("review transports expose no writable client tools or external MCP catalogs
     created!({ agent: { ctx: { tools: { restrict: (value: unknown) => { restriction = value; } } } } });
     assert.deepEqual(restriction, { allow: [] });
   } finally { await rm(cwd, { recursive: true, force: true }); }
+});
+
+test("standardACPCatalog preserves multi-group labels without breaking ungrouped options", () => {
+  const session = {
+    sessionId: "s",
+    configOptions: [{
+      id: "model",
+      category: "model",
+      currentValue: "auto",
+      options: [
+        { value: "auto", name: "Auto" },
+        { name: "DeepSeek", options: [{ value: "ds-chat", name: "DeepSeek Chat" }] },
+        { group: "OpenCode Go", options: [{ value: "glm-5", name: "GLM-5" }] },
+      ],
+    }],
+  };
+  assert.deepEqual(standardACPCatalog(session), [
+    { id: "auto", label: "Auto", source: "acp", isDefault: true },
+    { id: "ds-chat", label: "DeepSeek Chat", group: "DeepSeek", source: "acp", isDefault: false },
+    { id: "glm-5", label: "GLM-5", group: "OpenCode Go", source: "acp", isDefault: false },
+  ]);
+});
+
+test("custom dshProfile forwards across transport, readonly review, and session spawn while copilot ignores it", async () => {
+  assert.deepEqual(standardTransport("dsh", { dshProfile: "custom-acp" }).args, ["--profile", "custom-acp"]);
+  assert.deepEqual(
+    standardTransport("copilot", { effort: "high", dshProfile: "custom-acp" }).args,
+    ["--acp", "--stdio", "--effort", "high"],
+  );
+  const cwd = await mkdtemp(join(tmpdir(), "memcode-dsh-profile-"));
+  try {
+    const ro = await readonlyACPTransport("dsh", cwd, "custom-acp");
+    assert.equal(ro.args[0], "--profile");
+    assert.equal(ro.args[1], "custom-acp");
+
+    const script = join(cwd, "fixture.mjs"), trace = join(cwd, "trace.jsonl");
+    await writeFile(script, fixture);
+    const session = startStandardSession("dsh", {
+      command: { command: process.execPath, prefix: [script] },
+      cwd,
+      env: { ...process.env, TRACE: trace },
+      model: "tested-model",
+      effort: "low",
+      dshProfile: "custom-acp",
+      permissionMode: "review",
+      briefPath: "",
+      toolArgs: [],
+      prompt: "Hi",
+      onEvent: () => {},
+      requestInput: async () => ({ optionId: "allow" }),
+    });
+    assert.equal((await session.completion).exitCode, 0);
+    const log = (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line));
+    const idx = log[0].argv.indexOf("--profile");
+    assert.ok(idx >= 0);
+    assert.equal(log[0].argv[idx + 1], "custom-acp");
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("probeStandardCatalog strictStdout rejects non-JSON stdout noise", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "memcode-strict-stdout-"));
+  try {
+    const script = join(cwd, "noisy-acp.mjs");
+    await writeFile(script, `
+import { createInterface } from 'node:readline';
+process.stdout.write('[noisy-plugin] initialized\\n');
+const send = x => process.stdout.write(JSON.stringify(x)+'\\n');
+createInterface({input:process.stdin}).on('close',()=>process.exit(0)).on('line', line => {
+  const x = JSON.parse(line);
+  if (x.method === 'initialize') return send({jsonrpc:'2.0',id:x.id,result:{agentCapabilities:{}}});
+  if (x.method === 'session/new') return send({jsonrpc:'2.0',id:x.id,result:{sessionId:'s1',configOptions:[{id:'model',category:'model',currentValue:'m1',options:[{value:'m1',name:'Model 1'}]}]}});
+  if (x.method === 'session/close') return send({jsonrpc:'2.0',id:x.id,result:{}});
+});
+`);
+    const cmd = { command: process.execPath, prefix: [script] };
+    const relaxed = await probeStandardCatalog("dsh", cmd, "acp", { strictStdout: false });
+    assert.equal(relaxed[0]?.id, "m1");
+    await assert.rejects(
+      probeStandardCatalog("dsh", cmd, "acp", { strictStdout: true }),
+      /unreadable ACP message/i,
+    );
+
+    const emptyScript = join(cwd, "empty-acp.mjs");
+    await writeFile(emptyScript, `
+import { createInterface } from 'node:readline';
+const send = x => process.stdout.write(JSON.stringify(x)+'\\n');
+createInterface({input:process.stdin}).on('close',()=>process.exit(0)).on('line', line => {
+  const x = JSON.parse(line);
+  if (x.method === 'initialize') return send({jsonrpc:'2.0',id:x.id,result:{agentCapabilities:{}}});
+  if (x.method === 'session/new') return send({jsonrpc:'2.0',id:x.id,result:{sessionId:'s1',configOptions:[]}});
+  if (x.method === 'session/close') return send({jsonrpc:'2.0',id:x.id,result:{}});
+});
+`);
+    await assert.rejects(
+      probeStandardCatalog("dsh", { command: process.execPath, prefix: [emptyScript] }, "acp", { strictStdout: true }),
+      /empty model catalog/i,
+    );
+
+    // A JSON log line is still stdout pollution, not an ACP message.
+    const loggingScript = join(cwd, "json-log-acp.mjs");
+    await writeFile(loggingScript, `
+import { createInterface } from 'node:readline';
+process.stdout.write(JSON.stringify({ message: 'starting' }) + '\\n');
+const send = x => process.stdout.write(JSON.stringify(x)+'\\n');
+createInterface({input:process.stdin}).on('close',()=>process.exit(0)).on('line', line => {
+  const x = JSON.parse(line);
+  if (x.method === 'initialize') return send({jsonrpc:'2.0',id:x.id,result:{agentCapabilities:{}}});
+  if (x.method === 'session/new') return send({jsonrpc:'2.0',id:x.id,result:{sessionId:'s1',configOptions:[{id:'model',category:'model',currentValue:'m1',options:[{value:'m1',name:'Model 1'}]}]}});
+  if (x.method === 'session/close') return send({jsonrpc:'2.0',id:x.id,result:{}});
+});
+`);
+    const logging = { command: process.execPath, prefix: [loggingScript] };
+    assert.equal((await probeStandardCatalog("dsh", logging, "acp"))[0]?.id, "m1");
+    await assert.rejects(
+      probeStandardCatalog("dsh", logging, "acp", { strictStdout: true }),
+      /not an ACP message/i,
+    );
+
+    // An unusable profile name rejects, so a caller's .catch() always applies.
+    const invalid = probeStandardCatalog("dsh", cmd, "acp copy");
+    await assert.rejects(invalid, /Invalid DeepSeek Harness profile/);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("discoverHarnesses tracks active dshProfile in cache and supports invalidateHarnessCache", async () => {
+  const dshHome = await mkdtemp(join(tmpdir(), "memcode-dsh-cache-"));
+  const prevDshHome = process.env.DSH_HOME;
+  process.env.DSH_HOME = dshHome;
+  try {
+    for (const name of ["custom-acp", "work"]) {
+      const dir = join(dshHome, "profiles", name);
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, "package.json"), JSON.stringify({ dsh: { profile: { bundles: ["@deepseek-ai/dsh-acp-app"] } } }));
+    }
+    invalidateHarnessCache("dsh");
+    const [first] = await discoverHarnesses(false, "dsh", { dshProfile: "custom-acp" });
+    assert.equal(first.activeProfile, "custom-acp");
+    assert.deepEqual(first.profiles?.slice().sort(), ["custom-acp", "work"]);
+
+    const [switched] = await discoverHarnesses(false, "dsh", { dshProfile: "work" });
+    assert.equal(switched.activeProfile, "work");
+
+    const extraDir = join(dshHome, "profiles", "extra");
+    await mkdir(extraDir, { recursive: true });
+    await writeFile(join(extraDir, "package.json"), JSON.stringify({ dsh: { profile: { bundles: ["@deepseek-ai/dsh-acp-app"] } } }));
+    invalidateHarnessCache("dsh");
+    const [refreshed] = await discoverHarnesses(false, "dsh", { dshProfile: "work" });
+    assert.ok(refreshed.profiles?.includes("extra"));
+
+    // Non-ACP configured profile must not launch the binary for a catalog probe
+    const webDir = join(dshHome, "profiles", "web-only");
+    await mkdir(webDir, { recursive: true });
+    await writeFile(join(webDir, "package.json"), JSON.stringify({ dsh: { profile: { bundles: ["@deepseek-ai/dsh-web-app"] } } }));
+    const binDir = join(dshHome, "bin");
+    const dshBin = join(binDir, "node_modules", "@deepseek-ai", "dsh", "lib");
+    await mkdir(dshBin, { recursive: true });
+    const spawnMarker = join(dshHome, "spawned.txt");
+    await writeFile(
+      join(dshBin, "bin.js"),
+      `import { writeFileSync } from "node:fs"; writeFileSync(${JSON.stringify(spawnMarker)}, "ran"); process.exit(1);\n`,
+    );
+    const prevPath = process.env.PATH;
+    process.env.PATH = binDir;
+    try {
+      invalidateHarnessCache("dsh");
+      const [webResult] = await discoverHarnesses(true, "dsh", { dshProfile: "web-only" });
+      assert.equal(webResult.activeProfile, "web-only");
+      assert.deepEqual(webResult.models, []);
+      await assert.rejects(() => readFile(spawnMarker, "utf8"));
+    } finally {
+      process.env.PATH = prevPath;
+    }
+  } finally {
+    invalidateHarnessCache("dsh");
+    if (prevDshHome === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = prevDshHome;
+    await rm(dshHome, { recursive: true, force: true });
+  }
 });

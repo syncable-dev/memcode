@@ -1,6 +1,6 @@
 {
   "name": "memcode",
-  "version": "0.4.0-beta.20",
+  "version": "0.4.0-beta.21",
   "license": "PolyForm-Noncommercial-1.0.0",
   "private": true,
   "description": "The local Fleet Agentic Worker Suite, powered by Memtrace.",
@@ -39,6 +39,7 @@
     "react-markdown": "10.1.0",
     "read-excel-file": "9.3.17",
     "remark-gfm": "4.0.1",
+    "yjs": "13.6.33",
     "zod": "4.6.7"
   },
   "devDependencies": {

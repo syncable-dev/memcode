@@ -83,13 +83,14 @@ const ConversationMessage = memo(
           <Time at={message.at} />
           {message.followupState && message.followupState !== "included" && (
             <span className="message-queue-state" role="status">
-              {message.followupState === "queued"
-                ? message.pickedUpAt
-                  ? "Picked up"
-                  : "Queued"
-                : message.followupState === "paused"
-                  ? "Queue paused"
-                  : "Queue cancelled"}
+              {message.deliveryLine ??
+                (message.followupState === "queued"
+                  ? message.pickedUpAt
+                    ? "Picked up"
+                    : "Queued"
+                  : message.followupState === "paused"
+                    ? "Queue paused"
+                    : "Queue cancelled")}
             </span>
           )}
           {message.role === "assistant" && (

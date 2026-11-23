@@ -85,12 +85,18 @@ export class LocalStore {
     initializePlanning(this.state);
     return this.state;
   }
-  save(): Promise<void> {
+  /**
+   * Saves the workspace as it is at the moment of the call. `first` runs before
+   * the file is written: something that must be on disk before the workspace
+   * that goes with it.
+   */
+  save(first?: () => Promise<void>): Promise<void> {
     observePlanning(this.state);
     const serialized = JSON.stringify(this.state, null, 2);
     const pending = this.writes
       .catch(() => {})
       .then(async () => {
+        await first?.();
         const path = join(this.dir, "workspace.json");
         const temp = join(this.dir, "workspace.json.next");
         await writeFile(temp, serialized, "utf8");
@@ -100,7 +106,9 @@ export class LocalStore {
     return pending;
   }
   async runtime(): Promise<RuntimeInfo> {
-    const harnesses = await discoverHarnesses();
+    const harnesses = await discoverHarnesses(false, undefined, {
+      dshProfile: this.state.settings.dshProfile,
+    });
     return {
       appVersion,
       harnesses,

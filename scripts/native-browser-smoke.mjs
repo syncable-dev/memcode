@@ -66,6 +66,14 @@ try {
   }
   assert.ok(main, "Native main page did not load: " + diagnostics);
   await main.waitForFunction(() => !!window.memcode);
+  // A fresh profile opens on the welcome. Close it, as tauri-smoke.mjs does.
+  const loaded = await main.evaluate(() => window.memcode.load());
+  const onboarding = (loaded?.state ?? loaded)?.onboarding;
+  if (!onboarding || (onboarding.step === "welcome" && !onboarding.dismissed)) {
+    const skip = main.getByRole("button", { name: "Skip for now", exact: true });
+    await expect(skip).toBeVisible();
+    await skip.click();
+  }
   await main.evaluate(() => window.memcode.selectProject("example"));
   await main.getByRole("button", { name: "Workspace", exact: true }).click();
   await main

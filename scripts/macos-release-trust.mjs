@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { randomBytes, createHash } from "node:crypto";
 import {
   mkdir,
@@ -12,7 +12,7 @@ import {
   chmod,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative, sep } from "node:path";
 
 const appleKeys = [
   "APPLE_CERTIFICATE",
@@ -245,6 +245,24 @@ export async function prepareMacSigning(root, inherited = process.env) {
       node,
     ]);
     run("/usr/bin/codesign", ["--verify", "--strict", node]);
+    // Native libraries in the other bundled folders, such as onnxruntime for local
+    // search, are loaded by that Node. Apple rejects the app while any is unsigned.
+    const libraries = await bundledLibrariesToSign(root);
+    for (const library of libraries) {
+      run("/usr/bin/codesign", [
+        "--force",
+        "--timestamp",
+        "--options",
+        "runtime",
+        "--sign",
+        policy.identity,
+        "--keychain",
+        keychain,
+        library,
+      ]);
+      run("/usr/bin/codesign", ["--verify", "--strict", library]);
+    }
+    await recordSignedFiles(root, libraries);
     const signedRuntime = {
       originalExecutableSha256: provenance.executableSha256,
       signedExecutableSha256: digest(await readFile(node)),
@@ -256,6 +274,67 @@ export async function prepareMacSigning(root, inherited = process.env) {
     await cleanup();
     throw error;
   }
+}
+
+/**
+ * Whether Apple notarized a standalone program, such as the engine's command-line
+ * tools. Gatekeeper's app assessment rejects anything that is not an app bundle
+ * ("does not seem to be an app"), so it cannot answer this; codesign can.
+ */
+export function isNotarizedExecutable(binary) {
+  return (
+    spawnSync(
+      "/usr/bin/codesign",
+      ["--verify", "--strict", "--test-requirement==notarized", binary],
+      { stdio: "ignore" },
+    ).status === 0
+  );
+}
+
+/**
+ * Writes the fingerprint of each signed file into the provenance.json of the bundled
+ * folder it is in, keeping the unsigned one, since the app checks those files
+ * against it before it loads them.
+ */
+export async function recordSignedFiles(root, signed) {
+  const byFolder = new Map();
+  for (const path of signed) {
+    const [folder, ...rest] = relative(root, path).split(sep);
+    byFolder.set(folder, [...(byFolder.get(folder) ?? []), rest.join("/")]);
+  }
+  for (const [folder, names] of byFolder) {
+    const manifest = join(root, folder, "provenance.json");
+    let provenance;
+    try {
+      provenance = JSON.parse(await readFile(manifest, "utf8"));
+    } catch {
+      continue;
+    }
+    if (!Array.isArray(provenance.files)) continue;
+    for (const entry of provenance.files) {
+      if (!names.includes(entry.name)) continue;
+      const bytes = await readFile(join(root, folder, entry.name));
+      entry.unsignedSha256 ??= entry.sha256;
+      entry.bytes = bytes.length;
+      entry.sha256 = digest(bytes);
+    }
+    await writeFile(manifest, JSON.stringify(provenance, null, 2) + "\n");
+  }
+}
+
+/**
+ * The native binaries in the folders packaging copies into the app as resources
+ * (`dist-*` at the root), other than Node, which is signed with its own entitlement.
+ */
+export async function bundledLibrariesToSign(root) {
+  const node = join(root, "dist-desktop-runtime/node");
+  const folders = (await readdir(root, { withFileTypes: true })).filter(
+    (entry) => entry.isDirectory() && entry.name.startsWith("dist-"),
+  );
+  const found = await Promise.all(
+    folders.map((folder) => machoFiles(join(root, folder.name))),
+  );
+  return found.flat().filter((path) => path !== node);
 }
 
 export async function machoFiles(directory) {
@@ -353,7 +432,6 @@ export async function verifyMacRelease(root, signing) {
     try {
       run("/usr/bin/ditto", ["-x", "-k", engineArchive, engineTemp]);
       const names = ["memtrace", "memcore-server", "memcortex-daemon", "memcortex-mcp"];
-      const { spawnSync } = await import("node:child_process");
       for (const name of names) {
         const binary = join(engineTemp, name);
         const expected = engineManifest.files.find(file => file.name === name);
@@ -366,7 +444,8 @@ export async function verifyMacRelease(root, signing) {
         const details = display.stdout + display.stderr;
         if (display.status !== 0 || !details.includes("Authority=Developer ID Application:") || !details.includes("TeamIdentifier=" + proof.teamId) || !/flags=.*runtime/.test(details))
           throw Error("Public Mac distribution requires separately Developer ID signed, hardened and notarized engine executables. This bundled engine has not established that trust; use an explicitly labelled manual-approval beta until a trusted engine release is pinned.");
-        run("/usr/sbin/spctl", ["--assess", "--type", "execute", "--verbose=4", binary]);
+        if (!isNotarizedExecutable(binary))
+          throw Error(`Apple has not notarized the bundled engine program ${name}.`);
       }
       proof.bundledEngineNativeTrust = { developerIdSigned: true, gatekeeper: "accepted", nativeExecutables: names.length, archiveSha256: engineManifest.sha256 };
     } finally {
@@ -395,7 +474,6 @@ export async function verifyMacRelease(root, signing) {
       run("/usr/bin/codesign", ["--verify", "--strict", binary]);
       // codesign writes metadata to stderr even on success.
       // Collect both streams without printing any content.
-      const { spawnSync } = await import("node:child_process");
       const display = spawnSync(
         "/usr/bin/codesign",
         ["--display", "--verbose=4", binary],

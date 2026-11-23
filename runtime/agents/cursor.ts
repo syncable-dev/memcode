@@ -192,17 +192,44 @@ export function startStandardACPSession(transport: ACPTransport, options: AgentS
   return runCursorSession(options, undefined, transport);
 }
 
-export async function probeStandardACPCatalog(transport: ACPTransport, command: Command): Promise<ModelOption[]> {
+export async function probeStandardACPCatalog(
+  transport: ACPTransport,
+  command: Command,
+  probeOptions?: { strictStdout?: boolean },
+): Promise<ModelOption[]> {
   const cwd = await mkdtemp(join(tmpdir(), `memcode-${transport.id}-catalog-`));
   let models: ModelOption[] = [];
+  let inspected = false;
+  let stdoutNoiseError: string | undefined;
   try {
-    const session = runCursorSession({ command, cwd, env: childEnv(), model: "", effort: "low", prompt: "", briefPath: "", toolArgs: [],
-      onEvent: () => {}, requestInput: async () => ({ cancelled: true }),
-    }, result => { models = standardACPCatalog(result); }, transport);
-    const timer = setTimeout(() => { void session.stop(); }, 15000);
+    const session = runCursorSession({
+      command,
+      cwd,
+      env: childEnv(),
+      model: "",
+      effort: "low",
+      prompt: "",
+      briefPath: "",
+      toolArgs: [],
+      onEvent: (event) => {
+        if (probeOptions?.strictStdout && event.type === "error" && !stdoutNoiseError) {
+          stdoutNoiseError = event.message;
+        }
+      },
+      requestInput: async () => ({ cancelled: true }),
+    }, (result) => {
+      inspected = true;
+      models = standardACPCatalog(result);
+    }, transport, probeOptions?.strictStdout === true);
+    const timer = setTimeout(() => { void session.stop(); }, 25000);
     try {
       const result = await session.completion;
       if (result.exitCode !== 0) throw Error(result.error || `${transport.name}'s model catalog did not respond.`);
+      if (probeOptions?.strictStdout) {
+        if (stdoutNoiseError) throw Error(stdoutNoiseError);
+        if (!inspected) throw Error(`${transport.name}'s model catalog did not respond cleanly.`);
+        if (models.length === 0) throw Error(`${transport.name} returned an empty model catalog.`);
+      }
     } finally { clearTimeout(timer); }
     return models;
   } finally {
@@ -210,7 +237,20 @@ export async function probeStandardACPCatalog(transport: ACPTransport, command: 
   }
 }
 
-function runCursorSession(options: AgentSessionOptions, inspect?: (session: Json) => void, transport?: ACPTransport): AgentSession {
+/** A JSON-RPC 2.0 request, notification or response, as ACP sends them. */
+function isJsonRpcMessage(message: Json): boolean {
+  if (message.jsonrpc !== "2.0") return false;
+  if (typeof message.method === "string") return true;
+  return hasId(message) && ("result" in message || "error" in message);
+}
+
+function runCursorSession(
+  options: AgentSessionOptions,
+  inspect?: (session: Json) => void,
+  transport?: ACPTransport,
+  /** Treat any stdout line that is not a JSON-RPC message as an error. */
+  strictStdout = false,
+): AgentSession {
   const brand = transport?.name ?? "Cursor";
   // Current ACP ignores --auto-review even though interactive Cursor supports it.
   // Never silently run an allowlist/bypass session labelled as Smart auto.
@@ -646,7 +686,18 @@ function runCursorSession(options: AgentSessionOptions, inspect?: (session: Json
   const lines = createInterface({ input: child.stdout! });
   lines.on("line", (line) => {
     try {
-      incoming(record(JSON.parse(line)));
+      const message = record(JSON.parse(line));
+      // JSON log lines such as {"message":"starting"} are ignored by incoming();
+      // a strict probe must still see that stdout is not a clean ACP stream.
+      if (strictStdout && !isJsonRpcMessage(message)) {
+        emit({
+          type: "error",
+          message: `${brand} wrote a JSON line that is not an ACP message to stdout.`,
+          fatal: false,
+        });
+        return;
+      }
+      incoming(message);
     } catch {
       emit({
         type: "error",
