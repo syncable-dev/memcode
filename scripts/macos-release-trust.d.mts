@@ -15,3 +15,5 @@ export function assertPublicMacTrust<T>(proof: T): T;
 export function bundledLibrariesToSign(root: string): Promise<string[]>;
 /** Records signed files' fingerprints in their folder's provenance.json, keeping the unsigned ones. */
 export function recordSignedFiles(root: string, signed: string[]): Promise<void>;
+/** Whether Apple notarized a standalone program; Gatekeeper's app assessment cannot tell. */
+export function isNotarizedExecutable(binary: string): boolean;

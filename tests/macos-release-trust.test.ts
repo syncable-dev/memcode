@@ -229,3 +229,27 @@ test("a signed library's new fingerprint is recorded, so the app's own check sti
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("a command-line program counts as notarized only when Apple notarized it", { skip: process.platform !== "darwin" }, async () => {
+  const { mkdtemp, copyFile, rm } = await import("node:fs/promises");
+  const { existsSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { execFileSync } = await import("node:child_process");
+  const { isNotarizedExecutable } = await import("../scripts/macos-release-trust.mjs");
+  const folder = await mkdtemp(join(tmpdir(), "memcode-notarized-"));
+  try {
+    const local = join(folder, "echo");
+    await copyFile("/bin/echo", local);
+    execFileSync("/usr/bin/codesign", ["--force", "--sign", "-", local], { stdio: "ignore" });
+    assert.equal(isNotarizedExecutable(local), false);
+    // The engine packaging staged, Developer ID signed and notarized, when this computer has one.
+    const engine = new URL("../dist-memtrace-engine/engine.zip", import.meta.url).pathname;
+    if (existsSync(engine)) {
+      execFileSync("/usr/bin/ditto", ["-x", "-k", engine, folder]);
+      assert.equal(isNotarizedExecutable(join(folder, "memtrace")), true);
+    }
+  } finally {
+    await rm(folder, { recursive: true, force: true });
+  }
+});
