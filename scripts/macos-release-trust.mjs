@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { randomBytes, createHash } from "node:crypto";
 import {
   mkdir,
@@ -277,6 +277,21 @@ export async function prepareMacSigning(root, inherited = process.env) {
 }
 
 /**
+ * Whether Apple notarized a standalone program, such as the engine's command-line
+ * tools. Gatekeeper's app assessment rejects anything that is not an app bundle
+ * ("does not seem to be an app"), so it cannot answer this; codesign can.
+ */
+export function isNotarizedExecutable(binary) {
+  return (
+    spawnSync(
+      "/usr/bin/codesign",
+      ["--verify", "--strict", "--test-requirement==notarized", binary],
+      { stdio: "ignore" },
+    ).status === 0
+  );
+}
+
+/**
  * Writes the fingerprint of each signed file into the provenance.json of the bundled
  * folder it is in, keeping the unsigned one, since the app checks those files
  * against it before it loads them.
@@ -417,7 +432,6 @@ export async function verifyMacRelease(root, signing) {
     try {
       run("/usr/bin/ditto", ["-x", "-k", engineArchive, engineTemp]);
       const names = ["memtrace", "memcore-server", "memcortex-daemon", "memcortex-mcp"];
-      const { spawnSync } = await import("node:child_process");
       for (const name of names) {
         const binary = join(engineTemp, name);
         const expected = engineManifest.files.find(file => file.name === name);
@@ -430,7 +444,8 @@ export async function verifyMacRelease(root, signing) {
         const details = display.stdout + display.stderr;
         if (display.status !== 0 || !details.includes("Authority=Developer ID Application:") || !details.includes("TeamIdentifier=" + proof.teamId) || !/flags=.*runtime/.test(details))
           throw Error("Public Mac distribution requires separately Developer ID signed, hardened and notarized engine executables. This bundled engine has not established that trust; use an explicitly labelled manual-approval beta until a trusted engine release is pinned.");
-        run("/usr/sbin/spctl", ["--assess", "--type", "execute", "--verbose=4", binary]);
+        if (!isNotarizedExecutable(binary))
+          throw Error(`Apple has not notarized the bundled engine program ${name}.`);
       }
       proof.bundledEngineNativeTrust = { developerIdSigned: true, gatekeeper: "accepted", nativeExecutables: names.length, archiveSha256: engineManifest.sha256 };
     } finally {
@@ -459,7 +474,6 @@ export async function verifyMacRelease(root, signing) {
       run("/usr/bin/codesign", ["--verify", "--strict", binary]);
       // codesign writes metadata to stderr even on success.
       // Collect both streams without printing any content.
-      const { spawnSync } = await import("node:child_process");
       const display = spawnSync(
         "/usr/bin/codesign",
         ["--display", "--verbose=4", binary],
