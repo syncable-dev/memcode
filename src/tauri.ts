@@ -259,6 +259,14 @@ export async function installNativeBridge(): Promise<void> {
     deleteStoryComment: (taskId, id) =>
       call("story-comment:delete", { taskId, id }),
     refreshWorkerCatalog: () => call("connection:refresh-catalog"),
+    dshSetupStatus: () => call("dsh:setup-status"),
+    installDshCli: () => call("dsh:install-cli"),
+    createDshProfile: (name) => call("dsh:create-profile", { name }),
+    selectDshProfile: (name) => call("dsh:select-profile", { name }),
+    dshDesktopDiff: (targetProfile) =>
+      call("dsh:desktop-diff", { targetProfile }),
+    dryRunDshMigration: (input) => call("dsh:dry-run-migrate", input),
+    applyDshMigration: (input) => call("dsh:apply-migrate", input),
     installationStatus: () => call("installation:status"),
     showInstallationSource: () => call("installation:show-source"),
     showApplications: () => call("installation:show-applications"),

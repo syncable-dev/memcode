@@ -1,14 +1,33 @@
 import { probeStandardACPCatalog, startStandardACPSession, type ACPTransport } from "./cursor";
 import type { AgentSessionOptions } from "./types";
 import type { Command } from "../commands";
+import { normalizeDshProfile } from "../dsh-profiles";
 import { join } from "node:path";
 import { writeFile } from "node:fs/promises";
 
 export type StandardHarness = "copilot" | "dsh";
-export function standardTransport(id: StandardHarness, options?: Pick<AgentSessionOptions, "effort" | "permissionMode">): ACPTransport {
+export function standardTransport(
+  id: StandardHarness,
+  options?: Partial<Pick<AgentSessionOptions, "effort" | "permissionMode" | "dshProfile">> & {
+    allowStaging?: boolean;
+  },
+): ACPTransport {
   return id === "copilot"
-    ? { id, name: "GitHub Copilot", args: ["--acp", "--stdio", ...(options ? ["--effort", options.effort] : [])] }
-    : { id, name: "DeepSeek Harness", args: ["--profile", "acp"] };
+    ? {
+        id,
+        name: "GitHub Copilot",
+        args: ["--acp", "--stdio", ...(options?.effort ? ["--effort", options.effort] : [])],
+      }
+    : {
+        id,
+        name: "DeepSeek Harness",
+        args: [
+          "--profile",
+          normalizeDshProfile(options?.dshProfile, {
+            allowStaging: options?.allowStaging,
+          }),
+        ],
+      };
 }
 export function startStandardSession(id: StandardHarness, options: AgentSessionOptions) {
   if (options.localModel) throw Error("The local-model override currently supports Codex with Ollama.");
@@ -18,12 +37,30 @@ export function startStandardSession(id: StandardHarness, options: AgentSessionO
     env: { ...options.env, ...(id === "dsh" ? { DSH_PERMISSION_MODE: options.permissionMode === "full-access" ? "danger-full-access" : "workspace-write" } : {}) },
   });
 }
-export function probeStandardCatalog(id: StandardHarness, command: Command) {
-  return probeStandardACPCatalog(standardTransport(id), command);
+// Async, so an invalid profile name rejects instead of throwing before a
+// caller's .catch() is attached.
+export async function probeStandardCatalog(
+  id: StandardHarness,
+  command: Command,
+  dshProfile?: string,
+  options?: { strictStdout?: boolean; allowStaging?: boolean },
+) {
+  return probeStandardACPCatalog(
+    standardTransport(
+      id,
+      id === "dsh" ? { dshProfile, allowStaging: options?.allowStaging } : undefined,
+    ),
+    command,
+    options,
+  );
 }
 
 /** Separate reviewer process, no MCP servers, shell, edits or agent tools. */
-export async function readonlyACPTransport(id: StandardHarness, capsule: string): Promise<ACPTransport> {
+export async function readonlyACPTransport(
+  id: StandardHarness,
+  capsule: string,
+  dshProfile?: string,
+): Promise<ACPTransport> {
   if (id === "copilot") return {
     id, name: "GitHub Copilot", args: ["--acp", "--stdio", "--available-tools=view", "--disable-builtin-mcps", "--no-custom-instructions", "--no-auto-update"],
   };
@@ -39,5 +76,9 @@ export function apply(ctx) {
     { id: "sandbox-policy", config: { mode: "read-only", workspaceRoot: capsule } },
     { insert: [{ id: "memcode-readonly-review", name: plugin }] },
   ]), { mode: 0o600 });
-  return { id, name: "DeepSeek Harness", args: ["--profile", "acp", "--patch", patch] };
+  return {
+    id,
+    name: "DeepSeek Harness",
+    args: ["--profile", normalizeDshProfile(dshProfile), "--patch", patch],
+  };
 }

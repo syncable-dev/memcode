@@ -5,21 +5,49 @@ type Json = Record<string, any>;
 const rows = (value: unknown): Json[] => Array.isArray(value) ? value.filter(row => row && typeof row === "object") : [];
 const configs = (session: Json) => rows(session.configOptions);
 const modelConfig = (session: Json) => configs(session).find(option => option.category === "model" || option.id === "model");
-function choices(option?: Json): Json[] {
-  return rows(option?.options).flatMap(row => Array.isArray(row.options) ? choices(row) : [row]);
+function choices(option?: Json, group?: string): Json[] {
+  return rows(option?.options).flatMap((row) => {
+    if (Array.isArray(row.options)) {
+      const nextGroup =
+        typeof row.name === "string"
+          ? row.name
+          : typeof row.group === "string"
+            ? row.group
+            : group;
+      return choices(row, nextGroup);
+    }
+    const leafGroup = typeof row.group === "string" ? row.group : group;
+    return [leafGroup !== undefined ? { ...row, group: leafGroup } : row];
+  });
 }
 
 /** Opaque ACP IDs come from this installed provider. No guessed model names. */
 export function standardACPCatalog(session: Json): ModelOption[] {
   const option = modelConfig(session);
   const current = option?.currentValue ?? session.models?.currentModelId;
-  const offered = option ? choices(option).map(row => ({ id: row.value, label: row.name ?? row.label }))
-    : rows(session.models?.availableModels).map(row => ({ id: row.modelId, label: row.name }));
+  const offered = option
+    ? choices(option).map((row) => ({
+        id: row.value,
+        label: row.name ?? row.label,
+        group: row.group,
+      }))
+    : rows(session.models?.availableModels).map((row) => ({
+        id: row.modelId,
+        label: row.name,
+        group: row.group,
+      }));
   const seen = new Set<string>();
-  return offered.flatMap(row => {
+  return offered.flatMap((row) => {
     if (typeof row.id !== "string" || !row.id || row.id.length > 256 || seen.has(row.id)) return [];
     seen.add(row.id);
-    return [{ id: row.id, label: typeof row.label === "string" ? row.label : row.id, source: "acp" as const, isDefault: row.id === current }];
+    const group = typeof row.group === "string" && row.group ? row.group : undefined;
+    return [{
+      id: row.id,
+      label: typeof row.label === "string" ? row.label : row.id,
+      ...(group ? { group } : {}),
+      source: "acp" as const,
+      isDefault: row.id === current,
+    }];
   });
 }
 

@@ -11,10 +11,11 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { newRunbook } from "../src/runbook";
 import { repoRelativePath } from "./context/source";
-import type { AppState, Project, WorkItem } from "../src/shared";
+import type { AppState, DshSetupStatus, Project, WorkItem } from "../src/shared";
 import { maxWorkerSlots } from "../src/worker-slots";
 import { isActive } from "../src/domain";
 import { LocalStore, exists, findCommand, git, now, within } from "./local";
+import { findDesktopApp, refreshWindowsUserPath } from "./commands";
 import { observePersistence } from "./persistence";
 import { MemtraceEngine } from "./memtrace";
 import { ensureProjectRepository } from "./project-repository";
@@ -26,7 +27,21 @@ import { reconcileArtifacts } from "./artifact-catalog";
 import { WorkerManager } from "./workers";
 import { PreviewManager } from "./preview";
 import { localURL } from "./urls";
-import { discoverHarnesses } from "./catalog";
+import { discoverHarnesses, invalidateHarnessCache } from "./catalog";
+import { probeStandardCatalog } from "./agents/standard-acp";
+import {
+  createDshAcpProfile,
+  inspectDshProfiles,
+  normalizeDshProfile,
+} from "./dsh-profiles";
+import { inspectDshDesktopCli, installDshDesktopCli } from "./dsh-desktop";
+import {
+  applyDshMigration,
+  diffDshDesktopModels,
+  dryRunDshMigration,
+  type DshMigrationPlan,
+} from "./dsh-migration";
+import { DshSetupGate } from "./dsh-setup-gate";
 import { planDefinedStory, readRoutingCalibration, readRoutingLanguage } from "./story-route";
 import { qualificationRequestFingerprint } from "./qualification";
 import { registerPlanning } from "./planning";
@@ -149,6 +164,10 @@ export async function createRuntime(
   let betaNeedsAnalysis = false;
   let betaReady = false;
   let requireFreshWorkerContext = false;
+  // Setup changes, dsh workers and dsh reviewers never overlap.
+  const dshGate = new DshSetupGate();
+  // Only the most recent successful dry-run can be applied, and only once.
+  let dshPlan: { id: string; plan: DshMigrationPlan } | null = null;
   const qaProfile =
     process.env.MEMCODE_NATIVE_TEST_PROFILE === "1" ||
     !!process.env.NODE_TEST_CONTEXT;
@@ -249,10 +268,15 @@ export async function createRuntime(
         release: (taskId, projectId) =>
           team?.release(taskId, projectId) ?? Promise.resolve(),
       },
-      () => {
+      (harness) => {
         appUpdateGate.assertMayStart();
         beta?.assertMayStart();
         if (!beta?.usesBeta()) connections.account.assertMayStart();
+        if (harness === "dsh" && dshGate.operation) {
+          throw new Error(
+            "Wait for DeepSeek Harness setup to finish before starting a DeepSeek Harness worker.",
+          );
+        }
       },
       (project) =>
         betaReady &&
@@ -773,7 +797,7 @@ export async function createRuntime(
     const measurement = { ...current, scope: current.scope?.slice() };
     const measuredRequest = qualificationRequestFingerprint(measurement);
     const [installed, evidence, calibration, languageModel] = await Promise.all([
-      discover(),
+      discover(false, undefined, { dshProfile: store.state.settings.dshProfile }),
       engine.qualify(
         epicAnalysisProject(project(measurement.projectId), measurement),
         measurement,
@@ -820,9 +844,247 @@ export async function createRuntime(
     host.call("installation_show_applications", {}),
   );
   register("connection:refresh-catalog", z.undefined(), async () => {
-    await discoverHarnesses(true);
+    if (process.platform === "win32" && !(await findCommand("dsh"))) {
+      await refreshWindowsUserPath();
+    }
+    await discoverHarnesses(true, undefined, {
+      dshProfile: store.state.settings.dshProfile,
+    });
     return store.runtime();
   });
+  const resolveDshCommand = async () => {
+    let command = await findCommand("dsh");
+    if (!command && process.platform === "win32") {
+      await refreshWindowsUserPath();
+      command = await findCommand("dsh");
+    }
+    return command;
+  };
+  const dshSetupStatus = async (): Promise<DshSetupStatus> => {
+    const [command, desktopAppPath, profiles] = await Promise.all([
+      resolveDshCommand(),
+      findDesktopApp("dsh"),
+      inspectDshProfiles(store.state.settings.dshProfile),
+    ]);
+    const desktopCli = desktopAppPath
+      ? await inspectDshDesktopCli(desktopAppPath)
+      : undefined;
+    return {
+      cliInstalled: !!command,
+      cliPath: command?.command ?? null,
+      desktopAppPath: desktopAppPath ?? null,
+      ...(desktopCli ? { desktopCli } : {}),
+      ...profiles,
+    };
+  };
+  const assertNoActiveDshWorker = () => {
+    if (
+      store.state.tasks.some(
+        (item) => !item.example && item.harness === "dsh" && isActive(item),
+      )
+    )
+      throw new Error(
+        "Stop active DeepSeek Harness workers before changing its CLI, profile, or model setup.",
+      );
+  };
+  const withDshSetupLock = async <T>(
+    operation: string,
+    fn: () => Promise<T>,
+    options: { readOnly?: boolean } = {},
+  ): Promise<T> => {
+    if (!options.readOnly) assertNoActiveDshWorker();
+    try {
+      return await dshGate.run(operation, fn, { mutates: !options.readOnly });
+    } finally {
+      dispatchQueued?.();
+    }
+  };
+  /**
+   * A model chosen from one profile's catalog may not exist in another. After
+   * a profile or its providers change, drop dsh overrides the new catalog does
+   * not offer, so later dsh tasks cannot fail model selection.
+   */
+  const revalidateDshOverrides = async () => {
+    const runtime = await store.runtime();
+    const offered = new Set(
+      runtime.harnesses.find((item) => item.id === "dsh")?.models.map((model) => model.id) ?? [],
+    );
+    // An unavailable catalog cannot prove an override wrong; keep them.
+    if (offered.size === 0) return runtime;
+    let dropped = false;
+    const settings = store.state.settings;
+    if (settings.defaultHarness === "dsh" && !settings.localModel && settings.model && !offered.has(settings.model)) {
+      settings.model = "";
+      dropped = true;
+    }
+    for (const item of store.state.tasks)
+      if (
+        !item.example &&
+        item.harness === "dsh" &&
+        item.stage !== "done" &&
+        item.modelOverride &&
+        !offered.has(item.modelOverride)
+      ) {
+        item.modelOverride = null;
+        dropped = true;
+      }
+    if (dropped) await changed();
+    return runtime;
+  };
+  const resolveDshTargetProfile = async (targetProfile?: string) =>
+    targetProfile?.trim()
+      ? normalizeDshProfile(targetProfile)
+      : (await inspectDshProfiles(store.state.settings.dshProfile)).activeProfile;
+  register("dsh:setup-status", z.undefined(), () => dshSetupStatus());
+  register("dsh:install-cli", z.undefined(), () =>
+    withDshSetupLock("install-cli", async () => {
+      const desktopAppPath = await findDesktopApp("dsh");
+      if (!desktopAppPath)
+        throw new Error(
+          "DeepSeek Harness Desktop was not found on this computer.",
+        );
+      const installed = await installDshDesktopCli(desktopAppPath);
+      invalidateHarnessCache("dsh");
+      const [status, runtime] = await Promise.all([
+        dshSetupStatus(),
+        store.runtime(),
+      ]);
+      const discoverable = !installed.installed || status.cliInstalled;
+      return {
+        installed: installed.installed && status.cliInstalled,
+        ...(installed.needsDesktopMenu !== undefined
+          ? { needsDesktopMenu: installed.needsDesktopMenu }
+          : {}),
+        message: discoverable
+          ? installed.message
+          : "DeepSeek Harness Desktop registered the CLI, but MemCode could not discover the launcher yet. Restart MemCode or verify dsh is on PATH.",
+        status,
+        runtime,
+      };
+    }),
+  );
+  register(
+    "dsh:create-profile",
+    z.object({ name: nonempty.max(64) }).strict(),
+    ({ name }) =>
+      withDshSetupLock("create-profile", async () => {
+        const normalized = normalizeDshProfile(name);
+        const command = await resolveDshCommand();
+        if (!command)
+          throw new Error(
+            "Install the DeepSeek Harness CLI before creating an ACP profile.",
+          );
+        const profile = await createDshAcpProfile(command, normalized);
+        store.state.settings.dshProfile = profile;
+        dshPlan = null;
+        await changed();
+        invalidateHarnessCache("dsh");
+        const [status, runtime] = await Promise.all([
+          dshSetupStatus(),
+          revalidateDshOverrides(),
+        ]);
+        return { profile, status, runtime };
+      }),
+  );
+  register(
+    "dsh:select-profile",
+    z.object({ name: nonempty.max(64) }).strict(),
+    ({ name }) =>
+      withDshSetupLock("select-profile", async () => {
+        const profile = normalizeDshProfile(name);
+        const info = await inspectDshProfiles(profile);
+        if (info.activeProfileIssue === "missing")
+          throw new Error(`DeepSeek Harness profile "${profile}" does not exist.`);
+        if (info.activeProfileIssue === "non-acp")
+          throw new Error(
+            `DeepSeek Harness profile "${profile}" is not an ACP profile.`,
+          );
+        store.state.settings.dshProfile = profile;
+        dshPlan = null;
+        await changed();
+        invalidateHarnessCache("dsh");
+        const [status, runtime] = await Promise.all([
+          dshSetupStatus(),
+          revalidateDshOverrides(),
+        ]);
+        return { profile, status, runtime };
+      }),
+  );
+  register(
+    "dsh:desktop-diff",
+    z.object({ targetProfile: z.string().max(64).optional() }).strict(),
+    async ({ targetProfile }) =>
+      diffDshDesktopModels(await resolveDshTargetProfile(targetProfile)),
+  );
+  register(
+    "dsh:dry-run-migrate",
+    z
+      .object({
+        targetProfile: z.string().max(64).optional(),
+        selectedIds: z.array(nonempty.max(200)).max(200),
+      })
+      .strict(),
+    ({ targetProfile, selectedIds }) =>
+      withDshSetupLock(
+        "dry-run-migrate",
+        async () => {
+          const command = await resolveDshCommand();
+          if (!command)
+            throw new Error(
+              "Install the DeepSeek Harness CLI before testing Desktop model migration.",
+            );
+          const profile = await resolveDshTargetProfile(targetProfile);
+          dshPlan = null;
+          const { plan, ...result } = await dryRunDshMigration(command, profile, selectedIds, {
+            probe: (p, cmd) =>
+              probeStandardCatalog("dsh", cmd, p, {
+                strictStdout: true,
+                allowStaging: true,
+              }),
+          });
+          if (!plan) return result;
+          dshPlan = { id: randomUUID(), plan };
+          return { ...result, planId: dshPlan.id };
+        },
+        // Staging never touches the target profile or running workers.
+        { readOnly: true },
+      ),
+  );
+  register(
+    "dsh:apply-migrate",
+    z.object({ planId: z.string().min(1).max(100) }).strict(),
+    ({ planId }) =>
+      withDshSetupLock("apply-migrate", async () => {
+        // Apply runs exactly what a dry-run verified, at most once.
+        const verified = dshPlan && dshPlan.id === planId ? dshPlan.plan : null;
+        dshPlan = null;
+        if (!verified)
+          throw new Error(
+            "Test the selected providers again before importing them.",
+          );
+        const command = await resolveDshCommand();
+        if (!command)
+          throw new Error(
+            "Install the DeepSeek Harness CLI before importing Desktop models.",
+          );
+        const applied = await applyDshMigration(command, verified, {
+          probe: (p, cmd) =>
+            probeStandardCatalog("dsh", cmd, p, { strictStdout: true }),
+        });
+        invalidateHarnessCache("dsh");
+        const runtime = await revalidateDshOverrides();
+        return {
+          ok: applied.ok,
+          targetProfile: verified.targetProfile,
+          appliedIds: applied.appliedIds,
+          failed: applied.failed,
+          models: applied.models,
+          ...(applied.error ? { error: applied.error } : {}),
+          ...(applied.restored !== undefined ? { restored: applied.restored } : {}),
+          runtime,
+        };
+      }),
+  );
   register("connection:guide", z.object({ harness }).strict(), ({ harness }) =>
     host.call("open_worker_setup", { harness }),
   );
@@ -1043,6 +1305,7 @@ export async function createRuntime(
         speechEndpoint: z.string().max(1000),
         speech: speechSettingsSchema.optional(),
         defaultHarness: harness,
+        dshProfile: z.string().max(64).optional(),
         model: z.string().max(200),
         localModel: z.boolean(),
         maxWorkers: z.number().int().min(1).max(maxWorkerSlots),
@@ -1108,15 +1371,31 @@ export async function createRuntime(
         throw new Error(
           "Stop active workers before changing runtime settings.",
         );
+      if (dshGate.operation)
+        throw new Error(
+          "Another DeepSeek Harness setup operation is already in progress. Wait for it to finish.",
+        );
       // Saving speech, retrieval or worker preferences must not permanently
       // close the shared engine. Only its executable changes the connection;
       // reconnect resets the owner lifecycle so the next project can open it.
       if (settings.memtracePath !== store.state.settings.memtracePath)
         await engine.reconnect();
+      const dshProfile =
+        settings.dshProfile === undefined
+          ? store.state.settings.dshProfile
+          : settings.dshProfile.trim()
+            ? normalizeDshProfile(settings.dshProfile)
+            : undefined;
+      const dshProfileChanged = dshProfile !== store.state.settings.dshProfile;
+      if (dshProfileChanged) {
+        invalidateHarnessCache("dsh");
+        dshPlan = null;
+      }
       // A Settings dialog opened before a worker-default or handoff choice must not erase it.
       store.state.settings = {
         ...store.state.settings,
         ...settings,
+        dshProfile,
         speech: settings.speech ?? store.state.settings.speech,
         contextAssistant:
           settings.contextAssistant ?? store.state.settings.contextAssistant,
@@ -1124,7 +1403,7 @@ export async function createRuntime(
         handoffAttribution: state().settings.handoffAttribution,
       };
       await changed();
-      return store.runtime();
+      return dshProfileChanged ? revalidateDshOverrides() : store.runtime();
     },
   );
   register("artifact:thumbnail", identifier, async (id) => {
@@ -1228,7 +1507,12 @@ export async function createRuntime(
   );
   registerGoalPlanner(
     register,
-    new GoalPlanner({ dataDir: store.dir, state, relatedFiles }),
+    new GoalPlanner({
+      dataDir: store.dir,
+      state,
+      relatedFiles,
+      reviewOptions: { dshAdmission: () => dshGate.admit("plan") },
+    }),
   );
   registerGoalUpdates(
     register,
@@ -1287,7 +1571,9 @@ export async function createRuntime(
       team?.identity(item.projectId) ?? connections.account.current.principal,
     reviewProject: (item, parent) => epicAnalysisProject(parent, item),
     engineVersion: (item) => engine.versionFor(item.id) ?? "Not reported",
-    reviewer: createReadonlyReviewAgent(store.dir, state),
+    reviewer: createReadonlyReviewAgent(store.dir, state, {
+      dshAdmission: () => dshGate.admit("review"),
+    }),
     implementationCount: () => workers.implementationCount(),
     implementationStarting: (taskId) => workers.implementationStarting(taskId),
     capacityChanged: () => workers.dispatchQueued(),
@@ -1747,6 +2033,9 @@ export async function createRuntime(
     async close() {
       if (closed) return;
       closed = true;
+      // A DeepSeek Harness import holds its only rollback snapshots in memory:
+      // let it verify or restore the profile before the process exits.
+      await dshGate.close();
       const betaClosing = beta?.close();
       clearInterval(artifactMaintenance);
       await reconcilingArtifacts?.catch((error) =>

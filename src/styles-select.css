@@ -76,6 +76,18 @@
   color: #91a193;
   padding: 9px 9px 10px;
 }
+.mc-select-group-label {
+  font: 9px var(--mono);
+  letter-spacing: 0.75px;
+  text-transform: uppercase;
+  color: #678776;
+  padding: 7px 9px 4px;
+}
+.mc-select-separator {
+  height: 1px;
+  background: #e4ede6;
+  margin: 5px 6px;
+}
 .mc-select-item {
   display: flex;
   align-items: center;

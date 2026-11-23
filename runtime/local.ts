@@ -100,7 +100,9 @@ export class LocalStore {
     return pending;
   }
   async runtime(): Promise<RuntimeInfo> {
-    const harnesses = await discoverHarnesses();
+    const harnesses = await discoverHarnesses(false, undefined, {
+      dshProfile: this.state.settings.dshProfile,
+    });
     return {
       appVersion,
       harnesses,

@@ -74,7 +74,9 @@ export async function findMacDesktopApp(
       ? ["Codex.app", "ChatGPT.app"]
       : name === "cursor"
         ? ["Cursor.app"]
-        : [];
+        : name === "dsh"
+          ? ["DeepSeek Harness.app"]
+          : [];
   for (const root of appRoots(options))
     for (const app of names) {
       const path = join(root, app);

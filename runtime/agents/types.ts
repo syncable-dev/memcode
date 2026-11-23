@@ -42,6 +42,7 @@ export interface AgentSessionOptions {
   contextConfig?: string;
   toolArgs: string[];
   localModel?: boolean;
+  dshProfile?: string;
   permissionMode?: import("../../src/permissions").PermissionMode;
   onEvent(event: AgentEvent): void;
   requestInput(

@@ -46,6 +46,7 @@ export const cursorDefaultModel = "Cursor default";
 export interface ModelOption {
   id: string;
   label: string;
+  group?: string;
   /** Unranked models remain available for explicit selection. */
   tier?: ModelTier;
   source: "cache" | "cli" | "alias" | "acp";
@@ -62,10 +63,90 @@ export interface HarnessRuntime {
   runtimeIdentity?: string;
   /** Desktop application detected even when its agent CLI is not available. */
   desktopAppPath?: string;
+  profiles?: string[];
+  activeProfile?: string;
   models: ModelOption[];
   /** An authenticated catalog was returned and every visible model was denied. */
   allModelsDenied?: boolean;
   note?: string;
+}
+export interface DshProfileSummary {
+  name: string;
+  kind: "acp" | "non-acp";
+  hasCustomConfig: boolean;
+}
+export interface DshDesktopCliInfo {
+  desktopAppPath: string;
+  canInstall: boolean;
+  managed: boolean;
+  available: boolean;
+  launcherPath?: string;
+  activeCommand?: string;
+  reason?: string;
+}
+export interface DshSetupStatus {
+  cliInstalled: boolean;
+  cliPath: string | null;
+  desktopAppPath: string | null;
+  desktopCli?: DshDesktopCliInfo;
+  dshHome: string;
+  activeProfile: string;
+  configuredProfile?: string;
+  recommendedProfile?: string;
+  activeProfileIssue?: "missing" | "non-acp";
+  acpProfiles: DshProfileSummary[];
+  nonAcpProfiles: DshProfileSummary[];
+  desktopProfilePresent: boolean;
+  needsProfileCreation: boolean;
+}
+export interface DshDesktopProviderCandidate {
+  id: string;
+  kind: "pi-ai" | "plugin";
+  name: string;
+  providerId: string;
+  models: string[];
+  missingModels?: string[];
+  source?: "registry" | "local-link";
+  spec?: string;
+  hasConfigPatch?: boolean;
+  defaultSelected: boolean;
+  warning?: string;
+}
+export interface DshSkippedDesktopItem {
+  name: string;
+  reason: string;
+}
+export interface DshDesktopDiff {
+  targetProfile: string;
+  desktopPresent: boolean;
+  providers: DshDesktopProviderCandidate[];
+  skipped: DshSkippedDesktopItem[];
+}
+export interface DshProviderFailure {
+  id: string;
+  name: string;
+  reason: string;
+}
+export interface DshDryRunResult {
+  ok: boolean;
+  targetProfile: string;
+  passedIds: string[];
+  failed: DshProviderFailure[];
+  previewModels: ModelOption[];
+  error?: string;
+  /** Present when the dry-run passed; import accepts only this verified plan. */
+  planId?: string;
+}
+export interface DshApplyMigrationResult {
+  ok: boolean;
+  targetProfile: string;
+  appliedIds: string[];
+  failed: DshProviderFailure[];
+  models: ModelOption[];
+  runtime: RuntimeInfo;
+  error?: string;
+  /** False when a failed import could not be fully rolled back. */
+  restored?: boolean;
 }
 export interface RouteDecision {
   policyVersion: "memcode-envelope-v2" | "memcode-evidence-v3" | "memcode-evidence-v4";
@@ -267,6 +348,7 @@ export interface Settings {
   memtracePath: string;
   speechEndpoint: string;
   defaultHarness: Harness;
+  dshProfile?: string;
   model: string;
   localModel: boolean;
   maxWorkers: number;
@@ -563,6 +645,30 @@ export interface MemCodeAPI extends CodeReviewAPI {
   editStoryComment(taskId: string, id: string, text: string): Promise<void>;
   deleteStoryComment(taskId: string, id: string): Promise<void>;
   refreshWorkerCatalog(): Promise<RuntimeInfo>;
+  dshSetupStatus(): Promise<DshSetupStatus>;
+  installDshCli(): Promise<{
+    installed: boolean;
+    needsDesktopMenu?: boolean;
+    message: string;
+    status: DshSetupStatus;
+    runtime: RuntimeInfo;
+  }>;
+  createDshProfile(name: string): Promise<{
+    profile: string;
+    status: DshSetupStatus;
+    runtime: RuntimeInfo;
+  }>;
+  selectDshProfile(name: string): Promise<{
+    profile: string;
+    status: DshSetupStatus;
+    runtime: RuntimeInfo;
+  }>;
+  dshDesktopDiff(targetProfile?: string): Promise<DshDesktopDiff>;
+  dryRunDshMigration(input: {
+    targetProfile?: string;
+    selectedIds: string[];
+  }): Promise<DshDryRunResult>;
+  applyDshMigration(input: { planId: string }): Promise<DshApplyMigrationResult>;
   installationStatus(): Promise<{
     state: string;
     needsInstall: boolean;

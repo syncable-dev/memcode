@@ -38,11 +38,81 @@ export function commandIdentity(command: Command): string {
 }
 export async function findDesktopApp(
   name: string,
-  options: MacCommandOptions & { platform?: NodeJS.Platform } = {},
+  options: MacCommandOptions & {
+    platform?: NodeJS.Platform;
+    windowsCandidates?: readonly string[];
+  } = {},
 ): Promise<string | null> {
-  return (options.platform ?? process.platform) === "darwin"
-    ? findMacDesktopApp(name, options)
-    : null;
+  const platform = options.platform ?? process.platform;
+  if (platform === "darwin") return findMacDesktopApp(name, options);
+  if (platform !== "win32" || name !== "dsh") return null;
+
+  const env = options.environment ?? process.env;
+  const localAppData = env.LOCALAPPDATA ?? join(options.home ?? homedir(), "AppData", "Local");
+  const programFiles = env.ProgramFiles ?? "C:\\Program Files";
+  const candidates = options.windowsCandidates ?? [
+    join(localAppData, "Programs", "DeepSeek Harness", "DeepSeek Harness.exe"),
+    join(programFiles, "DeepSeek Harness", "DeepSeek Harness.exe"),
+  ];
+  for (const exePath of candidates) {
+    try {
+      if ((await stat(exePath)).isFile() && (await exists(join(dirname(exePath), "resources", "app.asar")))) {
+        return exePath;
+      }
+    } catch {
+      /* Candidate installation is absent. */
+    }
+  }
+  return null;
+}
+
+function expandWindowsEnvVars(raw: string, env: NodeJS.ProcessEnv): string {
+  const lookup = new Map<string, string>();
+  for (const [k, v] of Object.entries(env)) {
+    if (v !== undefined) lookup.set(k.toLowerCase(), v);
+  }
+  return raw.replace(/%([^%]+)%/g, (match, name: string) => lookup.get(name.toLowerCase()) ?? match);
+}
+
+export async function refreshWindowsUserPath(): Promise<string[]> {
+  if (process.platform !== "win32") return [];
+  try {
+    const regExe = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "reg.exe");
+    const { stdout } = await promisify(execFile)(
+      regExe,
+      ["query", "HKCU\\Environment", "/v", "Path"],
+      { shell: false, windowsHide: true, timeout: 5000, encoding: "utf8" },
+    );
+    const match = /^\s*Path\s+REG_(?:EXPAND_)?SZ\s+(.+)$/im.exec(stdout);
+    if (!match) return [];
+
+    const discovered = expandWindowsEnvVars(match[1], process.env)
+      .split(delimiter)
+      .map((entry) => entry.replace(/^"|"$/g, "").trim())
+      .filter(Boolean);
+
+    const pathKey = Object.keys(process.env).find((k) => k.toLowerCase() === "path") ?? "PATH";
+    const existing = (process.env[pathKey] ?? "")
+      .split(delimiter)
+      .map((entry) => entry.replace(/^"|"$/g, "").trim())
+      .filter(Boolean);
+    const seen = new Set(existing.map((entry) => entry.toLowerCase()));
+    const added: string[] = [];
+    for (const dir of discovered) {
+      const lower = dir.toLowerCase();
+      if (!seen.has(lower)) {
+        seen.add(lower);
+        existing.push(dir);
+        added.push(dir);
+      }
+    }
+    if (added.length > 0) {
+      process.env[pathKey] = existing.join(delimiter);
+    }
+    return added;
+  } catch {
+    return [];
+  }
 }
 export async function exists(path: string): Promise<boolean> {
   try {

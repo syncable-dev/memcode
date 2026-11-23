@@ -484,38 +484,47 @@ for (const sample of [
 ] as const) {
   test(`${sample.harness} reports a worker connection failure without exposing CLI output`, async () => {
     const f = await fixture();
-    const state = initialState();
-    const routes = new Map<string, (input: unknown) => unknown>();
-    await writeFile(f.script, `${sample.output}\nprocess.exit(1);\n`);
-    const registry = registerConnections(
-      (name, schema, handler) =>
-        routes.set(name, (input) => handler(schema.parse(input))),
-      () => state,
-      async () => assert.fail("No approval should be saved"),
-      () => join(f.directory, "no-memtrace"),
-      { call: async () => undefined as never },
-      async (id) =>
-        id === sample.harness
-          ? { command: process.execPath, prefix: [f.script] }
-          : null,
-    );
+    const prevDshHome = process.env.DSH_HOME;
+    if (sample.harness === "dsh") process.env.DSH_HOME = join(f.directory, "dsh-home");
     try {
-      const statuses = (await routes.get("connection:status")!(undefined)) as
-        WorkerConnectionStatus[];
-      const status = statuses.find(({ harness }) => harness === sample.harness)!;
-      assert.equal(status.connected, false);
-      assert.equal(status.connectionIssue, sample.issue);
-      assert.match(status.note, sample.guidance);
-      assert.doesNotMatch(JSON.stringify(status), /PRIVATE-FIXTURE/);
-      await assert.rejects(async () => {
-        await routes.get("connection:approve")!({
-          harness: sample.harness,
-          approved: true,
-        });
-      }, { message: status.note });
-      assert.equal(state.workerConnections, undefined);
+      const state = initialState();
+      const routes = new Map<string, (input: unknown) => unknown>();
+      await writeFile(f.script, `${sample.output}\nprocess.exit(1);\n`);
+      const registry = registerConnections(
+        (name, schema, handler) =>
+          routes.set(name, (input) => handler(schema.parse(input))),
+        () => state,
+        async () => assert.fail("No approval should be saved"),
+        () => join(f.directory, "no-memtrace"),
+        { call: async () => undefined as never },
+        async (id) =>
+          id === sample.harness
+            ? { command: process.execPath, prefix: [f.script] }
+            : null,
+      );
+      try {
+        const statuses = (await routes.get("connection:status")!(undefined)) as
+          WorkerConnectionStatus[];
+        const status = statuses.find(({ harness }) => harness === sample.harness)!;
+        assert.equal(status.connected, false);
+        assert.equal(status.connectionIssue, sample.issue);
+        assert.match(status.note, sample.guidance);
+        assert.doesNotMatch(JSON.stringify(status), /PRIVATE-FIXTURE/);
+        await assert.rejects(async () => {
+          await routes.get("connection:approve")!({
+            harness: sample.harness,
+            approved: true,
+          });
+        }, { message: status.note });
+        assert.equal(state.workerConnections, undefined);
+      } finally {
+        await registry.close();
+      }
     } finally {
-      await registry.close();
+      if (sample.harness === "dsh") {
+        if (prevDshHome === undefined) delete process.env.DSH_HOME;
+        else process.env.DSH_HOME = prevDshHome;
+      }
       await f.cleanup();
     }
   });
@@ -584,6 +593,94 @@ test("a confirmed official login fast-path works before a local owner has starte
     assert.deepEqual(opened, []);
   } finally {
     await manager.close();
+    await f.cleanup();
+  }
+});
+
+test("dsh custom profile diagnostics handle missing, non-acp, valid, and failing probes cleanly", async () => {
+  const f = await fixture();
+  const dshHome = await mkdtemp(join(tmpdir(), "memcode-conn-dsh-"));
+  const prevDshHome = process.env.DSH_HOME;
+  process.env.DSH_HOME = dshHome;
+  try {
+    await mkdir(join(dshHome, "profiles", "web"), { recursive: true });
+    await writeFile(
+      join(dshHome, "profiles", "web", "package.json"),
+      JSON.stringify({ dsh: { profile: { bundles: ["@deepseek-ai/dsh-web-app"] } } }),
+    );
+    await mkdir(join(dshHome, "profiles", "custom-acp"), { recursive: true });
+    await writeFile(
+      join(dshHome, "profiles", "custom-acp", "package.json"),
+      JSON.stringify({ dsh: { profile: { bundles: ["@deepseek-ai/dsh-acp-app"] } } }),
+    );
+    await writeFile(f.script, `
+import { createInterface } from 'node:readline';
+const idx = process.argv.indexOf('--profile');
+const profile = idx >= 0 ? process.argv[idx + 1] : '';
+if (profile !== 'custom-acp' || process.env.DSH_TEST_FAIL === '1') {
+  process.stderr.write('PRIVATE-FIXTURE error on ' + profile + '\\n');
+  process.exit(1);
+}
+const send = x => process.stdout.write(JSON.stringify(x)+'\\n');
+createInterface({input:process.stdin}).on('close',()=>process.exit(0)).on('line', line => {
+  const x = JSON.parse(line);
+  if (x.method === 'initialize') return send({jsonrpc:'2.0',id:x.id,result:{agentCapabilities:{}}});
+  if (x.method === 'session/new') return send({jsonrpc:'2.0',id:x.id,result:{sessionId:'s1',configOptions:[{id:'model',category:'model',currentValue:'m1',options:[{value:'m1',name:'Model 1'}]}]}});
+  if (x.method === 'session/close') return send({jsonrpc:'2.0',id:x.id,result:{}});
+});
+`);
+
+    const state = initialState();
+    const routes = new Map<string, (input: unknown) => unknown>();
+    let saves = 0;
+    const registry = registerConnections(
+      (name, schema, handler) => routes.set(name, (input) => handler(schema.parse(input))),
+      () => state,
+      async () => { saves++; },
+      () => join(f.directory, "no-memtrace"),
+      { call: async () => undefined as never },
+      async (id) => (id === "dsh" ? { command: process.execPath, prefix: [f.script] } : null),
+    );
+    const dshStatus = async () =>
+      ((await routes.get("connection:status")!(undefined)) as WorkerConnectionStatus[]).find(
+        (s) => s.harness === "dsh",
+      )!;
+    try {
+      state.settings.dshProfile = "missing-prof";
+      const missing = await dshStatus();
+      assert.equal(missing.connectionIssue, "unavailable");
+      assert.match(missing.note, /missing-prof.*does not exist/i);
+
+      state.settings.dshProfile = "web";
+      const nonAcp = await dshStatus();
+      assert.equal(nonAcp.connectionIssue, "unavailable");
+      assert.match(nonAcp.note, /web.*not an ACP profile/i);
+
+      state.settings.dshProfile = "custom-acp";
+      process.env.DSH_TEST_FAIL = "1";
+      const failed = await dshStatus();
+      assert.equal(failed.connectionIssue, "unavailable");
+      assert.match(failed.note, /custom-acp/i);
+      assert.doesNotMatch(JSON.stringify(failed), /PRIVATE-FIXTURE/);
+
+      delete process.env.DSH_TEST_FAIL;
+      const ready = await dshStatus();
+      assert.equal(ready.auth, "provider-managed");
+      assert.equal(ready.connectionIssue, undefined);
+      const approved = (await routes.get("connection:approve")!({
+        harness: "dsh",
+        approved: true,
+      })) as WorkerConnectionStatus;
+      assert.equal(approved.connected, true);
+      assert.equal(saves, 1);
+    } finally {
+      await registry.close();
+    }
+  } finally {
+    delete process.env.DSH_TEST_FAIL;
+    if (prevDshHome === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = prevDshHome;
+    await rm(dshHome, { recursive: true, force: true });
     await f.cleanup();
   }
 });
