@@ -1,4 +1,5 @@
 import { Select } from "./Select";
+import { Integrations } from "./Integrations";
 import { ModelSelect } from "./ModelSelect";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -49,7 +50,13 @@ import type { AppState } from "../shared";
 import "../styles-setup-settings.css";
 
 export type SettingsSection =
-  "account" | "workers" | "dictation" | "retrieval" | "updates" | "privacy";
+  | "account"
+  | "workers"
+  | "integrations"
+  | "dictation"
+  | "retrieval"
+  | "updates"
+  | "privacy";
 
 export function Modal({
   title,
@@ -722,6 +729,7 @@ export function SettingsDialog({
             [
               ["account", "Account"],
               ["workers", "Workers"],
+              ["integrations", "Integrations"],
               ["dictation", "Dictation"],
               ["retrieval", "Local retrieval"],
               ["updates", "Updates"],
@@ -782,6 +790,9 @@ export function SettingsDialog({
             </>
           )}
           {section === "privacy" && <TelemetrySettings notify={notify} />}
+          {section === "integrations" && (
+            <Integrations state={state} notify={notify} />
+          )}
           {section === "account" && (
             <details className="settings-engine-advanced">
               <summary>Advanced · use an existing Memtrace CLI</summary>

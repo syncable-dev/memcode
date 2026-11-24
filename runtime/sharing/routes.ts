@@ -53,6 +53,14 @@ export function registerSharing(register: Register, sharing: Sharing) {
   register("sharing:inbox", project, ({ projectId }) =>
     sharing.inbox(projectId),
   );
+  register("sharing:add-to-slack", project, ({ projectId }) =>
+    sharing.addToSlack(projectId),
+  );
+  register(
+    "sharing:disconnect-slack",
+    z.object({ projectId: id, teamId: id }).strict(),
+    (input) => sharing.disconnectSlack(input),
+  );
   register(
     "sharing:link-slack",
     z

@@ -559,6 +559,12 @@ export interface MemCodeAPI extends CodeReviewAPI {
   sharingOverview(): Promise<import("./sharing").SharingOverview>;
   /** A shared project's Inbox of reports from Slack, and its linked channels. */
   projectInbox(projectId: string): Promise<import("./inbox").ProjectInbox>;
+  /** Opens Slack's install page; approving it connects the workspace to the project. */
+  addToSlack(projectId: string): Promise<void>;
+  disconnectSlack(input: {
+    projectId: string;
+    teamId: string;
+  }): Promise<import("./inbox").ProjectInbox>;
   linkSlackChannel(input: {
     projectId: string;
     code: string;

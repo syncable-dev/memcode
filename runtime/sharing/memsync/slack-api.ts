@@ -20,10 +20,25 @@ export interface SlackChannelRecord {
   linkedAt: string;
 }
 
-/** The SlackChannels API: linking a project's channels with codes from /memcode link. */
+/** A Slack workspace connected to a project with Add to Slack. */
+export interface SlackWorkspaceRecord {
+  teamId: string;
+  /** Empty when MemSync does not know its name. */
+  teamName: string;
+  /** Reports from it are written as this account. */
+  connectedBy: string;
+  connectedAt: string;
+}
+
+/** The SlackChannels API: a project's connected workspaces and channels. */
 export interface SlackChannelsApi {
+  /** Slack's page for adding the app, connecting the workspace to this project. */
+  startInstall(projectId: string): Promise<string>;
+  list(
+    projectId: string,
+  ): Promise<{ channels: SlackChannelRecord[]; workspaces: SlackWorkspaceRecord[] }>;
+  disconnect(projectId: string, teamId: string): Promise<void>;
   link(projectId: string, code: string): Promise<SlackChannelRecord>;
-  list(projectId: string): Promise<SlackChannelRecord[]>;
   unlink(projectId: string, teamId: string, channelId: string): Promise<void>;
 }
 
@@ -53,6 +68,16 @@ function channel(sent: unknown): SlackChannelRecord {
   };
 }
 
+function workspace(sent: unknown): SlackWorkspaceRecord {
+  if (!isMessage(sent) || !sent.team_id) throw unreadable();
+  return {
+    teamId: String(sent.team_id),
+    teamName: String(sent.team_name ?? ""),
+    connectedBy: String(sent.connected_by_account_id ?? ""),
+    connectedAt: moment(sent.connected_at),
+  };
+}
+
 const call = (name: SlackCall): ServiceCall => ({
   service: slackService,
   name,
@@ -70,9 +95,26 @@ export class MemsyncSlackChannels implements SlackChannelsApi {
   }
   list(projectId: string) {
     const request = { project_id: projectId };
-    return this.calls.unary(call("ListChannels"), request, (reply) =>
-      (Array.isArray(reply.channels) ? reply.channels : []).map(channel),
-    );
+    return this.calls.unary(call("ListChannels"), request, (reply) => ({
+      channels: (Array.isArray(reply.channels) ? reply.channels : []).map(
+        channel,
+      ),
+      workspaces: (Array.isArray(reply.workspaces) ? reply.workspaces : []).map(
+        workspace,
+      ),
+    }));
+  }
+  startInstall(projectId: string) {
+    const request = { project_id: projectId };
+    return this.calls.unary(call("StartSlackInstall"), request, (reply) => {
+      const url = String(reply.install_url ?? "");
+      if (!url.startsWith("https://slack.com/")) throw unreadable();
+      return url;
+    });
+  }
+  async disconnect(projectId: string, teamId: string) {
+    const request = { project_id: projectId, team_id: teamId };
+    await this.calls.unary(call("DisconnectWorkspace"), request, () => undefined);
   }
   async unlink(projectId: string, teamId: string, channelId: string) {
     const request = {

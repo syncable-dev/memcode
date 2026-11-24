@@ -200,10 +200,19 @@ export interface InboxChannel {
   linkedAt: string;
 }
 
+/** A Slack workspace connected to the project with Add to Slack. */
+export interface InboxWorkspace {
+  teamId: string;
+  teamName: string;
+  connectedBy: string;
+  connectedAt: string;
+}
+
 /** What the Inbox screen shows for one shared project. */
 export interface ProjectInbox {
   items: InboxItem[];
   channels: InboxChannel[];
+  workspaces: InboxWorkspace[];
   /** The sharing service has no Slack channels yet. */
   channelsUnavailable: boolean;
 }

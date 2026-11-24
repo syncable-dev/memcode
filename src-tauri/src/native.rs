@@ -126,6 +126,13 @@ pub async fn host_call(app: AppHandle, method: &str, input: Value) -> Result<Val
                 .map_err(|e| e.to_string())??;
             Ok(Value::Null)
         }
+        "open_slack_install" => {
+            let url = slack_install_url(input["url"].as_str().ok_or("Missing Slack install URL")?)?;
+            tauri::async_runtime::spawn_blocking(move || open_claim(&url))
+                .await
+                .map_err(|e| e.to_string())??;
+            Ok(Value::Null)
+        }
         "open_github_pull_request" => {
             let url = github_pull_request_url(input["url"].as_str().ok_or("Missing pull request URL")?)?;
             tauri::async_runtime::spawn_blocking(move || open_claim(&url))
@@ -417,6 +424,23 @@ fn memcode_identity_url(value: &str) -> Result<String, String> {
     Ok(url.to_string())
 }
 
+/// Slack's page for adding MemCode to a workspace, as MemSync builds it.
+fn slack_install_url(value: &str) -> Result<String, String> {
+    let invalid = || "Only Slack's page for adding MemCode can open here".to_string();
+    let url = Url::parse(value).map_err(|_| invalid())?;
+    if value.len() > 4096 || url.scheme() != "https" || url.host_str() != Some("slack.com")
+        || url.path() != "/oauth/v2/authorize" || !url.username().is_empty() || url.password().is_some()
+        || url.port_or_known_default() != Some(443) || url.fragment().is_some() { return Err(invalid()); }
+    let pairs: Vec<_> = url.query_pairs().collect();
+    let names = ["client_id", "scope", "redirect_uri", "state"];
+    if pairs.len() != names.len() || names.iter().any(|name| pairs.iter().filter(|(key, _)| key == name).count() != 1) { return Err(invalid()); }
+    let get = |name: &str| pairs.iter().find(|(key, _)| key == name).map(|(_, value)| value.as_ref()).unwrap_or("");
+    let callback = Url::parse(get("redirect_uri")).map_err(|_| invalid())?;
+    if callback.scheme() != "https" || callback.path() != "/slack/oauth" || !callback.username().is_empty()
+        || callback.query().is_some() || callback.fragment().is_some() { return Err(invalid()); }
+    Ok(url.to_string())
+}
+
 fn memcode_beta_url(value: &str) -> Result<String, String> {
     let invalid = || "Only the official Memtrace beta authorization can open here".to_string();
     let url = Url::parse(value).map_err(|_| invalid())?;
@@ -484,6 +508,11 @@ mod claim_url_tests {
     #[test]
     fn claim_url_accepts_only_the_official_device_claim() {
         assert!(memtrace_claim_url("https://memtrace.io/claim?code=ABCD-1234").is_ok());
+        let slack = "https://slack.com/oauth/v2/authorize?client_id=123.456&scope=app_mentions%3Aread&redirect_uri=https%3A%2F%2Fsync.hosted.memtrace.io%2Fslack%2Foauth&state=1.2.v0%3Dab";
+        assert!(slack_install_url(slack).is_ok());
+        for bad in [slack.replace("slack.com", "slack.com.evil.test"), slack.replace("https:", "http:"), slack.replace("/oauth/v2/authorize", "/oauth/other"), format!("{slack}&extra=1"), format!("{slack}#x"), slack.replace("https%3A%2F%2Fsync", "http%3A%2F%2Fsync")] {
+            assert!(slack_install_url(&bad).is_err(), "{bad}");
+        }
         for value in [
             "http://memtrace.io/claim?code=ABCD-1234",
             "https://memtrace.io.evil.test/claim?code=ABCD-1234",
