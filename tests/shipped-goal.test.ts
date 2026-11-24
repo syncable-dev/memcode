@@ -76,6 +76,25 @@ test("a shipped goal's history is imported, its records kept, then its checkout 
   assert.match(await git(goal.project, ["branch", "--list", "feat/export"]), /feat\/export/);
 });
 
+test("a checkout is removed even when its engine cache has paths longer than Windows' 260 characters", async (t) => {
+  const goal = await shippedGoal(t);
+  // The engine names graph-cache files r<64 hex>__<65 hex>.<kind>. Inside
+  // %APPDATA%\MemCode\epic-checkouts\<id> that passes 260 characters, which
+  // plain `git worktree remove` cannot delete on Windows.
+  const cache = join(goal.checkout, ".memcode", "memtrace", ".memdb", "graph-cache");
+  const name = `r${"a".repeat(64)}__${"b".repeat(65)}.picture-generation`;
+  const padding = "p".repeat(Math.max(0, 261 - join(cache, name).length));
+  await mkdir(join(cache, padding || "."), { recursive: true });
+  const longPath = join(cache, padding || ".", name);
+  await writeFile(longPath, "cache");
+  assert.ok(longPath.length > 260);
+
+  const outcome = await retireShippedGoal(goal.state, goal.goal, "dev", goal.deps);
+
+  assert.deepEqual(outcome, { kind: "removed", imported: COUNTS });
+  assert.equal(await exists(goal.checkout), false);
+});
+
 test("a checkout with work that isn't committed stays, and nothing is imported", async (t) => {
   const goal = await shippedGoal(t);
   await writeFile(join(goal.checkout, "draft.ts"), "export const draft = 1;\n");
