@@ -1,4 +1,12 @@
-import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  readFile,
+  readdir,
+  realpath,
+  rmdir,
+  stat,
+} from "node:fs/promises";
 import {
   basename,
   join,
@@ -18,7 +26,10 @@ import { LocalStore, exists, findCommand, git, now, within } from "./local";
 import { findDesktopApp, refreshWindowsUserPath } from "./commands";
 import { observePersistence } from "./persistence";
 import { MemtraceEngine } from "./memtrace";
-import { ensureProjectRepository } from "./project-repository";
+import {
+  ensureProjectRepository,
+  initializeProjectRepository,
+} from "./project-repository";
 import { workerResponseSchema } from "./worker-input";
 import { permissionModes, supportsPermissionMode } from "../src/permissions";
 import { deleteProject, registerDeletion } from "./deletion";
@@ -1218,30 +1229,24 @@ export async function createRuntime(
         if (!slug)
           throw new Error("Use a project name containing letters or numbers.");
         path = join(parent, slug);
-        if (!within(parent, path) || (await exists(path)))
+        if (!within(parent, path))
+          throw Error("Choose a name inside the selected folder.");
+        const entry = await lstat(path).catch((error: NodeJS.ErrnoException) => {
+          if (error.code !== "ENOENT") throw error;
+          return null;
+        });
+        if (entry && (!entry.isDirectory() || (await readdir(path)).length))
           throw new Error(
             "A folder with that name already exists. Choose a different name.",
           );
-        await mkdir(path);
-        await git(path, ["init", "--initial-branch=main"]);
-        await writeFile(
-          join(path, "README.md"),
-          `# ${input.name}\n\n${input.description || "A new project, started in MemCode."}\n`,
-        );
-        await writeFile(
-          join(path, ".gitignore"),
-          ".memcode/\n.memdb/\n.memtrace/\nnode_modules/\n.env\n",
-        );
-        await git(path, ["add", "--", "README.md", ".gitignore"]);
-        await git(path, [
-          "-c",
-          "user.name=MemCode",
-          "-c",
-          "user.email=local@memcode.invalid",
-          "commit",
-          "-m",
-          "Start project from MemCode brief",
-        ]);
+        await git(parent, ["--version"]);
+        if (!entry) await mkdir(path);
+        try {
+          await initializeProjectRepository(path, input);
+        } catch (error) {
+          if (!entry) await rmdir(path).catch(() => {});
+          throw error;
+        }
       }
       const existing = store.state.projects.find(
         (p) =>

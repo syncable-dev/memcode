@@ -8,10 +8,10 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { basename, delimiter, dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { createRuntime } from "../runtime/app";
-import { LocalStore, within } from "../runtime/local";
+import { findCommand, git, LocalStore, within } from "../runtime/local";
 import type { Project } from "../src/shared";
 
 test("new, existing-folder and launch-intent project creation add no starter work and preserve existing user work", async () => {
@@ -44,6 +44,7 @@ test("new, existing-folder and launch-intent project creation add no starter wor
     () => {},
     { discoverHarnesses: async () => [] },
   );
+  const originalPath = process.env.PATH;
   try {
     runtime.store.state.settings.memtracePath = join(
       root,
@@ -54,12 +55,47 @@ test("new, existing-folder and launch-intent project creation add no starter wor
       previousEpics = structuredClone(runtime.store.state.epics),
       previousCycles = structuredClone(runtime.store.state.cycles);
     await runtime.request("project:select-folder");
+    if (process.platform === "win32") {
+      const command = await findCommand("git");
+      assert.ok(command, "This project creation test requires Git");
+      // The first 6,999 characters fill the runtime's child PATH budget.
+      const padding = Array.from({ length: 35 }, (_, index) =>
+        join(root, `unused-path-${index}`).padEnd(199, "x"),
+      );
+      process.env.PATH = [...padding, dirname(command.command)].join(delimiter);
+    }
     const fresh = (await runtime.request("project:create", {
       mode: "new",
       parent,
       name: "Synthetic Observatory",
       description: "A user-authored purpose, not an automatic task.",
     })) as Project;
+    assert.equal(await git(fresh.path!, ["branch", "--show-current"]), "main");
+    const retryPath = join(parent, "retry-brief");
+    await mkdir(retryPath);
+    const retried = (await runtime.request("project:create", {
+      mode: "new",
+      parent,
+      name: "Retry brief",
+      description: "Reuse an empty folder from an earlier attempt.",
+    })) as Project;
+    assert.equal(retried.path, retryPath);
+    assert.equal(await git(retryPath, ["rev-list", "--count", "HEAD"]), "1");
+    const occupied = join(parent, "occupied");
+    await mkdir(occupied);
+    await writeFile(join(occupied, "README.md"), "# Keep this file\n");
+    await assert.rejects(
+      runtime.request("project:create", {
+        mode: "new",
+        parent,
+        name: "Occupied",
+        description: "",
+      }),
+      /folder with that name already exists/i,
+    );
+    assert.equal(await readFile(join(occupied, "README.md"), "utf8"), "# Keep this file\n");
+    if (originalPath === undefined) delete process.env.PATH;
+    else process.env.PATH = originalPath;
     selectedFolder = opened;
     await runtime.request("project:select-folder");
     const existing = (await runtime.request("project:create", {
@@ -72,7 +108,7 @@ test("new, existing-folder and launch-intent project creation add no starter wor
       launchFolder,
       "Launch intent source",
     );
-    for (const project of [fresh, existing, launch]) {
+    for (const project of [fresh, retried, existing, launch]) {
       await runtime.request("project:analyze", project.id);
       assert.equal(
         runtime.store.state.tasks.filter(
@@ -134,6 +170,8 @@ test("new, existing-folder and launch-intent project creation add no starter wor
       false,
     );
   } finally {
+    if (originalPath === undefined) delete process.env.PATH;
+    else process.env.PATH = originalPath;
     await runtime.close();
     assert.ok(
       within(await realpath(tmpdir()), root) &&
