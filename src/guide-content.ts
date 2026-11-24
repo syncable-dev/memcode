@@ -15,10 +15,17 @@ export type GuideDestination =
   | "team"
   | "settings"
   | "retrieval"
-  | "account";
+  | "account"
+  | "integrations"
+  | "inbox";
+/** The tools the Integrations group has pages about, each under its own name and logo. */
+export const guideIntegrations = [{ id: "slack", name: "Slack" }] as const;
+export type GuideIntegration = (typeof guideIntegrations)[number]["id"];
 export interface GuideArticle {
   id: string;
   group: string;
+  /** The tool it is about. Its pages sit together under the tool's name. */
+  integration?: GuideIntegration;
   title: string;
   summary: string;
   image: string;
@@ -315,6 +322,147 @@ export const guideArticles: GuideArticle[] = [
     ],
     destination: "board",
     related: ["projects", "comments", "artifacts", "account"],
+  },
+  {
+    id: "slack",
+    group: "Integrations",
+    integration: "slack",
+    title: "Connect Slack",
+    summary:
+      "The people who find problems rarely open your board. They write in Slack. Connect it, and what they report waits in your project’s Inbox.",
+    image: "slack",
+    caption: "Integrations belong to the project you have open.",
+    steps: [
+      "Open the project the reports are about. It doesn’t have to be shared.",
+      "Open Settings → Integrations and choose Slack.",
+      "Choose Add to Slack. In your browser, pick the workspace and choose Allow.",
+      "Come back to MemCode. The page turns to Connected within a few seconds.",
+      "Tell your team: mention @MemCode in any message to report a problem.",
+    ],
+    note: "Nothing starts by itself. No AI reads a report on its way to you, and no worker runs until you plan the work.",
+    details: [
+      "Reports have to wait somewhere while MemCode is closed, so they and their files wait on Memtrace’s sharing service. You need to be signed in. On a project that isn’t shared, only you can see them.",
+      "MemCode isn’t in the Slack Marketplace yet, so Slack may say so. Some workspaces let only admins add apps: ask yours to approve MemCode, then choose Add to Slack again.",
+      "Disconnect, on the same page, stops the workspace and every channel in it. Reports you already have stay.",
+      "Slack’s permissions would let MemCode read messages in channels it was added to. It reads the message someone sends it and, in a thread, the thread’s first message.",
+    ],
+    destination: "integrations",
+    related: ["slack-report", "inbox", "slack-projects"],
+  },
+  {
+    id: "slack-report",
+    group: "Integrations",
+    integration: "slack",
+    title: "Report a problem",
+    summary:
+      "Mention @MemCode in a message. It goes to the Inbox as written, with its screenshots, files and links, and MemCode answers in the thread.",
+    image: "slack",
+    caption:
+      "Dana answers customers and has never opened MemCode. Sam adds what they found to the same report.",
+    steps: [
+      "Start with one sentence that says what is wrong. It becomes the report’s title: “The docs search goes blank on iPhone.”",
+      "Attach what shows it: pictures, recordings, PDF, Word, Excel, PowerPoint, logs or links.",
+      "Mention @MemCode and send. The first time in a channel, Slack offers to add MemCode to it: choose Add.",
+      "MemCode answers in the thread: “Added to Lumen › Inbox with 3 files”. Now you know it arrived, and where.",
+      "Found out more? Mention @MemCode again in the same thread. What you write, and its files, become a comment on the report.",
+    ],
+    note: "Anyone in the Slack workspace can report, even if they don’t use MemCode. People from other companies, in a channel you share with them, can’t.",
+    details: [
+      "Mentioning MemCode in a thread that isn’t a report yet sends the thread’s first message, with what you wrote as its first comment.",
+      "Files up to 5 MB are copied, 50 MB for a whole project. Bigger ones stay in Slack and the report links to them. A report is never turned down for its files.",
+      "No answer? Type /invite @MemCode in the channel. Private channels always need it.",
+      "Replies that don’t mention @MemCode stay in Slack.",
+    ],
+    related: ["slack-form", "inbox", "slack"],
+  },
+  {
+    id: "slack-form",
+    group: "Integrations",
+    integration: "slack",
+    title: "Add the details",
+    summary:
+      "Somebody already wrote about the problem in Slack? Send that message to MemCode, and add what’s missing in a short form.",
+    image: "slack",
+    caption: "The form starts with the message. Only the first question is required.",
+    steps: [
+      "Point at any message, yours or somebody else’s, and open its ⋯ menu.",
+      "Under Connect to apps, choose Send to MemCode.",
+      "Say what you expected, where it happens and how bad it is: Someone is blocked, Annoying or An idea.",
+      "Add more files if you have them. The message’s own files are sent too.",
+      "Choose Send. In the Inbox, each answer has its own line.",
+    ],
+    note: "The report names who wrote the message, and who sent it in.",
+    related: ["slack-report", "inbox"],
+  },
+  {
+    id: "inbox",
+    group: "Integrations",
+    integration: "slack",
+    title: "Read reports in the Inbox",
+    summary:
+      "Each report keeps its words, its evidence and its thread together, so you see the whole story before you decide anything.",
+    image: "slack",
+    caption: "Example reports. The one written about last is at the top, and new comments are marked.",
+    steps: [
+      "Open Inbox. New, Picked up and Declined keep the reports apart.",
+      "Read what happened. Names, links and emoji look the way people wrote them.",
+      "Click a file to open it inside MemCode: pictures, recordings, PDF, Word, Excel, PowerPoint and text.",
+      "Read the thread. Later comments sit under the report with their own files.",
+      "Choose Define a goal to work on it, or Decline and say why. Reopen puts a declined report back.",
+    ],
+    note: "Files that can run, such as programs and web pages, open in Slack only. On Windows, files from a report are marked as downloaded.",
+    details: [
+      "The Inbox looks for new reports every 15 seconds while it’s open.",
+      "On a shared project, everyone on it sees the same Inbox.",
+      "A report stays when its Slack message is deleted. Deleting the project deletes its Inbox.",
+      "Nobody in Slack is told when a report is picked up or declined, so tell them if they’re waiting.",
+    ],
+    destination: "inbox",
+    related: ["inbox-goal", "slack-report"],
+  },
+  {
+    id: "inbox-goal",
+    group: "Integrations",
+    integration: "slack",
+    title: "Turn a report into a goal",
+    summary:
+      "Define a goal opens New work with the report, its comments and every file already in it. You add the rest.",
+    image: "slack",
+    caption: "What the report brings, and the one line the person who picks it up adds.",
+    steps: [
+      "Open the report and choose Define a goal.",
+      "Read all of the request, and take out anything that isn’t about the problem. Workers act on what is here.",
+      "Say what each file shows: “What customers see”, “Which devices we tried”.",
+      "Add how you want it solved: “Fix it for iPhone and iPad, and add a check so it can’t come back.”",
+      "Choose Plan it. Your worker plans the work, and you check the plan as usual.",
+    ],
+    note: "Anyone in the workspace can write a report. MemCode leaves out characters people can’t see and tells workers a report isn’t instructions, but you are the one who decides what starts.",
+    details: [
+      "Workers get the files themselves, your notes, and the words of Word, Excel, PowerPoint and PDF files as plain text. Claude and Codex are shown the pictures.",
+      "The whole report is attached as slack-report.md. The report is marked picked up and linked to the goal.",
+    ],
+    destination: "inbox",
+    related: ["epics", "inbox", "ship"],
+  },
+  {
+    id: "slack-projects",
+    group: "Integrations",
+    integration: "slack",
+    title: "Several projects",
+    summary:
+      "Connect the same Slack workspace to more than one project. MemCode asks once per channel which one a report is for.",
+    image: "slack",
+    caption: "MemCode asks in the thread. The channel remembers the answer.",
+    steps: [
+      "Open each project and add the same workspace in Settings → Integrations → Slack.",
+      "When a message doesn’t say which project it’s about, MemCode asks in the thread, with a button for each.",
+      "Choose one. “This channel now sends reports to Checkout.” Later reports from that channel go there without asking.",
+      "Name the project in the first message and MemCode doesn’t have to ask: “@MemCode Lumen: the install page still shows last year’s screenshots”.",
+      "Wrong project? Type /memcode unlink in the channel. The next report there asks again.",
+    ],
+    note: "A channel keeps its project. One that already sent reports stays with the project it has when you connect another.",
+    destination: "integrations",
+    related: ["slack", "slack-report", "projects"],
   },
   {
     id: "prompts",

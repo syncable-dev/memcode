@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, ChevronRight, Hash, Search } from "lucide-react";
+import { ArrowLeft, ChevronRight, Search } from "lucide-react";
 import type { AppState, Project } from "../shared";
 import type { ProjectInbox } from "../inbox";
+import { IntegrationMark } from "./IntegrationMark";
 import { isSharedHere } from "./ShareProject";
 import { Spinner } from "./UI";
 import "../styles-integrations.css";
@@ -43,7 +44,7 @@ const integrations: Integration[] = [
     name: "Slack",
     summary: "Report problems to the Inbox by mentioning @MemCode in any channel.",
     keywords: ["chat", "messages", "reports", "inbox", "bot"],
-    mark: <Hash size={18} />,
+    mark: <IntegrationMark id="slack" size={18} />,
     connected: ({ inbox }) => !!inbox?.workspaces.length,
     Page: SlackPage,
   },
@@ -236,7 +237,7 @@ function SlackPage({ context }: { context: IntegrationContext }) {
     <article className="integration-page" aria-label="Slack">
       <header className="integration-page-header">
         <span className="integration-mark slack large">
-          <Hash size={22} />
+          <IntegrationMark id="slack" size={22} />
         </span>
         <div>
           <h3>Slack</h3>
