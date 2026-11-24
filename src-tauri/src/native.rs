@@ -468,7 +468,7 @@ mod beta_url_tests {
 
 #[cfg(test)]
 mod claim_url_tests {
-    use super::{github_pull_request_url, memcode_identity_url, memtrace_claim_url};
+    use super::{github_pull_request_url, memcode_identity_url, memtrace_claim_url, slack_install_url};
     #[test]
     fn pull_request_opener_accepts_only_github_pull_and_compare_pages() {
         for value in [
