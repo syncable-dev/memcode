@@ -17,11 +17,15 @@ interface Props {
   disabled?: boolean;
   "aria-label"?: string;
   className?: string;
+  /** Which edge of the trigger the menu lines up with. */
+  align?: "start" | "end";
 }
 
 interface SelectOptionItem {
   value: string;
   label: ReactNode;
+  /** A quiet second line under the label, from the option's `data-detail`. */
+  detail?: string;
   disabled?: boolean;
 }
 
@@ -51,11 +55,13 @@ function toOption(element: ReactNode): SelectOptionItem | null {
     value?: string | number;
     children?: ReactNode;
     disabled?: boolean;
+    "data-detail"?: string;
   };
   if (props.value === undefined) return null;
   return {
     value: String(props.value),
     label: props.children,
+    detail: props["data-detail"],
     disabled: props.disabled,
   };
 }
@@ -87,7 +93,14 @@ function renderOption(option: SelectOptionItem) {
       className="mc-select-item"
     >
       <OptionIcon value={option.value} />
-      <Primitive.ItemText>{option.label}</Primitive.ItemText>
+      {option.detail ? (
+        <span className="mc-select-copy">
+          <Primitive.ItemText>{option.label}</Primitive.ItemText>
+          <small>{option.detail}</small>
+        </span>
+      ) : (
+        <Primitive.ItemText>{option.label}</Primitive.ItemText>
+      )}
       <Primitive.ItemIndicator className="mc-select-indicator">
         <Check size={13} />
       </Primitive.ItemIndicator>
@@ -102,6 +115,7 @@ export function Select({
   disabled,
   "aria-label": label,
   className = "",
+  align = "end",
 }: Props) {
   const elements = flattenElements(children);
   const hasOptgroup = elements.some((element) => element.type === "optgroup");
@@ -162,7 +176,7 @@ export function Select({
           position="popper"
           sideOffset={6}
           collisionPadding={12}
-          align="end"
+          align={align}
           onEscapeKeyDown={(event) => event.stopPropagation()}
         >
           <Primitive.ScrollUpButton className="mc-select-scroll">

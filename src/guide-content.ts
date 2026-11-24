@@ -68,6 +68,7 @@ export const guideArticles: GuideArticle[] = [
       "For existing code, pick its folder. Memtrace reads the code so later work has context.",
       "Switch projects from the same selector. Each project keeps its own goals, tasks and results.",
       "To remove a project you no longer need, point at it in the selector and choose the bin. Its folder stays on your computer.",
+      "Under each project's name, the selector shows its GitHub repository, or its folder when it has none.",
     ],
     note: "Adding or deleting a project never changes your files. Work you haven’t saved to Git stays as it is.",
     details: [
@@ -229,6 +230,8 @@ export const guideArticles: GuideArticle[] = [
     note: "Name a goal by its outcome, like “Customers can export reports” or “Sign-in feels instant”. Add a line on why it matters.",
     details: [
       "New goal on the Roadmap creates an empty goal you fill in yourself.",
+      "The branch beside the project's name at the top shows where new goals start, on every page. MemCode works it out from your repository and says why when you open it. Pick a branch to always use it instead.",
+      "Each goal card shows its branch. Before its work starts, you can pick another branch for that goal alone. A goal that names a branch no one here has worked on, such as one copied from another project, offers Start fresh.",
       "Quick changes have their own card. They ship together.",
       "Link tasks when one really needs another to finish first. Child tasks split a big request; related and duplicate links keep context.",
     ],
@@ -651,7 +654,7 @@ export const guideArticles: GuideArticle[] = [
       "Each goal works in its own space. Nothing is committed, pushed or merged until you click.",
     steps: [
       "Each goal gets its own branch and its own isolated workspace. Your own checkout, and any changes you haven’t committed, stay exactly where they are.",
-      "A new goal starts from your team’s integration branch: where your merged pull requests usually go, such as dev, staging or main, read from the project’s history. With no history yet, MemCode uses dev when it exists, otherwise your default branch. Branch names follow your team’s style.",
+      "A new goal starts from your team’s integration branch: where your merged pull requests usually go, such as dev, staging or main, read from the project’s history. With no history yet, MemCode uses dev when it exists, otherwise your default branch. You can pick another on the Roadmap. Branch names follow your team’s style.",
       "Tasks in a goal share its branch and workspace, and their workers edit at the same time. Nothing is locked. Each worker says what it is about to change and why, and the others hear about it as it lands. Memtrace Fleet classes every edit: most are independent, some ask a worker to re-read first, and when two changes can’t both stand, the workers involved judge it. Only what they can’t settle comes to you in Decisions.",
       "Quick changes share one short-lived batch per project, with one branch and one pull request. The batch closes when it ships. If the integration branch moves underneath it, the next quick change starts a fresh batch.",
       "Shipping a goal commits its work, pushes its branch and opens a pull request with a description written for reviewers. With the GitHub CLI, you can merge from MemCode when GitHub allows it.",

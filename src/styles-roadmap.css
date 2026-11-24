@@ -1015,3 +1015,122 @@
   font-size: 12px;
   color: #8c3a2f;
 }
+/* Where goals branch from: beside New goal on the toolbar, and one quiet line per goal. */
+.roadmap-toolbar {
+  flex-wrap: wrap;
+  row-gap: 12px;
+}
+.roadmap-phases > button {
+  white-space: nowrap;
+}
+.roadmap-toolbar-end {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-left: auto;
+}
+.mc-select-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.mc-select-copy > small {
+  font-size: 10px;
+  line-height: 1.45;
+  color: #7f917f;
+  white-space: normal;
+}
+.epic-branch {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 22px;
+  margin: -3px 19px 14px;
+  font-size: 10px;
+  color: #687d6e;
+}
+.epic-branch > svg {
+  flex: none;
+  color: #9cb19f;
+}
+.epic-branch > code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 2px 6px;
+  border: 1px solid #e3ebe0;
+  border-radius: 4px;
+  background: #f0f5ef;
+  font: 10px var(--mono);
+  color: #3f6650;
+}
+.epic-branch.unused > code {
+  border-color: #f0e7d3;
+  background: #fbf7ee;
+  color: #8a7445;
+  text-decoration: line-through;
+  text-decoration-color: #d8c9a4;
+}
+.epic-branch-fresh {
+  margin-left: auto;
+  flex: none;
+  font-size: 10px;
+  color: #2a7d56;
+}
+.epic-branch-fresh:hover {
+  color: #1d5e40;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.epic-branch-picker.mc-select-trigger {
+  min-height: 22px;
+  padding: 2px 6px;
+  border-color: #e3ebe0;
+  background: #f0f5ef;
+  box-shadow: none;
+  font: 10px var(--mono);
+  color: #3f6650;
+  gap: 4px;
+  max-width: 150px;
+}
+.epic-branch-picker.mc-select-trigger:hover {
+  background: #e8f1e6;
+}
+/* The branch new goals start from, beside the project's name in the top bar. */
+.base-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #91a596;
+}
+.base-branch-picker.mc-select-trigger {
+  min-height: 25px;
+  max-width: 200px;
+  padding: 3px 8px;
+  border-color: #e3ebe0;
+  background: #f4f8f3;
+  box-shadow: none;
+  font: 11px var(--mono);
+  color: #2f5038;
+  gap: 6px;
+}
+.base-branch-picker.mc-select-trigger:hover {
+  background: #ecf3ea;
+}
+/* A shipped goal whose checkout MemCode had to keep, and why. */
+.roadmap-kept-checkout {
+  display: block;
+  margin-top: 6px;
+  font-size: 10px;
+  line-height: 1.5;
+  color: #8a7445;
+}
+/* What happens after the merge, not yet done: quieter than the checked steps. */
+.pr-done li.pr-done-next {
+  color: #687d6e;
+}
+.pr-done li.pr-done-next > svg {
+  color: #9cb19f;
+}

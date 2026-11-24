@@ -398,6 +398,7 @@ export async function findCommand(
         : [".exe"]
       : [""];
   for (const dir of dirs) {
+    if (name === "git" && !isAbsolute(dir)) continue;
     const names = name === "cursor" ? ["cursor-agent", "agent"] : [name];
     for (const candidate of names) {
       for (const extension of extensions) {

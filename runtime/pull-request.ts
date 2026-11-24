@@ -26,6 +26,7 @@ import {
   handoffCredit,
 } from "./handoff";
 import { exec, git, now } from "./local";
+import type { CheckoutOutcome } from "./shipped-goal";
 import { withTemporaryFile } from "./temporary-file";
 
 type Register = (
@@ -40,6 +41,8 @@ export interface PullRequestDependencies {
   openUrl: (url: string) => Promise<void>;
   findGitHubCli?: () => Promise<Command | null>;
   readChanges?: (task: WorkItem) => Promise<WorkerChanges>;
+  /** After a merge: add the goal's history to the project's index and remove its checkout. */
+  retireShippedGoal?: (goal: Epic, mergedInto: string) => Promise<CheckoutOutcome>;
 }
 
 interface RepositoryFacts {
@@ -211,7 +214,20 @@ export class PullRequestService {
       }
     await flagGoalsAfterMerge(state, epic, record.base, this.readChanges());
     await this.deps.changed();
+    // The import can take a while; the merge result doesn't wait for it.
+    void this.retire(epic, record.base);
     return { pullRequest: record, completedStories };
+  }
+
+  private async retire(epic: Epic, mergedInto: string): Promise<void> {
+    const retire = this.deps.retireShippedGoal;
+    if (!retire) return;
+    const outcome = await retire(epic, mergedInto).catch(
+      (error: Error): CheckoutOutcome => ({ kind: "kept", reason: error.message }),
+    );
+    if (outcome.kind === "kept") epic.checkoutKept = outcome.reason;
+    else delete epic.checkoutKept;
+    await this.deps.changed();
   }
 
   private target(epicId: string): { epic: Epic; path: string } {

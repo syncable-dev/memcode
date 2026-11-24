@@ -326,6 +326,8 @@ export interface WorkItem extends TaskPlanningFields {
     finishedSourceBinding?: string | null;
     /** The disagreement this worker stopped to wait on. It carries on when the person decides. */
     waitingOnDecision?: string;
+    /** Where this task's worker records went when its goal shipped and its checkout was removed. */
+    records?: string;
   };
   evidence?: Evidence;
   diff?: string;
@@ -343,6 +345,8 @@ export interface Project {
   description: string;
   path: string | null;
   branch: string;
+  /** Where new work starts, chosen by the person. Unset: worked out from the repository. */
+  baseBranch?: string;
   repoId?: string;
   analysis: "idle" | "connecting" | "indexing" | "ready" | "error";
   analysisNote?: string;
@@ -372,6 +376,8 @@ export interface Epic {
   baseBranch?: string;
   /** Set when the goal's pull request merged; a closed goal takes no new tasks. */
   closedAt?: string;
+  /** Why this shipped goal's checkout is still on disk, when MemCode had to keep it. */
+  checkoutKept?: string;
   /** Another goal merged code this goal uses, or dev moved under a Quick changes batch. */
   updateNeeded?: { reason: string; files: string[]; since: string };
   id: string;
@@ -434,6 +440,8 @@ export interface AppState {
     import("./code-review").ReviewWorkflowBinding
   >;
   team?: TeamWorkspaceState[];
+  /** Short messages from MemCode itself, each shown once in the window. */
+  notices?: import("./notices").Notice[];
   workerInputs?: import("./worker-input").WorkerInputRequest[];
   onboarding?: import("./onboarding").OnboardingProgress;
   projectOnboarding?: Record<string, import("./onboarding").OnboardingProgress>;
@@ -695,6 +703,17 @@ export interface MemCodeAPI extends CodeReviewAPI {
   deleteCycle(id: string): Promise<import("./deletion").DeletionResult>;
   /** Removes a project from MemCode on this computer. Its folder stays on disk. */
   deleteProject(id: string): Promise<import("./deletion").DeletionResult>;
+  /** The project folder's branch, its GitHub repository and where new work starts. */
+  repositoryStatus(
+    projectId: string,
+  ): Promise<import("./branches").RepositoryStatus>;
+  /** Chooses where new work starts; null goes back to what MemCode works out. */
+  setBaseBranch(
+    projectId: string,
+    branch: string | null,
+  ): Promise<import("./branches").RepositoryStatus>;
+  /** A goal that has not started gets a fresh branch from the base when its work starts. */
+  startGoalFresh(id: string, baseBranch?: string | null): Promise<void>;
   respondToWorker(
     taskId: string,
     requestId: string,
