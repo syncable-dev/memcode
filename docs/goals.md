@@ -39,6 +39,45 @@ exists, and otherwise the repository's default branch. Branch names follow the
 team's prefix (for example `feat/`); a taken name gets a numeric suffix, so new
 work never picks up an old branch.
 
+You can see and change where goals start (`runtime/branches.ts`,
+`src/components/BaseBranchPicker.tsx`, `src/components/Roadmap.tsx`):
+
+- The **branch beside the project's name** in the top bar, on every view, shows the
+  base. Opening it says which rule chose it, for example "34 of your last 40 merged
+  pull requests went to dev". Pick a branch to always use it (saved as the project's
+  `baseBranch`), or go back to letting MemCode work it out.
+- Each goal card has a branch line. Before a goal's work starts it reads "New
+  branch from dev when work starts", and you can pick another branch for that goal
+  alone (its own `baseBranch`, which wins over the project's). Once a worker has
+  run, it shows the goal's branch. A goal that names a branch no worker here has
+  used, such as one copied from another project, offers **Start fresh from dev**:
+  its next work gets a new branch from the base. A goal whose work has started
+  keeps its branch; use Update from its base instead.
+
+The project switcher shows the GitHub repository (owner/name) under the project's
+name, or the folder's name when it has no GitHub remote. Nothing here deletes or
+switches a branch.
+
+### When a goal ships
+
+After a goal's pull request merges, MemCode tidies up its checkout
+(`runtime/shipped-goal.ts`, ADR-0001):
+
+1. It keeps the checkout as it is if a worker is still running there or the checkout
+   has changes that aren't committed.
+2. It stops the goal's own code index and asks the project's engine to count the
+   goal's history (`import_goal_history` with `dry_run`), then to add it to the
+   project's index: the goal's saves, the code versions they made and its Fleet
+   records, under the goal's branch, marked as merged into the pull request's base.
+   Searches on that base then include the goal's steps.
+3. It moves the tasks' records (the change journal behind Changes and code review,
+   and the documents workers made) into MemCode's data folder, so they still open.
+4. Only if the import moved what the count said does it remove the checkout with
+   `git worktree remove`. The branch stays.
+
+If anything stops it, nothing is removed and the Roadmap's shipped note says why,
+for example when the bundled engine can't import goal history yet.
+
 ## Tasks in a goal share it
 
 Tasks in one goal run side by side on the goal's branch and workspace, and their

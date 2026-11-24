@@ -49,6 +49,8 @@ export const projectsContract = {
   RemoveGuestRequest: { project_id: text(1), account_id: text(2) },
   LeaveProjectRequest: { project_id: text(1) },
   LeaveProjectResponse: {},
+  DeleteProjectRequest: { project_id: text(1) },
+  DeleteProjectResponse: {},
 } satisfies Contract;
 
 /** The calls MemCode makes. Renaming and deleting a project happen at memtrace.io. */
@@ -70,6 +72,10 @@ export const projectsCalls = {
   LeaveProject: {
     request: "LeaveProjectRequest",
     reply: "LeaveProjectResponse",
+  },
+  DeleteProject: {
+    request: "DeleteProjectRequest",
+    reply: "DeleteProjectResponse",
   },
 } as const;
 export type ProjectsCall = keyof typeof projectsCalls;

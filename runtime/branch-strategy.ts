@@ -1,13 +1,17 @@
 import { childEnv, findCommand, type Command } from "./commands";
 import { exec, git } from "./local";
+import type { BaseReason } from "../src/branches";
 
 /** Where new work starts and how the team names its branches. */
 export interface BranchStrategy {
   base: string;
+  /** Why the base is the base: the first of MemCode's rules that applied. */
+  reason: BaseReason;
   remote?: string;
   featurePrefix: string;
   fixPrefix: string;
 }
+export type { BaseReason } from "../src/branches";
 export interface MergedBranch {
   base: string;
   head: string;
@@ -44,10 +48,23 @@ export function inferBranchStrategy(
     ...work.map((merge) => merge.head),
     ...history.branches.filter(isWorkBranch),
   ];
+  const fromHistory = mostCommon(
+    work.map((merge) => merge.base),
+    integrationBranches,
+  );
+  const { base, reason } = fromHistory
+    ? {
+        base: fromHistory,
+        reason: {
+          kind: "merged-pull-requests" as const,
+          count: work.filter((merge) => merge.base === fromHistory).length,
+          of: work.length,
+        },
+      }
+    : baseWithoutHistory(history);
   return {
-    base:
-      mostCommon(work.map((merge) => merge.base), integrationBranches) ??
-      baseWithoutHistory(history),
+    base,
+    reason,
     featurePrefix: commonPrefix(names, featureFamilies) ?? "feat/",
     fixPrefix: commonPrefix(names, fixFamilies) ?? "fix/",
   };
@@ -105,7 +122,7 @@ export async function detectBranchStrategy(
 /** The commit new work starts from: the remote's integration branch when reachable. */
 export async function integrationCommit(
   cwd: string,
-  strategy: BranchStrategy,
+  strategy: Pick<BranchStrategy, "base" | "remote">,
 ): Promise<string> {
   if (strategy.remote) {
     await fetchBranch(cwd, strategy.remote, strategy.base);
@@ -134,16 +151,22 @@ function isWorkBranch(name: string): boolean {
   return !integrationBranches.includes(name) && !nonWorkBranch.test(name);
 }
 
-function baseWithoutHistory(history: BranchHistory): string {
+function baseWithoutHistory(history: BranchHistory): {
+  base: string;
+  reason: BaseReason;
+} {
   const integration = integrationWithoutHistory.find((name) =>
     history.branches.includes(name),
   );
-  if (integration) return integration;
-  if (history.defaultBranch) return history.defaultBranch;
-  return history.branches.includes("master") &&
-    !history.branches.includes("main")
-    ? "master"
-    : "main";
+  if (integration)
+    return { base: integration, reason: { kind: "integration-branch" } };
+  if (history.defaultBranch)
+    return { base: history.defaultBranch, reason: { kind: "default-branch" } };
+  const base =
+    history.branches.includes("master") && !history.branches.includes("main")
+      ? "master"
+      : "main";
+  return { base, reason: { kind: "fallback" } };
 }
 
 function mostCommon(
@@ -287,7 +310,8 @@ function mergedBranchFrom(subject: string, base: string): MergedBranch[] {
   return [];
 }
 
-async function fetchBranch(cwd: string, remote: string, branch: string) {
+/** Fetches one branch from a remote, giving up quietly when the network does not answer. */
+export async function fetchBranch(cwd: string, remote: string, branch: string) {
   await exec("git", ["fetch", "--quiet", remote, branch], {
     cwd,
     windowsHide: true,

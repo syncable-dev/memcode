@@ -366,6 +366,11 @@ function MergeDone({
             <CircleCheck size={13} />
             Goals that use the same files are marked Needs update
           </li>
+          <li className="pr-done-next">
+            <GitBranch size={13} />
+            Next, the goal's history goes into the project's code index, then
+            its checkout is removed. The branch stays.
+          </li>
         </ul>
       </div>
       <footer className="modal-footer">

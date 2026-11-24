@@ -8,7 +8,8 @@ import type { AppState, Project, WorkItem } from "../src/shared";
 import { initializePlanning } from "../src/planning/history";
 import { registerDeletion } from "../runtime/deletion";
 import { createExampleArtifacts } from "../runtime/examples";
-import { projectDeletionNote } from "../src/deletion";
+import { projectDeletionLabels, projectDeletionNote } from "../src/deletion";
+import { projectSharingAsKnown, type ProjectSharing, type SharedPerson } from "../src/sharing";
 
 const WEBSITE = "website";
 const AT = "2026-11-23T12:00:00.000Z";
@@ -24,7 +25,13 @@ const project = (id: string, name: string): Project => ({
 });
 
 /** The example project, and a "website" project with something in every place a project keeps things. */
-function workspace(options: { forgotten?: string[] } = {}) {
+function workspace(
+  options: {
+    forgotten?: string[];
+    teamsLeft?: string[];
+    leaveTeam?: (projectId: string) => Promise<void>;
+  } = {},
+) {
   const state = initialState();
   initializePlanning(state);
   state.projects.push(project(WEBSITE, "Website"));
@@ -109,9 +116,14 @@ function workspace(options: { forgotten?: string[] } = {}) {
     () => state,
     async () => void saved++,
     {
-      forgetSharing: async (projectId) => {
+      removeSharing: async (projectId) => {
         options.forgotten?.push(projectId);
       },
+      leaveTeam:
+        options.leaveTeam ??
+        (async (projectId) => {
+          options.teamsLeft?.push(projectId);
+        }),
     },
   );
   return {
@@ -164,7 +176,7 @@ test("deleting a project leaves its folder and the files in it", async () => {
   }
 });
 
-test("a shared project is disconnected from this computer before it is deleted", async () => {
+test("a shared project is taken off the sharing service for this account before it is deleted", async () => {
   const forgotten: string[] = [];
   const w = workspace({ forgotten });
   w.state.sharedProjectLinks = [{ projectId: WEBSITE } as never];
@@ -188,13 +200,23 @@ test("a project with a worker running is not deleted, and nothing of it is remov
   assert.equal(w.saved(), 0);
 });
 
-test("a project still in a Team Sync team is not deleted until its team is left", async () => {
-  const w = workspace();
+test("a project in a Team Sync team leaves its team, then is deleted", async () => {
+  const teamsLeft: string[] = [];
+  const w = workspace({ teamsLeft });
   w.state.team = [{ projectId: WEBSITE } as never];
-  await assert.rejects(
-    () => w.deleteProject(WEBSITE),
-    /Website is in a Team Sync team\. Leave the team on its Team page first\./,
-  );
+  await w.deleteProject(WEBSITE);
+  assert.deepEqual(teamsLeft, [WEBSITE]);
+  assert.equal(w.state.projects.some((item) => item.id === WEBSITE), false);
+});
+
+test("when its team can't be left, the project is not deleted and says why", async () => {
+  const w = workspace({
+    leaveTeam: async () => {
+      throw Error("Sync queued team changes before leaving.");
+    },
+  });
+  w.state.team = [{ projectId: WEBSITE } as never];
+  await assert.rejects(() => w.deleteProject(WEBSITE), /Sync queued team changes before leaving\./);
   assert.ok(w.state.projects.some((item) => item.id === WEBSITE));
 });
 
@@ -232,23 +254,79 @@ test("once the example project is deleted, its sample files are not made again",
   }
 });
 
+const person = (name: string, isYou = false): SharedPerson => ({ id: name, name, isYou });
+const shared = (youAreOwner: boolean, guests: string[]): ProjectSharing => ({
+  kind: "connected",
+  shared: {
+    id: "shared-website",
+    name: "Website",
+    owner: youAreOwner ? person("Alex", true) : person("Alex"),
+    guests: guests.map((name) => person(name)),
+    youAreOwner,
+    openInvitations: [],
+    guestLimit: 2,
+  },
+});
+const website = project(WEBSITE, "Website");
+const KEPT_HERE =
+  "its board, tasks, goals, cycles, conversations and reviews. The folder /work/website and everything in it stay on your computer.";
+
 test("the confirmation says what goes and that the folder stays", () => {
   assert.equal(
-    projectDeletionNote(project(WEBSITE, "Website"), false),
-    "This removes Website from MemCode: its board, tasks, goals, cycles, conversations and reviews. The folder /work/website and everything in it stay on your computer.",
+    projectDeletionNote(website, { kind: "free" }),
+    `This removes Website from MemCode: ${KEPT_HERE}`,
   );
 });
 
-test("for a shared project the confirmation says it stays shared for the others", () => {
-  assert.match(
-    projectDeletionNote(project(WEBSITE, "Website"), true),
-    /It stays shared for everyone else, and you can open it again from this menu\. To delete it for everyone, go to memtrace\.io\.$/,
+test("the owner of a shared project is told it is deleted for everyone, by name", () => {
+  assert.equal(
+    projectDeletionNote(website, shared(true, ["Anna", "Bo"])),
+    `This deletes Website for everyone: Anna and Bo lose it too, on all their computers. It removes ${KEPT_HERE}`,
   );
+  assert.deepEqual(projectDeletionLabels(shared(true, ["Anna", "Bo"])), {
+    kicker: "DELETE FOR EVERYONE",
+    description: "Shared with Anna and Bo",
+    confirm: "Delete for everyone",
+    canConfirm: true,
+  });
+});
+
+test("a guest is told they leave, and the owner keeps the project", () => {
+  assert.equal(
+    projectDeletionNote(website, shared(false, ["Anna"])),
+    `You leave Website, and Alex and the others keep it. This removes from MemCode here ${KEPT_HERE}`,
+  );
+  assert.equal(projectDeletionLabels(shared(false, ["Anna"])).confirm, "Leave and delete");
+});
+
+test("a Team Sync project's confirmation says MemCode leaves the team first", () => {
+  assert.match(
+    projectDeletionNote(website, { kind: "team" }),
+    /^MemCode leaves Website's Team Sync team first, and your teammates keep it\. /,
+  );
+  assert.equal(projectDeletionLabels({ kind: "team" }).confirm, "Leave team and delete");
+});
+
+test("a shared project MemCode can't check says deleting needs sharing, and can't be confirmed yet", () => {
+  assert.match(
+    projectDeletionNote(website, { kind: "remembered", name: "Website" }),
+    /Sharing can't be reached right now\./,
+  );
+  assert.equal(projectDeletionLabels({ kind: "remembered", name: "Website" }).canConfirm, false);
+  assert.equal(projectDeletionLabels(shared(true, ["Anna"])).canConfirm, true);
 });
 
 test("the example project's confirmation speaks of its sample tasks", () => {
   assert.equal(
-    projectDeletionNote({ ...project("example", "Design preview"), example: true }, false),
+    projectDeletionNote({ ...project("example", "Design preview"), example: true }, { kind: "example" }),
     "This removes the example project and its sample tasks from MemCode.",
   );
+});
+
+test("without the sharing service, a project is described from what this computer knows", () => {
+  const workspace = { sharedProjectLinks: [{ projectId: WEBSITE, sharedProjectName: "Website" }], team: [] } as never;
+  assert.deepEqual(projectSharingAsKnown(website, workspace, null), { kind: "remembered", name: "Website" });
+  const inTeam = { sharedProjectLinks: [], team: [{ projectId: WEBSITE }] } as never;
+  assert.deepEqual(projectSharingAsKnown(website, inTeam, { state: "unavailable", detail: "offline" }), { kind: "team" });
+  assert.deepEqual(projectSharingAsKnown(website, { sharedProjectLinks: [], team: [] } as never, null), { kind: "free" });
 });

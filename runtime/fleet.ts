@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { appendFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { AppState, FleetConflict, Project, WorkItem } from "../src/shared";
+import { workerRecordsFolder } from "./worker-records";
 import {
   breaksCallers,
   changeKinds,
@@ -900,8 +901,8 @@ export class FleetCoordinator {
       decisionId: reply.decision?.id,
       outcome: reply.outcome,
     };
-    if (task.run.workspace) {
-      const directory = join(task.run.workspace, ".memcode", "workers", task.id);
+    const directory = workerRecordsFolder(task);
+    if (directory) {
       await mkdir(directory, { recursive: true });
       await appendFile(
         join(directory, "fleet-activity.jsonl"),

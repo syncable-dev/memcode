@@ -5,6 +5,7 @@ import {
   readFile,
   readdir,
   realpath,
+  rm,
   writeFile,
 } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
@@ -52,6 +53,57 @@ export async function ensureLocalRuntimeIgnored(root: string): Promise<void> {
   }
 }
 
+/**
+ * Gives an empty folder its first commit. If any step fails, what this made is
+ * removed again, so the folder is as it was and the same setup can be retried.
+ */
+export async function initializeProjectRepository(
+  path: string,
+  project: Pick<Project, "name" | "description">,
+): Promise<void> {
+  // Reserve the empty folder so concurrent retries cannot both initialize it.
+  const gitDir = join(path, ".git");
+  await mkdir(gitDir);
+  const made = [gitDir];
+  try {
+    await git(path, ["init", "--initial-branch=main"]);
+    await writeStarterFile(
+      join(path, "README.md"),
+      `# ${project.name}\n\n${project.description || "A new project, started in MemCode."}\n`,
+      made,
+    );
+    await writeStarterFile(
+      join(path, ".gitignore"),
+      ".memcode/\n.memdb/\n.memtrace/\nnode_modules/\n.env\n",
+      made,
+    );
+    await git(path, ["add", "--", "README.md", ".gitignore"]);
+    await git(path, [
+      "-c",
+      "user.name=MemCode",
+      "-c",
+      "user.email=local@memcode.invalid",
+      "commit",
+      "-m",
+      "Start project from MemCode brief",
+    ]);
+  } catch (error) {
+    await removeWhatSetupMade(made);
+    throw error;
+  }
+}
+
+/** Writes a file only if it is new, and remembers it so a failed setup can remove it. */
+async function writeStarterFile(path: string, text: string, made: string[]): Promise<void> {
+  await writeFile(path, text, { flag: "wx" });
+  made.push(path);
+}
+
+async function removeWhatSetupMade(made: string[]): Promise<void> {
+  for (const path of [...made].reverse())
+    await rm(path, { recursive: true, force: true }).catch(() => {});
+}
+
 /** Empty folders opened as projects need the same foundation as a new project. */
 export async function ensureProjectRepository(
   project: Project,
@@ -94,27 +146,7 @@ export async function ensureProjectRepository(
       "This folder is not a Git repository. Initialize Git in it, then refresh code context, or select an existing repository.",
     );
   signal?.throwIfAborted();
-  await git(path, ["init", "--initial-branch=main"]);
-  await writeFile(
-    join(path, "README.md"),
-    `# ${project.name}\n\n${project.description || "A new project, started in MemCode."}\n`,
-    { flag: "wx" },
-  );
-  await writeFile(
-    join(path, ".gitignore"),
-    ".memcode/\n.memdb/\n.memtrace/\nnode_modules/\n.env\n",
-    { flag: "wx" },
-  );
-  await git(path, ["add", "--", "README.md", ".gitignore"]);
-  await git(path, [
-    "-c",
-    "user.name=MemCode",
-    "-c",
-    "user.email=local@memcode.invalid",
-    "commit",
-    "-m",
-    "Start project from MemCode brief",
-  ]);
+  await initializeProjectRepository(path, project);
   signal?.throwIfAborted();
   project.branch = "main";
 }

@@ -112,7 +112,7 @@ export class EpicWorkspace {
         "A result from the earlier execution mode is preserved in its previous folder. Review it before starting a new shared-branch task.",
       );
     const epic = ensureTaskEpic(this.state(), task);
-    await this.prepareBranch(epic, project.path);
+    await this.prepareBranch(epic, project);
     const branch = epicBranch(epic);
     if (options.ownedCheckout && this.dataDir) {
       const checkout = await enterEpicCheckout(
@@ -196,10 +196,16 @@ export class EpicWorkspace {
     return { epic, changedBranch };
   }
 
-  /** New work starts from the team's integration branch, named the team's way. */
-  private async prepareBranch(epic: Epic, path: string) {
+  /**
+   * New work starts from the branch the goal or the project chose, or else the team's
+   * integration branch, and is named the team's way.
+   */
+  private async prepareBranch(epic: Epic, project: Project) {
     if (epic.branch) return;
-    const strategy = await this.strategyFor(path);
+    const path = project.path!;
+    const detected = await this.strategyFor(path);
+    const base = epic.baseBranch ?? project.baseBranch ?? detected.base;
+    const strategy = { ...detected, base };
     epic.branch = await availableBranch(
       path,
       isQuickChanges(epic)
@@ -207,7 +213,7 @@ export class EpicWorkspace {
         : goalBranchName(strategy, epic.title),
       strategy.remote,
     );
-    epic.baseBranch ??= strategy.base;
+    epic.baseBranch = base;
     epic.baseRevision ??= await integrationCommit(path, strategy);
   }
 

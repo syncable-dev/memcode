@@ -1,4 +1,4 @@
-import { childEnv, findCommand } from "./commands";
+import { childEnv, findCommand, refreshWindowsUserPath } from "./commands";
 import { appVersion } from "../src/version";
 export { childEnv, findCommand, exists } from "./commands";
 export type { Command } from "./commands";
@@ -122,7 +122,21 @@ export class LocalStore {
 }
 
 export async function git(cwd: string, args: string[]): Promise<string> {
-  const { stdout } = await exec("git", args, {
+  let executable = "git";
+  if (process.platform === "win32") {
+    // Resolve before childEnv trims PATH for worker processes.
+    let command = await findCommand("git");
+    if (!command) {
+      await refreshWindowsUserPath();
+      command = await findCommand("git");
+    }
+    if (!command)
+      throw Error(
+        "MemCode could not find Git. Install Git for Windows or add its cmd folder to PATH, then try again.",
+      );
+    executable = command.command;
+  }
+  const { stdout } = await exec(executable, args, {
     cwd,
     windowsHide: true,
     encoding: "utf8",

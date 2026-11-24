@@ -1,4 +1,12 @@
-import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  readFile,
+  readdir,
+  realpath,
+  rmdir,
+  stat,
+} from "node:fs/promises";
 import {
   basename,
   join,
@@ -18,10 +26,15 @@ import { LocalStore, exists, findCommand, git, now, within } from "./local";
 import { findDesktopApp, refreshWindowsUserPath } from "./commands";
 import { observePersistence } from "./persistence";
 import { MemtraceEngine } from "./memtrace";
-import { ensureProjectRepository } from "./project-repository";
+import {
+  ensureProjectRepository,
+  initializeProjectRepository,
+} from "./project-repository";
 import { workerResponseSchema } from "./worker-input";
 import { permissionModes, supportsPermissionMode } from "../src/permissions";
-import { registerDeletion } from "./deletion";
+import { deleteProject, registerDeletion } from "./deletion";
+import { tellPerson } from "./notices";
+import { registerBranches } from "./branches";
 import { readArtifactThumbnail } from "./artifact-thumbnail";
 import { reconcileArtifacts } from "./artifact-catalog";
 import { WorkerManager } from "./workers";
@@ -102,6 +115,7 @@ import {
   isCodeReviewTask,
 } from "../src/code-review-workflow";
 import { epicAnalysisProject } from "./epic-checkout";
+import { retireShippedGoal } from "./shipped-goal";
 import { createReadonlyReviewAgent } from "./review-agent";
 import { SpeechManager, registerSpeech } from "./speech";
 import { speechSettingsSchema } from "../src/speech";
@@ -779,6 +793,16 @@ export async function createRuntime(
   sharing = new Sharing({
     state,
     changed,
+    projectGone: async (link) => {
+      await deleteProject(store.state, link.projectId, {
+        removeSharing: (projectId) => sharing!.disconnect(projectId),
+      });
+      tellPerson(
+        store.state,
+        `“${link.sharedProjectName}” was removed here: its owner deleted it, or took you off it. Its folder stays on your computer.`,
+      );
+      await changed();
+    },
     session: () => beta!.sessionProof(),
     // memtrace.io lists where the sharing service is. No list entry: no sharing.
     addresses: options?.findSharing ?? sharingFinder(),
@@ -1205,30 +1229,24 @@ export async function createRuntime(
         if (!slug)
           throw new Error("Use a project name containing letters or numbers.");
         path = join(parent, slug);
-        if (!within(parent, path) || (await exists(path)))
+        if (!within(parent, path))
+          throw Error("Choose a name inside the selected folder.");
+        const entry = await lstat(path).catch((error: NodeJS.ErrnoException) => {
+          if (error.code !== "ENOENT") throw error;
+          return null;
+        });
+        if (entry && (!entry.isDirectory() || (await readdir(path)).length))
           throw new Error(
             "A folder with that name already exists. Choose a different name.",
           );
-        await mkdir(path);
-        await git(path, ["init", "--initial-branch=main"]);
-        await writeFile(
-          join(path, "README.md"),
-          `# ${input.name}\n\n${input.description || "A new project, started in MemCode."}\n`,
-        );
-        await writeFile(
-          join(path, ".gitignore"),
-          ".memcode/\n.memdb/\n.memtrace/\nnode_modules/\n.env\n",
-        );
-        await git(path, ["add", "--", "README.md", ".gitignore"]);
-        await git(path, [
-          "-c",
-          "user.name=MemCode",
-          "-c",
-          "user.email=local@memcode.invalid",
-          "commit",
-          "-m",
-          "Start project from MemCode brief",
-        ]);
+        await git(parent, ["--version"]);
+        if (!entry) await mkdir(path);
+        try {
+          await initializeProjectRepository(path, input);
+        } catch (error) {
+          if (!entry) await rmdir(path).catch(() => {});
+          throw error;
+        }
       }
       const existing = store.state.projects.find(
         (p) =>
@@ -1544,8 +1562,14 @@ export async function createRuntime(
   registerPlanning(register, state, project, changed);
   registerOnboarding(register, state, changed);
   registerDeletion(register, state, changed, {
-    forgetSharing: async (projectId) => sharing?.disconnect(projectId),
+    removeSharing: async (projectId) => {
+      await sharing?.removeForAccount(projectId);
+    },
+    leaveTeam: async (projectId) => {
+      await team?.leave(projectId);
+    },
   });
+  registerBranches(register, state, changed);
   registerCardComments(register, state, changed, (taskId) => {
     const projectId = taskId
       ? state().tasks.find((task) => task.id === taskId)?.projectId
@@ -1564,6 +1588,18 @@ export async function createRuntime(
       state,
       changed,
       openUrl: (url) => host.call<void>("open_github_pull_request", { url }),
+      retireShippedGoal: (goal, mergedInto) =>
+        retireShippedGoal(state(), goal, mergedInto, {
+          dataDir: store.dir,
+          releaseGoalEngine: (_goal, task) =>
+            task.run.analysisProjectId
+              ? engine.releaseEpic(epicAnalysisProject(project(task.projectId), task))
+              : Promise.resolve(),
+          importHistory: async (request) => {
+            const result = await engine.call(project(goal.projectId), "import_goal_history", { ...request });
+            return result.imported;
+          },
+        }),
     }),
   );
   /** Repo-relative files Memtrace associates with a request, for placement and planning. */

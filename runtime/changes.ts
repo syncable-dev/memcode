@@ -1,4 +1,5 @@
 import { recoverClaudeEdits } from "./claude-changes";
+import { workerRecordsBoundary, workerRecordsFolder } from "./worker-records";
 import { createHash, randomUUID } from "node:crypto";
 import {
   mkdir,
@@ -40,9 +41,9 @@ export interface CheckpointOptions {
   skip?: (path: string) => boolean;
 }
 function directory(task: WorkItem) {
-  if (!task.run.workspace)
-    throw Error("This work item has no shared workspace.");
-  return join(task.run.workspace, ".memcode", "workers", task.id, "changes");
+  const records = workerRecordsFolder(task);
+  if (!records) throw Error("This work item has no shared workspace.");
+  return join(records, "changes");
 }
 function exactScope(task: WorkItem) {
   return [
@@ -383,8 +384,9 @@ async function readChanges(
     deletions: 0,
     files: 0,
   };
-  if (!task.run.workspace) return empty;
-  await recoverClaudeEdits(task);
+  if (!workerRecordsFolder(task)) return empty;
+  // Claude's edits are recovered from the checkout; a shipped goal's is gone.
+  if (!task.run.records) await recoverClaudeEdits(task);
   const readLedger = async (name: string): Promise<ChangeCheckpoint[]> => {
     const target = join(directory(task), name);
     const path = await realpath(target).catch((e) => {
@@ -392,7 +394,7 @@ async function readChanges(
       throw e;
     });
     if (!path) return [];
-    if (!within(await realpath(task.run.workspace!), path))
+    if (!within(await realpath(workerRecordsBoundary(task)!), path))
       throw Error("This change journal is outside the worker checkout.");
     if ((await stat(path)).size > 16_000_000)
       throw Error("Open a smaller worker run to review its change journal.");

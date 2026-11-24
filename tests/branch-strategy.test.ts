@@ -143,8 +143,6 @@ test("new work starts from the integration branch as the remote has it", async (
     const commit = await integrationCommit(r.repo, {
       base: "dev",
       remote: "origin",
-      featurePrefix: "feat/",
-      fixPrefix: "fix/",
     });
     assert.equal(commit, await git(other, ["rev-parse", "HEAD"]));
   } finally {
@@ -167,4 +165,28 @@ test("without a remote, new work starts from the local integration branch", asyn
   } finally {
     await rm(r.root, { recursive: true, force: true });
   }
+});
+
+test("the base says why it was chosen, so the person can tell whether to change it", () => {
+  assert.deepEqual(
+    inferBranchStrategy({
+      defaultBranch: "main",
+      branches: ["main", "dev"],
+      merged: [
+        { base: "dev", head: "feat/a" },
+        { base: "dev", head: "fix/b" },
+        { base: "main", head: "feat/c" },
+      ],
+    }).reason,
+    { kind: "merged-pull-requests", count: 2, of: 3 },
+  );
+  assert.deepEqual(
+    inferBranchStrategy({ defaultBranch: "main", branches: ["main", "develop"], merged: [] }).reason,
+    { kind: "integration-branch" },
+  );
+  assert.deepEqual(
+    inferBranchStrategy({ defaultBranch: "trunk", branches: ["trunk"], merged: [] }).reason,
+    { kind: "default-branch" },
+  );
+  assert.deepEqual(inferBranchStrategy({ branches: [], merged: [] }).reason, { kind: "fallback" });
 });
