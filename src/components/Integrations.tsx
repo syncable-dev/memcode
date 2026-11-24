@@ -314,7 +314,8 @@ function SlackPage({ context }: { context: IntegrationContext }) {
         <ul className="integration-how">
           <li>
             <strong>Mention @MemCode</strong> in any message. It goes to the Inbox as
-            written, with its files. In a thread, the thread’s first message is sent.
+            written, with its files. In a thread, the thread’s first message is sent. The
+            first time in a channel, Slack offers to add MemCode to it: choose Add.
           </li>
           <li>
             <strong>Send to MemCode</strong> in a message’s menu opens a short form: what
