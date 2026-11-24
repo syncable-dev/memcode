@@ -229,8 +229,10 @@ export function decisionEntry(item: string, decision: InboxDecision): Json {
 
 /** What a new goal starts from: the report as someone would write it themselves. */
 export function requestFrom(item: InboxItem): string {
-  const lines = [item.title];
-  if (item.text && item.text !== item.title) lines.push("", item.text);
+  // A title is usually the text's first line, so the text alone says it once.
+  const body = item.text.trim();
+  const lines = body.startsWith(item.title) ? [body] : [item.title];
+  if (body && !body.startsWith(item.title)) lines.push("", body);
   if (item.expected) lines.push("", `Expected: ${item.expected}`);
   if (item.where) lines.push(`Where: ${item.where}`);
   if (item.links.length) lines.push("", ...item.links);

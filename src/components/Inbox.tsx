@@ -6,7 +6,6 @@ import {
   Inbox as InboxIcon,
   Link2,
   RotateCcw,
-  Unlink,
   X,
 } from "lucide-react";
 import type { Project } from "../shared";
@@ -91,8 +90,8 @@ export function Inbox(props: Props) {
 
   const items = inbox?.items ?? [];
   const shown = items.filter((item) => item.state === filter);
-  const selected =
-    items.find((item) => item.id === selectedId) ?? shown[0] ?? undefined;
+  // Like an email inbox: once a report is decided, the next one in the list shows.
+  const selected = shown.find((item) => item.id === selectedId) ?? shown[0];
   const counts = useMemo(() => {
     const counted: Record<InboxState, number> = {
       new: 0,
@@ -255,7 +254,7 @@ function SlackChannels(props: {
               disabled={props.busy}
               onClick={() => props.onUnlink(channel.teamId, channel.channelId)}
             >
-              <Unlink size={12} />
+              <X size={12} />
             </button>
           </span>
         ))}

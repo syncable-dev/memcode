@@ -137,3 +137,11 @@ test("a goal starts from the report as someone would write it", () => {
   assert.match(request, /Expected: The discount applies/);
   assert.match(request, /Reported in Slack: https:\/\/acme\.slack\.com/);
 });
+
+test("a title that opens the text is not said twice", () => {
+  const [read] = inboxItems([
+    entry({ ...report, title: "Search goes blank", text: "Search goes blank on iPhone. Every time." }),
+  ]);
+  const request = requestFrom(read);
+  assert.equal(request.split("Search goes blank").length - 1, 1, request);
+});
