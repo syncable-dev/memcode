@@ -73,7 +73,10 @@ export async function retireShippedGoal(
   const imported = await importChecked(request, deps);
   if (imported.kind === "kept") return imported;
   await keepWorkerRecords(deps.dataDir, state, tasks);
-  const removal = await git(project.path, ["worktree", "remove", checkout]).then(
+  // The goal's engine cache inside the checkout passes Windows' 260-character
+  // limit; Git for Windows deletes such paths only with core.longpaths (a no-op
+  // elsewhere).
+  const removal = await git(project.path, ["-c", "core.longpaths=true", "worktree", "remove", checkout]).then(
     () => undefined,
     (error: Error) => error.message,
   );
