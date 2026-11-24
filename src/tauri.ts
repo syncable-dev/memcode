@@ -223,6 +223,8 @@ export async function installNativeBridge(): Promise<void> {
       call("sharing:open", { sharedProjectId }),
     joinSharedProject: (input) => call("sharing:join", input),
     projectInbox: (projectId) => call("sharing:inbox", { projectId }),
+    addToSlack: (projectId) => call("sharing:add-to-slack", { projectId }),
+    disconnectSlack: (input) => call("sharing:disconnect-slack", input),
     linkSlackChannel: (input) => call("sharing:link-slack", input),
     unlinkSlackChannel: (input) => call("sharing:unlink-slack", input),
     decideInboxItem: (input) => call("sharing:decide-inbox-item", input),

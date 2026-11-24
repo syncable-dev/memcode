@@ -4,7 +4,6 @@ import {
   FileText,
   Hash,
   Inbox as InboxIcon,
-  Link2,
   RotateCcw,
   X,
 } from "lucide-react";
@@ -115,24 +114,7 @@ export function Inbox(props: Props) {
 
   return (
     <div className="inbox-page">
-      <SlackChannels
-        inbox={inbox}
-        busy={busy}
-        onLink={(code) =>
-          act(() =>
-            window.memcode.linkSlackChannel({ projectId: project.id, code }),
-          )
-        }
-        onUnlink={(teamId, channelId) =>
-          act(() =>
-            window.memcode.unlinkSlackChannel({
-              projectId: project.id,
-              teamId,
-              channelId,
-            }),
-          )
-        }
-      />
+      <SlackChannels inbox={inbox} />
       {problem && <p className="inbox-problem">{problem}</p>}
       {!inbox && !problem && (
         <div className="inbox-loading">
@@ -221,66 +203,32 @@ export function Inbox(props: Props) {
   );
 }
 
-function SlackChannels(props: {
-  inbox: ProjectInbox | null;
-  busy: boolean;
-  onLink: (code: string) => void;
-  onUnlink: (teamId: string, channelId: string) => void;
-}) {
-  const [code, setCode] = useState("");
-  const channels = props.inbox?.channels ?? [];
-  if (props.inbox?.channelsUnavailable)
+function SlackChannels({ inbox }: { inbox: ProjectInbox | null }) {
+  if (!inbox || inbox.channelsUnavailable) return null;
+  if (!inbox.workspaces.length && !inbox.channels.length)
     return (
-      <p className="inbox-channels-note">
-        The sharing service does not take Slack channels yet.
+      <p className="inbox-channels inbox-channels-note">
+        Not connected to Slack yet. Connect it in Settings › Integrations, then
+        mention @MemCode in any channel.
       </p>
     );
   return (
-    <section className="inbox-channels" aria-label="Slack channels">
+    <section className="inbox-channels" aria-label="Where reports come from">
       <div className="inbox-channel-list">
-        {channels.length === 0 && (
-          <span className="inbox-channels-note">
-            No Slack channel reports here yet.
+        <span className="inbox-channels-note">Reports from Slack</span>
+        {inbox.workspaces.map((workspace) => (
+          <span key={workspace.teamId} className="inbox-channel">
+            {workspace.teamName || "Slack workspace"}
           </span>
-        )}
-        {channels.map((channel) => (
+        ))}
+        {inbox.channels.map((channel) => (
           <span key={channel.teamId + channel.channelId} className="inbox-channel">
             <Hash size={12} />
             {channel.channelName}
-            {channel.teamName && <small>{channel.teamName}</small>}
-            <button
-              aria-label={`Stop #${channel.channelName} sending reports`}
-              title="Stop this channel sending reports"
-              disabled={props.busy}
-              onClick={() => props.onUnlink(channel.teamId, channel.channelId)}
-            >
-              <X size={12} />
-            </button>
           </span>
         ))}
       </div>
-      <form
-        className="inbox-link-form"
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (code.trim()) props.onLink(code.trim());
-          setCode("");
-        }}
-      >
-        <label htmlFor="inbox-link-code">Link a Slack channel</label>
-        <input
-          id="inbox-link-code"
-          value={code}
-          onChange={(event) => setCode(event.target.value)}
-          placeholder="Code from /memcode link"
-          maxLength={20}
-          autoComplete="off"
-          spellCheck={false}
-        />
-        <button type="submit" disabled={props.busy || code.trim().length < 8}>
-          <Link2 size={13} /> Link
-        </button>
-      </form>
+      <span className="inbox-channels-note">Manage in Settings › Integrations</span>
     </section>
   );
 }

@@ -56,6 +56,8 @@ import {
 
 export interface SharingOptions {
   state(): AppState;
+  /** Opens Slack's install page in the person's browser. */
+  openSlackInstall?(url: string): Promise<unknown>;
   /** Saves the workspace and tells the app's window. */
   changed(): Promise<unknown>;
   /**
@@ -423,15 +425,35 @@ export class Sharing {
       entries.push(...page);
       after = page[page.length - 1].sequence;
     }
-    // An older MemSync has no Slack channels; the Inbox still reads.
-    const channels = await service.slack
+    // An older MemSync has no Slack connections; the Inbox still reads.
+    const slack = await service.slack
       .list(link.sharedProjectId)
       .catch(() => null);
     return {
       items: inboxItems(entries),
-      channels: channels ?? [],
-      channelsUnavailable: channels === null,
+      channels: slack?.channels ?? [],
+      workspaces: slack?.workspaces ?? [],
+      channelsUnavailable: slack === null,
     };
+  }
+
+  /**
+   * Opens Slack's page for adding MemCode to a workspace, in the person's browser.
+   * Approving it there connects the workspace to this project (MemSync ADR-0021).
+   */
+  async addToSlack(projectId: string) {
+    const { service, link } = await this.linkedProject(projectId);
+    const url = await service.slack.startInstall(link.sharedProjectId);
+    if (!this.options.openSlackInstall)
+      throw new Error("This copy of MemCode cannot open Slack. Update MemCode.");
+    await this.options.openSlackInstall(url);
+  }
+
+  /** Stops a Slack workspace, and every channel of it, sending reports here. */
+  async disconnectSlack(input: { projectId: string; teamId: string }) {
+    const { service, link } = await this.linkedProject(input.projectId);
+    await service.slack.disconnect(link.sharedProjectId, input.teamId);
+    return this.inbox(input.projectId);
   }
 
   /** Links the Slack channel that gave this code with `/memcode link`. */

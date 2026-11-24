@@ -27,7 +27,20 @@ export const slackContract = {
   },
   LinkChannelRequest: { project_id: text(1), code: text(2) },
   ListChannelsRequest: { project_id: text(1) },
-  ListChannelsResponse: { channels: many(1, "SlackChannel") },
+  ListChannelsResponse: {
+    channels: many(1, "SlackChannel"),
+    workspaces: many(2, "SlackWorkspace"),
+  },
+  SlackWorkspace: {
+    team_id: text(1),
+    team_name: text(2),
+    connected_by_account_id: text(3),
+    connected_at: at(4),
+  },
+  StartSlackInstallRequest: { project_id: text(1) },
+  StartSlackInstallResponse: { install_url: text(1) },
+  DisconnectWorkspaceRequest: { project_id: text(1), team_id: text(2) },
+  DisconnectWorkspaceResponse: {},
   UnlinkChannelRequest: {
     project_id: text(1),
     team_id: text(2),
@@ -37,6 +50,14 @@ export const slackContract = {
 } satisfies Contract;
 
 export const slackCalls = {
+  StartSlackInstall: {
+    request: "StartSlackInstallRequest",
+    reply: "StartSlackInstallResponse",
+  },
+  DisconnectWorkspace: {
+    request: "DisconnectWorkspaceRequest",
+    reply: "DisconnectWorkspaceResponse",
+  },
   LinkChannel: { request: "LinkChannelRequest", reply: "SlackChannel" },
   ListChannels: { request: "ListChannelsRequest", reply: "ListChannelsResponse" },
   UnlinkChannel: {

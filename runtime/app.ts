@@ -791,6 +791,7 @@ export async function createRuntime(
   });
   // Sharing shows memtrace.io the same session, and holds no credential of its own.
   sharing = new Sharing({
+    openSlackInstall: (url) => host.call("open_slack_install", { url }),
     state,
     changed,
     projectGone: async (link) => {
