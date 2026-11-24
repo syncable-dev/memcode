@@ -11,6 +11,7 @@ export const refusalRules = [
   "not_the_owner",
   "the_owner_cannot_leave",
   "guest_limit_reached",
+  "too_many_projects",
   "already_on_project",
   "already_invited",
   "invitation_expired",
@@ -47,6 +48,8 @@ export const refusalSentences: Record<RefusalRule, string> = {
     "You own this project, so you cannot leave it. You can delete it at memtrace.io.",
   guest_limit_reached:
     "Every guest place on this project is taken. An invitation holds its place until it is accepted, cancelled or expires.",
+  too_many_projects:
+    "Your account already has 100 shared projects and Inboxes, which is the most it can have. Delete one at memtrace.io first.",
   already_on_project: "You are already on this project.",
   already_invited:
     "That email address already has an open invitation to this project.",

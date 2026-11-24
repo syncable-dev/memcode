@@ -1392,6 +1392,7 @@ export function App() {
           fixedEpicId={storyEpic}
           statusId={storyStatus}
           initialRequest={inboxItem ? requestFrom(inboxItem) : undefined}
+          reportedBy={inboxItem?.reporter.name}
           initialFiles={
             inboxItem
               ? (add, starting) =>

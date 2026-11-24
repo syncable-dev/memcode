@@ -27,6 +27,31 @@ import {
 import { initialState } from "../src/seed";
 import type { Message } from "../src/shared";
 
+test(
+  "a file from someone else keeps Windows' mark for a download, in a worker's folder too",
+  { skip: process.platform !== "win32" },
+  async () => {
+    await fixture(async (store, folder) => {
+      const add = (name: string, from?: string) =>
+        store.add({ name, mime: "text/plain", base64: base64(name), from });
+      const theirs = await add("theirs.txt", "Dana's report");
+      const own = await add("own.txt");
+      const mark = (path: string) =>
+        readFile(`${path}:Zone.Identifier`, "utf8").catch(() => undefined);
+      assert.match((await mark(await store.path(theirs)))!, /ZoneId=3/);
+      assert.equal(await mark(await store.path(own)), undefined);
+
+      const laid = await store.layOut(
+        [message("look", [theirs, own])],
+        join(folder, "worker"),
+      );
+      const [copied, ownCopy] = [...laid.values()];
+      assert.match((await mark(copied.path))!, /ZoneId=3/);
+      assert.equal(await mark(ownCopy.path), undefined);
+    });
+  },
+);
+
 async function fixture(
   run: (store: AttachmentStore, folder: string) => Promise<void>,
 ) {

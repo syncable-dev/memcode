@@ -53,6 +53,8 @@ interface Props {
   statusId?: string;
   /** What the request starts as, such as a report from the Inbox. */
   initialRequest?: string;
+  /** Who wrote it in Slack, when it is a report. */
+  reportedBy?: string;
   /** The files it starts with, as they are got. */
   initialFiles?: (
     add: (file: Attachment) => void,
@@ -322,6 +324,7 @@ export function NewWork(props: Props) {
         <WriteStep
           request={request}
           onChange={setRequest}
+          reportedBy={props.reportedBy}
           files={files}
           setFiles={setFiles}
           attach={attach}
@@ -381,6 +384,7 @@ export function NewWork(props: Props) {
 function WriteStep(props: {
   request: string;
   onChange: (value: string) => void;
+  reportedBy?: string;
   files: Attachment[];
   setFiles: (change: (files: Attachment[]) => Attachment[]) => void;
   attach: Attach;
@@ -418,6 +422,12 @@ function WriteStep(props: {
             }
           }}
         />
+        {props.reportedBy && (
+          <p className="nw-reported">
+            {props.reportedBy} wrote this in Slack. Read all of it, and take out
+            anything that isn’t about the problem: workers act on what is here.
+          </p>
+        )}
         <div className="nw-attach">
           <AttachButton attach={props.attach} label="Attach files" />
           <span>
