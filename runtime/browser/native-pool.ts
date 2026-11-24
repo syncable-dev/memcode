@@ -65,13 +65,16 @@ export class NativeBrowserPool {
                 "worker-" +
                 createHash("sha256").update(taskId).digest("hex").slice(0, 40),
             });
+            // The browser ends with its last page. A page opened after that is in a new
+            // one, which the connection to the old one never shows.
+            if (this.endpoint !== created.endpoint) this.opening = undefined;
+            this.endpoint = created.endpoint;
             this.opening ??= (async () => {
               const { chromium } = await import("playwright-core");
               const browser = await chromium.connectOverCDP(created.endpoint, {
                 timeout: 15000,
               });
               this.browser = browser;
-              this.endpoint = created.endpoint;
               // WebView2 replaces a new-window controller's initial WebContents.
               // Playwright's existing auto-attach session can retain that dead
               // initial target. Discover the committed replacement, then attach a
@@ -93,6 +96,7 @@ export class NativeBrowserPool {
                 discover: true,
               });
               browser.once("disconnected", () => {
+                if (this.browser !== browser) return;
                 this.browser = undefined;
                 this.opening = undefined;
               });

@@ -32,6 +32,14 @@ pub fn profile_dir<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<std::path::P
         .join("webview"))
 }
 
+/// Where workers' pages keep theirs, apart from MemCode's own views.
+#[cfg(windows)]
+pub fn worker_pages_dir<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+) -> Result<std::path::PathBuf, String> {
+    Ok(profile_dir(app)?.with_file_name("webview-workers"))
+}
+
 pub fn main_origin(url: &Url) -> bool {
     matches!(
         (url.scheme(), url.host_str()),
@@ -308,6 +316,10 @@ async fn show_preview(app: &AppHandle, input: Value) -> Result<(), String> {
             .on_download(|_,_|false)
             .on_document_title_changed(move |view,title|{let _=titles.emit_to(tauri::EventTarget::Webview {label:"main".into()},"preview:event",json!({"url":view.url().ok().map(|url|url.to_string()).unwrap_or_default(),"title":title}));})
             .on_page_load(move |view,payload|{let _=pages.emit_to(tauri::EventTarget::Webview {label:"main".into()},"preview:event",json!({"url":payload.url().to_string(),"title":"Local preview","event":format!("{:?}",payload.event()),"view":view.label()}));});
+        let builder = match app.state::<crate::browser::BrowserState>().app_arguments() {
+            Some(arguments) => builder.additional_browser_args(&arguments),
+            None => builder,
+        };
         window
             .add_child(
                 builder,

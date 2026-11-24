@@ -3,27 +3,36 @@
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager};
 
+/// What wry itself passes to WebView2. Giving arguments replaces these, so they are kept.
+const WEBVIEW_ARGUMENTS: &str =
+    "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection";
+const DEVELOPER_ARGUMENTS: &str = "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS";
+
+/// How MemCode's own views are started, apart from workers' pages.
 pub struct BrowserState {
-    pub port: u16,
+    developer: Option<String>,
 }
 impl BrowserState {
-    pub fn new() -> Self {
-        let arguments = std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").unwrap_or_default();
-        let existing = arguments.split_whitespace().find_map(|part| {
-            part.strip_prefix("--remote-debugging-port=")
-                .and_then(|value| value.parse::<u16>().ok())
-        });
-        let port = existing.filter(|port| *port != 0).unwrap_or_else(|| {
-            std::net::TcpListener::bind(("127.0.0.1", 0))
-                .expect("Could not reserve local browser control port")
-                .local_addr()
-                .unwrap()
-                .port()
-        });
-        if existing.filter(|port| *port != 0).is_none() {
-            std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", format!("{arguments} --remote-debugging-port={port} --remote-debugging-address=127.0.0.1"));
+    /// Takes the WebView2 arguments a developer or a test set out of the environment, before
+    /// anything else starts. WebView2 would give them to every view of this process, workers'
+    /// pages included, and every program MemCode starts would inherit them. Only a development
+    /// build or a profile of its own may have them: whoever can talk to a debugging port of the
+    /// main window can do all that MemCode can.
+    pub fn take() -> Self {
+        let set = std::env::var(DEVELOPER_ARGUMENTS).ok();
+        std::env::remove_var(DEVELOPER_ARGUMENTS);
+        let allowed =
+            cfg!(debug_assertions) || std::env::var_os("MEMCODE_DATA_DIR").is_some();
+        Self {
+            developer: set.filter(|set| allowed && !set.trim().is_empty()),
         }
-        Self { port }
+    }
+
+    /// The arguments for MemCode's own views, when they differ from wry's. All of them share
+    /// one browser, so all of them need the same.
+    pub fn app_arguments(&self) -> Option<String> {
+        let developer = self.developer.as_deref()?;
+        Some(format!("{WEBVIEW_ARGUMENTS} {developer}"))
     }
 }
 
@@ -44,7 +53,7 @@ mod windows {
         },
         NewWindowRequestedEventHandler,
     };
-    use wry::{WebView, WebViewBuilder, WebViewBuilderExtWindows, WebViewExtWindows};
+    use wry::{WebContext, WebView, WebViewBuilder, WebViewBuilderExtWindows, WebViewExtWindows};
     struct Surface {
         owner: String,
         view: WebView,
@@ -125,14 +134,25 @@ mod windows {
                 || (url.scheme() == "http"
                     && matches!(host, "localhost" | "127.0.0.1" | "[::1]" | "::1")))
     }
+    /// Workers' pages run in a browser of their own, apart from MemCode's window: they are the
+    /// only ones the runtime drives over a debugging port, and a program that finds that port
+    /// must not reach the window. The browser, and its port, are there only while a page is.
+    fn worker_pages(context: &mut WebContext) -> WebViewBuilder<'_> {
+        WebViewBuilder::new_with_web_context(context).with_additional_browser_args(format!(
+            "{WEBVIEW_ARGUMENTS} --remote-debugging-port=0"
+        ))
+    }
+
+    /// A page in the browser of workers' pages. A popup is made in its opener's environment.
+    /// Answers with the browser's process id.
     fn create(
         app: &AppHandle,
         owner: String,
         id: String,
         profile: String,
-        environment: ICoreWebView2Environment,
-        popup: bool,
-    ) -> Result<Value, String> {
+        opener: Option<ICoreWebView2Environment>,
+    ) -> Result<u32, String> {
+        let popup = opener.is_some();
         let window = app.get_window("main").ok_or("Main window is unavailable")?;
         let busy = Rc::new(RefCell::new(InputWindows::default()));
         let input_busy = busy.clone();
@@ -146,14 +166,12 @@ mod windows {
             serde_json::to_string(&owner).unwrap(),
             popup
         );
-        let builder = WebViewBuilder::new()
-            .with_environment(environment)
-            .with_profile_name(profile);
-        let builder = if popup {
-            builder
-        } else {
-            builder.with_url(format!("about:blank#memcode-{id}"))
-        };
+        let mut context = WebContext::new(Some(crate::native::worker_pages_dir(app)?));
+        let builder = match opener {
+            Some(environment) => WebViewBuilder::new().with_environment(environment),
+            None => worker_pages(&mut context).with_url(marker(&id)),
+        }
+        .with_profile_name(profile);
         let view = builder
             .with_visible(false)
             .with_focused(false)
@@ -199,6 +217,13 @@ mod windows {
             .build_as_child(&window)
             .map_err(|e| e.to_string())?;
         install_popup_handler(app, &view, owner.clone(), popup_profile)?;
+        let mut browser = 0;
+        unsafe {
+            view.controller()
+                .CoreWebView2()
+                .and_then(|core| core.BrowserProcessId(&mut browser))
+                .map_err(|e| e.to_string())?;
+        }
         SURFACES.with(|surfaces| {
             surfaces.borrow_mut().insert(
                 id.clone(),
@@ -217,9 +242,11 @@ mod windows {
                 },
             )
         });
-        Ok(
-            json!({"nativeId":id,"marker":format!("about:blank#memcode-{id}"),"endpoint":format!("http://127.0.0.1:{}",app.state::<BrowserState>().port)}),
-        )
+        Ok(browser)
+    }
+
+    fn marker(id: &str) -> String {
+        format!("about:blank#memcode-{id}")
     }
 
     fn install_popup_handler(
@@ -279,8 +306,7 @@ mod windows {
                                     popup.owner,
                                     id.clone(),
                                     popup.profile,
-                                    popup.environment,
-                                    true,
+                                    Some(popup.environment),
                                 )?;
                                 let core = SURFACES.with(|surfaces| {
                                     surfaces
@@ -329,18 +355,20 @@ mod windows {
                 return Err("Invalid browser profile".into());
             }
             let id = format!("native-{}", NEXT.fetch_add(1, Ordering::Relaxed));
-            let main = app.get_webview("main").ok_or("Main view is unavailable")?;
-            main.with_webview(move |platform| {
-                let _ = tx.send(create(
-                    &app,
-                    owner,
-                    id,
-                    profile,
-                    platform.environment(),
-                    false,
-                ));
+            let (made, created) = tokio::sync::oneshot::channel();
+            let (main, page) = (app.clone(), id.clone());
+            app.run_on_main_thread(move || {
+                let _ = made.send(create(&main, owner, page, profile, None));
             })
             .map_err(|e| e.to_string())?;
+            let browser = tokio::time::timeout(std::time::Duration::from_secs(20), created)
+                .await
+                .map_err(|_| "Native browser operation timed out")?
+                .map_err(|_| "Native browser operation closed")??;
+            let port = crate::browser_port::of(browser).await?;
+            return Ok(
+                json!({"nativeId":id,"marker":marker(&id),"endpoint":format!("http://127.0.0.1:{port}")}),
+            );
         } else if method == "browser_capture" {
             let generation = NEXT.fetch_add(1, Ordering::Relaxed);
             let cleanup_id = input["nativeId"]
@@ -496,5 +524,25 @@ pub async fn call(app: AppHandle, method: &str, input: Value) -> Result<Value, S
     {
         let _ = (app, method, input);
         Err("The shared native browser requires Windows WebView2 or macOS WebKit".into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BrowserState, DEVELOPER_ARGUMENTS};
+
+    #[test]
+    fn a_debugging_port_is_taken_out_of_the_environment_and_stays_out_of_workers_pages() {
+        std::env::set_var(DEVELOPER_ARGUMENTS, "--remote-debugging-port=9");
+        let state = BrowserState::take();
+        assert!(std::env::var_os(DEVELOPER_ARGUMENTS).is_none());
+        // A development build, as tests are, may have it for its own window.
+        let arguments = state.app_arguments().unwrap();
+        assert!(arguments.contains("msSmartScreenProtection"), "{arguments}");
+        assert!(arguments.ends_with(" --remote-debugging-port=9"), "{arguments}");
+
+        std::env::set_var(DEVELOPER_ARGUMENTS, " ");
+        assert_eq!(BrowserState::take().app_arguments(), None);
+        assert_eq!(BrowserState::take().app_arguments(), None);
     }
 }
