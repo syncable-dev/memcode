@@ -1,14 +1,14 @@
 {
   "bundles": {
     "macos-aarch64": {
-      "id": "3a87836d4-beta.1-devid-9817c16c6d02",
+      "id": "272f8cf92-beta.1-devid-64a980fbbf5b",
       "engineVersion": "1.2.22",
       "purpose": "memcode-engine-beta",
       "platform": "macos",
       "arch": "aarch64",
-      "url": "https://d12b8r6xagt10r.cloudfront.net/releases/memtrace-engine/3a87836d4/3a87836d4-beta.1-devid-9817c16c6d02-macos-aarch64-9817c16c6d027910.zip",
-      "sha256": "9817c16c6d0279102286678d13f03e17b74430f5fd09f4f626806213a18eb2d9",
-      "bytes": 73925969,
+      "url": "https://d12b8r6xagt10r.cloudfront.net/releases/memtrace-engine/272f8cf92/272f8cf92-beta.1-devid-64a980fbbf5b-macos-aarch64-64a980fbbf5ba075.zip",
+      "sha256": "64a980fbbf5ba0753369f0c3a1a66630f835f290fb8a1da6ad2357a727914d87",
+      "bytes": 74016210,
       "files": [
         {
           "name": "BETA-USAGE.txt",
@@ -17,8 +17,8 @@
         },
         {
           "name": "ENGINE-PROVENANCE.json",
-          "sha256": "448db11cc05729b97d715af3c59e8a68da11fa9f0e7562d0c4d94a80592db527",
-          "bytes": 2101
+          "sha256": "cd3ea4153648b0937b5a7346c22a975750711a3ef9ff278be2249212971974ba",
+          "bytes": 3342
         },
         {
           "name": "LICENSE",
@@ -42,40 +42,40 @@
         },
         {
           "name": "memcore-server",
-          "sha256": "9a9aa7e5a6e33d0edb0995b94af4ba00bcdb961073a0099aff1aaad8118d0c0a",
+          "sha256": "a1f73fe51d3cdc5dd484779f266087c1b84d9c0b289d31834cd22f25aab7fc40",
           "bytes": 22436656
         },
         {
           "name": "memcortex-daemon",
-          "sha256": "6dd791842c7555ee8a78c24aadd0abefcdce57b3533af97d887c44ebc8bad73c",
+          "sha256": "f994edc59ae1ce4fa18e25f3f5c3a4de83f7a26d8279e52a777e5dcb75d47272",
           "bytes": 41142752
         },
         {
           "name": "memcortex-mcp",
-          "sha256": "ea82f90e5fa70c6a29fb98f27307d264a33a3336342a969872b113d96180be30",
+          "sha256": "977c34b67b74421da8f88e43ffb6c6c4af746cf8aec2e0670b48f18d2372faa1",
           "bytes": 10547184
         },
         {
           "name": "memtrace",
-          "sha256": "d2ab42bc20a3613574dc61b2dde9af87d0933522414360ec70dad2d203a767ea",
-          "bytes": 167218464
+          "sha256": "b2650806bbfafba6c2234516b632ccf41b6e417c0a9208e9178e71e60bb4e437",
+          "bytes": 167317120
         }
       ]
     },
     "windows-x86_64": {
-      "id": "3a87836d4-beta.1",
+      "id": "272f8cf92-beta.1",
       "engineVersion": "1.2.22",
       "purpose": "memcode-engine-beta",
       "platform": "windows",
       "arch": "x86_64",
-      "url": "https://d12b8r6xagt10r.cloudfront.net/releases/memtrace-engine/3a87836d4/3a87836d4-beta.1-windows-x86_64-9c01729f996e2cdf.zip",
-      "sha256": "9c01729f996e2cdfb71c64d42d1d7a2d5a63377fa84550f915814cae7ea3a3fe",
-      "bytes": 74000361,
+      "url": "https://d12b8r6xagt10r.cloudfront.net/releases/memtrace-engine/272f8cf92/272f8cf92-beta.1-windows-x86_64-51b3f51c55a926f6.zip",
+      "sha256": "51b3f51c55a926f63efa4502a915b51637a26f944c5d064b9be9fcde31ab370c",
+      "bytes": 74046796,
       "files": [
         {
           "name": "memtrace.exe",
-          "sha256": "c7420b266a8ca415a977b10af5b0134e5b895bb6f10b82eb0ae4bc026e5ed6c8",
-          "bytes": 191953920
+          "sha256": "f1853fdb82d48b2b8255097b10ee61bd8611fa8f50cbbd752e95ab250441e151",
+          "bytes": 192122880
         },
         {
           "name": "memcore-server.exe",
@@ -154,8 +154,8 @@
         },
         {
           "name": "ENGINE-PROVENANCE.json",
-          "sha256": "802dc9ea8ff0e4ebf7c2afef58e78ba413f8c41932a46e9ea561176ab8b0660c",
-          "bytes": 5650
+          "sha256": "fb2bad7695eca00ad32ce9266a888d97d3bee587099ca33ab60103fcf91c2df2",
+          "bytes": 7465
         }
       ]
     }
