@@ -9,7 +9,7 @@ import {
 // The table in MemSync's docs/08_crosscutting_concepts.md, as of 21 November 2026,
 // the four the Cards service added on 22 November (ADR-0014), and the one for a card
 // entry's readers added on 23 November (ADR-0019), and the two for linking a Slack
-// channel added on 24 November (ADR-0020).
+// channel and the one for owning too many projects added on 24 November.
 const namedByMemsync = [
   "no_such_project",
   "no_such_invitation",
@@ -18,6 +18,7 @@ const namedByMemsync = [
   "not_the_owner",
   "the_owner_cannot_leave",
   "guest_limit_reached",
+  "too_many_projects",
   "already_on_project",
   "already_invited",
   "invitation_expired",

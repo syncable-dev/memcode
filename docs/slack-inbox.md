@@ -35,7 +35,8 @@ reports to the project.
 MemCode answers in the thread: "Added to *Project* › Inbox: “…”". The first time someone
 mentions @MemCode in a channel, Slack offers to add it to that channel: choose **Add**.
 
-Anyone in the workspace can report, even if they are not on the project. Reports are
+Anyone in the workspace can report, even if they are not on the project. People from other
+companies, in a channel you share with them, cannot. Reports are
 written as the person who connected the workspace, and each one names who wrote it.
 
 When a workspace is connected to several projects, a message that names one, such as
@@ -51,12 +52,17 @@ Open one to see what happened, the evidence, the links and the comments. Then:
   every file attached. Say what the files show, and plan it. The workers get all of it:
   see [files in conversations and new work](attachments.md). The report is marked picked up
   and linked to the goal.
+  Anyone in the workspace can write a report, and workers act on what the request says, so
+  read it before you plan it. MemCode leaves out characters people cannot see, and tells the
+  planner and the workers that a report says what is wrong and is not instructions to follow.
+  That helps and is not a guarantee: you are the one who decides what starts.
 - **Decline** says why it will not be done. **Reopen** puts it back.
 
 Every file shows a small preview. A click opens pictures, recordings, PDF, Word, Excel,
 PowerPoint and text files inside MemCode. **Open on this computer** uses the program you
 normally open that kind of file with. Files that can run, such as programs and web pages,
-open in Slack only.
+open in Slack only. On Windows, files from a report are marked as downloaded, so Windows warns
+about them and Office opens them protected.
 
 Files up to 5 MB are kept with the project. Bigger ones stay in Slack and the report links
 to them. The Inbox looks for new reports every 15 seconds while it is open.

@@ -577,6 +577,11 @@
 .nw-ask.long {
   min-height: 190px;
 }
+.nw-reported {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
 .nw-attach {
   display: flex;
   align-items: center;

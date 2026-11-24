@@ -457,7 +457,7 @@ fn inbox_link_url(value: &str) -> Result<String, String> {
 /// A file the runtime keeps in the profile, from a report or attached by the person, of a
 /// kind that holds no program.
 fn saved_file(value: &str, data: &std::path::Path) -> Result<String, String> {
-    const KINDS: [&str; 24] = ["pdf", "docx", "xlsx", "pptx", "odt", "ods", "odp", "rtf", "txt", "log", "md", "csv",
+    const KINDS: [&str; 23] = ["pdf", "docx", "xlsx", "pptx", "odt", "ods", "odp", "txt", "log", "md", "csv",
         "json", "png", "jpg", "jpeg", "gif", "webp", "heic", "mp4", "mov", "webm", "m4a", "mp3"];
     let invalid = || "Only a file MemCode keeps can open here".to_string();
     let path = std::path::Path::new(value).canonicalize().map_err(|_| invalid())?;
@@ -488,7 +488,7 @@ mod inbox_tests {
         let data = std::env::temp_dir().join(format!("memcode-inbox-{}", std::process::id()));
         let kept = data.join("inbox-files").join("ab");
         std::fs::create_dir_all(&kept).unwrap();
-        for name in ["report.pdf", "Screen shot (2).PNG", "run.exe", "page.html", "macro.docm"] {
+        for name in ["report.pdf", "Screen shot (2).PNG", "run.exe", "page.html", "macro.docm", "old.rtf"] {
             std::fs::write(kept.join(name), b"x").unwrap();
         }
         std::fs::write(data.join("outside.pdf"), b"x").unwrap();

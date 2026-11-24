@@ -25,6 +25,7 @@ import { CardActivity } from "./cards/activity";
 import type { WritingDevice } from "./cards/entries";
 import { LARGEST_SHARED_FILE, previewKindOf } from "./cards/files";
 import { diskName } from "../attachments";
+import { markDownloaded } from "../downloaded-mark";
 import { within } from "../local";
 import { MemsyncBoards, type BoardsApi } from "./memsync/boards-api";
 import { MemsyncCards, type CardsApi } from "./memsync/cards-api";
@@ -723,12 +724,7 @@ export class Sharing {
     );
     await mkdir(folder, { recursive: true });
     await writeFile(path, content);
-    // Windows then warns about it, and Office opens it protected, like a download.
-    if (process.platform === "win32")
-      await writeFile(
-        `${path}:Zone.Identifier`,
-        "[ZoneTransfer]\r\nZoneId=3\r\n",
-      ).catch(() => {});
+    await markDownloaded(path);
   }
 
   /** Opens a file a report brought in this computer's own program for it. */

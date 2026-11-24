@@ -21,6 +21,7 @@ import {
 import { artifactTypeLabel } from "../src/artifact-format";
 import type { Message } from "../src/shared";
 import { documentText, MOST_DOCUMENT_TEXT } from "./document-text";
+import { markDownloaded } from "./downloaded-mark";
 
 const hash = z.string().regex(/^[0-9a-f]{64}$/);
 
@@ -114,6 +115,8 @@ export class AttachmentStore {
     const { folder, path } = this.place({ sha256, name });
     await mkdir(folder, { recursive: true });
     await writeFile(path, bytes);
+    // Someone else wrote it. Copies for workers keep the mark.
+    if (input.from) await markDownloaded(path);
     const text =
       input.text?.trim().slice(0, MOST_DOCUMENT_TEXT) ||
       documentText(name, bytes);
