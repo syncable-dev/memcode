@@ -133,6 +133,22 @@ pub async fn host_call(app: AppHandle, method: &str, input: Value) -> Result<Val
                 .map_err(|e| e.to_string())??;
             Ok(Value::Null)
         }
+        "open_inbox_link" => {
+            let url = inbox_link_url(input["url"].as_str().ok_or("Missing link")?)?;
+            tauri::async_runtime::spawn_blocking(move || open_claim(&url))
+                .await
+                .map_err(|e| e.to_string())??;
+            Ok(Value::Null)
+        }
+        "open_saved_file" => {
+            let profile = profile_dir(&app)?;
+            let data = profile.parent().ok_or("Missing profile folder")?;
+            let path = saved_file(input["path"].as_str().ok_or("Missing file")?, data)?;
+            tauri::async_runtime::spawn_blocking(move || open_folder(&path))
+                .await
+                .map_err(|e| e.to_string())??;
+            Ok(Value::Null)
+        }
         "open_github_pull_request" => {
             let url = github_pull_request_url(input["url"].as_str().ok_or("Missing pull request URL")?)?;
             tauri::async_runtime::spawn_blocking(move || open_claim(&url))
@@ -439,6 +455,67 @@ fn slack_install_url(value: &str) -> Result<String, String> {
     if callback.scheme() != "https" || callback.path() != "/slack/oauth" || !callback.username().is_empty()
         || callback.query().is_some() || callback.fragment().is_some() { return Err(invalid()); }
     Ok(url.to_string())
+}
+
+/// A web address someone put in a report. The runtime opens only those a report holds.
+fn inbox_link_url(value: &str) -> Result<String, String> {
+    let invalid = || "Only a web link from a report can open here".to_string();
+    let url = Url::parse(value).map_err(|_| invalid())?;
+    if value.len() > 4096 || !matches!(url.scheme(), "https" | "http") || url.host_str().is_none()
+        || !url.username().is_empty() || url.password().is_some() { return Err(invalid()); }
+    Ok(url.to_string())
+}
+
+/// A file the runtime keeps in the profile, from a report or attached by the person, of a
+/// kind that holds no program.
+fn saved_file(value: &str, data: &std::path::Path) -> Result<String, String> {
+    const KINDS: [&str; 24] = ["pdf", "docx", "xlsx", "pptx", "odt", "ods", "odp", "rtf", "txt", "log", "md", "csv",
+        "json", "png", "jpg", "jpeg", "gif", "webp", "heic", "mp4", "mov", "webm", "m4a", "mp3"];
+    let invalid = || "Only a file MemCode keeps can open here".to_string();
+    let path = std::path::Path::new(value).canonicalize().map_err(|_| invalid())?;
+    let kind = path.extension().and_then(|kind| kind.to_str()).unwrap_or_default().to_ascii_lowercase();
+    let known = KINDS.contains(&kind.as_str()) || kind == "wav";
+    let kept = ["inbox-files", "attachments"].iter()
+        .filter_map(|folder| data.join(folder).canonicalize().ok())
+        .any(|folder| path.starts_with(&folder));
+    if !kept || !path.is_file() || !known { return Err(invalid()); }
+    Ok(dunce::simplified(&path).to_string_lossy().into_owned())
+}
+
+#[cfg(test)]
+mod inbox_tests {
+    use super::{inbox_link_url, saved_file};
+    #[test]
+    fn a_report_opens_web_links_and_nothing_else() {
+        for value in ["https://acme.slack.com/archives/C1/p1", "https://sentry.io/issues/4f2?a=1#b", "http://localhost:3000/cart"] {
+            assert!(inbox_link_url(value).is_ok(), "rejected {value}");
+        }
+        for value in ["file:///C:/Windows/system32/calc.exe", "javascript:alert(1)", "ms-settings:", "slack://open",
+            "https://user:pass@acme.test/", "\\\\server\\share", "C:\\a.exe", ""] {
+            assert!(inbox_link_url(value).is_err(), "accepted {value}");
+        }
+    }
+    #[test]
+    fn only_a_harmless_file_memcode_keeps_opens() {
+        let data = std::env::temp_dir().join(format!("memcode-inbox-{}", std::process::id()));
+        let kept = data.join("inbox-files").join("ab");
+        std::fs::create_dir_all(&kept).unwrap();
+        for name in ["report.pdf", "Screen shot (2).PNG", "run.exe", "page.html", "macro.docm"] {
+            std::fs::write(kept.join(name), b"x").unwrap();
+        }
+        std::fs::write(data.join("outside.pdf"), b"x").unwrap();
+        let path = |name: &str| kept.join(name).to_string_lossy().into_owned();
+        assert!(saved_file(&path("report.pdf"), &data).is_ok());
+        assert!(saved_file(&path("Screen shot (2).PNG"), &data).is_ok());
+        let attached = data.join("attachments").join("cd");
+        std::fs::create_dir_all(&attached).unwrap();
+        std::fs::write(attached.join("plan.pptx"), b"x").unwrap();
+        assert!(saved_file(&attached.join("plan.pptx").to_string_lossy(), &data).is_ok());
+        for name in ["run.exe", "page.html", "macro.docm", "missing.pdf", "../../outside.pdf"] {
+            assert!(saved_file(&path(name), &data).is_err(), "accepted {name}");
+        }
+        std::fs::remove_dir_all(&data).unwrap();
+    }
 }
 
 fn memcode_beta_url(value: &str) -> Result<String, String> {

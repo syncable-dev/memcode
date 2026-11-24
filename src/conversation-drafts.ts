@@ -1,7 +1,22 @@
+import type { Attachment } from "./attachments";
+
 export interface ConversationDraft {
   draft: string;
   comments: string[];
+  /** Files put into the draft. They are kept already; only which ones is remembered here. */
+  files?: Attachment[];
 }
+
+const readFiles = (value: unknown): Attachment[] =>
+  Array.isArray(value)
+    ? value.filter(
+        (file): file is Attachment =>
+          !!file &&
+          typeof file.id === "string" &&
+          typeof file.name === "string" &&
+          typeof file.sha256 === "string",
+      )
+    : [];
 
 type DraftStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
@@ -18,6 +33,9 @@ function parsedDraft(value: string | null): ConversationDraft | undefined {
       comments: Array.isArray(record.comments)
         ? record.comments.filter((id): id is string => typeof id === "string")
         : [],
+      ...(readFiles(record.files).length
+        ? { files: readFiles(record.files) }
+        : {}),
     };
   } catch {}
 }
@@ -51,7 +69,7 @@ export class ConversationDrafts {
     try {
       const storage = this.storage();
       const key = "memcode:conversation-draft:" + taskId;
-      if (value.draft || value.comments.length)
+      if (value.draft || value.comments.length || value.files?.length)
         storage?.setItem(key, JSON.stringify(value));
       else storage?.removeItem(key);
       storage?.removeItem("memcode:connection-draft:" + taskId);
@@ -68,9 +86,20 @@ export class ConversationDrafts {
       current.comments.length === submitted.comments.length &&
       current.comments.every((id, index) => id === submitted.comments[index]);
     const comments = sameComments ? [] : current.comments;
-    if (draft === current.draft && comments.length === current.comments.length)
+    // A file added while the message was on its way stays for the next one.
+    const sent = new Set((submitted.files ?? []).map((file) => file.id));
+    const files = (current.files ?? []).filter((file) => !sent.has(file.id));
+    if (
+      draft === current.draft &&
+      comments.length === current.comments.length &&
+      files.length === (current.files?.length ?? 0)
+    )
       return false;
-    this.write(taskId, { draft, comments });
+    this.write(taskId, {
+      draft,
+      comments,
+      ...(files.length ? { files } : {}),
+    });
     return true;
   }
 }

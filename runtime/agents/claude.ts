@@ -13,6 +13,7 @@ import type {
   WorkerInputResponse,
 } from "../../src/worker-input";
 import type { AgentSession, AgentSessionOptions } from "./types";
+import { imageData } from "../attachments";
 import { withoutPermissionArgs } from "./permissions";
 import { ClaudeMeasurements } from "./claude-measurements";
 import { assertCalibratedConfiguration } from "./calibrated-config";
@@ -412,7 +413,7 @@ function runClaudeSession(options: AgentSessionOptions, inspect?: (models: Model
         type: "user",
         session_id: resumeId ?? "",
         parent_tool_use_id: null,
-        message: { role: "user", content: options.prompt },
+        message: { role: "user", content: claudeContent(options) },
       });
       activity("Claude is working", "working");
       return;
@@ -626,4 +627,28 @@ function runClaudeSession(options: AgentSessionOptions, inspect?: (models: Model
       terminate();
     },
   };
+}
+
+/** The prompt, with the request's images when there are any that can be read. */
+export function claudeContent(
+  options: Pick<AgentSessionOptions, "prompt" | "images">,
+) {
+  const images = (options.images ?? []).flatMap((image) => {
+    const data = imageData(image);
+    return data
+      ? [
+          {
+            type: "image" as const,
+            source: {
+              type: "base64" as const,
+              media_type: image.mime,
+              data,
+            },
+          },
+        ]
+      : [];
+  });
+  return images.length
+    ? [{ type: "text" as const, text: options.prompt }, ...images]
+    : options.prompt;
 }

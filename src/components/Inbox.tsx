@@ -1,26 +1,30 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ExternalLink,
-  FileText,
   Hash,
   Inbox as InboxIcon,
+  MessageSquare,
   RotateCcw,
   X,
 } from "lucide-react";
 import type { Project } from "../shared";
-import type {
-  InboxFile,
-  InboxItem,
-  InboxState,
-  ProjectInbox,
+import {
+  commentsSince,
+  filesOf,
+  lastActivity,
+  type InboxItem,
+  type InboxReply,
+  type InboxState,
+  type ProjectInbox,
 } from "../inbox";
+import { InboxEvidence } from "./InboxEvidence";
 import { Empty, Spinner, Time } from "./UI";
 import "../styles-inbox.css";
 
 interface Props {
   project: Project;
-  /** Whether the project is shared through MemSync; only a shared one has an Inbox. */
-  shared: boolean;
+  /** Opens Settings › Integrations, where Slack is connected. */
+  onConnectSlack: () => void;
   onDefineGoal: (item: InboxItem) => void;
   notify: (message: string) => void;
 }
@@ -38,35 +42,49 @@ const howBadNames = {
   annoying: "Annoying",
   idea: "An idea",
 } as const;
-const notKeptNames = {
-  too_big: "Too big to copy. Open it in Slack.",
-  no_room: "The project's files are full. Open it in Slack.",
-  unreadable: "Slack did not hand it over. Open it in Slack.",
-} as const;
+const count = (many: number, one: string) =>
+  `${many} ${one}${many === 1 ? "" : "s"}`;
 
-const size = (bytes: number) =>
-  bytes >= 1024 * 1024
-    ? `${(bytes / 1024 / 1024).toFixed(1)} MB`
-    : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+const SEEN = "memcode.inbox.seen";
+/** When each report was last looked at on this computer. Only marks what is new. */
+function seenReports(): Record<string, string> {
+  try {
+    const kept = JSON.parse(localStorage.getItem(SEEN) ?? "{}");
+    return kept && typeof kept === "object" ? kept : {};
+  } catch {
+    return {};
+  }
+}
+function rememberSeen(id: string, at: string) {
+  try {
+    localStorage.setItem(SEEN, JSON.stringify({ ...seenReports(), [id]: at }));
+  } catch {
+    // Nothing is lost: a comment may be marked new once more.
+  }
+}
 
 /** Reports people sent from Slack, waiting for someone to pick them up. */
 export function Inbox(props: Props) {
-  const { project, shared, notify } = props;
+  const { project, notify } = props;
   const [inbox, setInbox] = useState<ProjectInbox | null>(null);
   const [problem, setProblem] = useState("");
   const [filter, setFilter] = useState<InboxState>("new");
   const [selectedId, setSelectedId] = useState<string>();
   const [busy, setBusy] = useState(false);
+  const [seen, setSeen] = useState(seenReports);
+  const look = useCallback((id: string, at: string) => {
+    rememberSeen(id, at);
+    setSeen((known) => ({ ...known, [id]: at }));
+  }, []);
 
   const load = useCallback(async () => {
-    if (!shared) return;
     try {
       setInbox(await window.memcode.projectInbox(project.id));
       setProblem("");
     } catch (error) {
       setProblem((error as Error).message);
     }
-  }, [project.id, shared]);
+  }, [project.id]);
 
   useEffect(() => {
     setInbox(null);
@@ -101,13 +119,29 @@ export function Inbox(props: Props) {
     return counted;
   }, [items]);
 
-  if (!shared)
+  // Slack was never connected, or it was and nobody has reported anything.
+  const unused =
+    inbox &&
+    !inbox.channelsUnavailable &&
+    !inbox.items.length &&
+    !inbox.workspaces.length &&
+    !inbox.channels.length;
+  if (unused)
     return (
       <div className="inbox-page">
         <Empty
           icon={<InboxIcon size={20} />}
-          title="Share this project to get reports from Slack"
-          description="The Inbox belongs to a shared project. Choose Share at the top of the workspace. Then someone on the project can link a Slack channel, and what people report there lands here."
+          title="Get problem reports from Slack"
+          description="Connect Slack, then mention @MemCode in any channel. What people report there lands here, with their screenshots and files."
+          action={
+            <button
+              type="button"
+              className="button primary"
+              onClick={props.onConnectSlack}
+            >
+              Connect Slack
+            </button>
+          }
         />
       </div>
     );
@@ -137,6 +171,12 @@ export function Inbox(props: Props) {
                   }}
                 >
                   {stateNames[state]} <span>{counts[state]}</span>
+                  {items.some(
+                    (item) =>
+                      item.state === state &&
+                      item.id !== selected?.id &&
+                      commentsSince(item, seen[item.id]).length > 0,
+                  ) && <i className="inbox-dot" aria-label="New comments" />}
                 </button>
               ))}
             </div>
@@ -147,25 +187,39 @@ export function Inbox(props: Props) {
                   : `No ${stateNames[filter].toLowerCase()} reports.`}
               </p>
             )}
-            {shown.map((item) => (
-              <button
-                key={item.id}
-                className={
-                  "inbox-row " + (selected?.id === item.id ? "selected" : "")
-                }
-                onClick={() => setSelectedId(item.id)}
-              >
-                <strong>{item.title}</strong>
-                <span>
-                  {item.reporter.name} · <Time at={item.reportedAt} />
-                  {item.files.length > 0 && ` · ${item.files.length} files`}
-                  {item.alsoHit.length > 0 && ` · +${item.alsoHit.length}`}
-                </span>
-                {item.howBad === "blocked" && (
-                  <em className="inbox-chip urgent">Blocked</em>
-                )}
-              </button>
-            ))}
+            {shown.map((item) => {
+              const fresh =
+                item.id === selected?.id
+                  ? 0
+                  : commentsSince(item, seen[item.id]).length;
+              const files = filesOf(item).length;
+              return (
+                <button
+                  key={item.id}
+                  className={
+                    "inbox-row " + (selected?.id === item.id ? "selected" : "")
+                  }
+                  onClick={() => setSelectedId(item.id)}
+                >
+                  <strong>{item.title}</strong>
+                  <span>
+                    {item.reporter.name} · <Time at={item.reportedAt} />
+                    {files > 0 && ` · ${count(files, "file")}`}
+                    {item.replies.length > 0 &&
+                      ` · ${count(item.replies.length, "comment")}`}
+                    {item.alsoHit.length > 0 && ` · +${item.alsoHit.length}`}
+                  </span>
+                  {fresh > 0 && (
+                    <span className="inbox-fresh">
+                      <MessageSquare size={11} /> {count(fresh, "new comment")}
+                    </span>
+                  )}
+                  {item.howBad === "blocked" && (
+                    <em className="inbox-chip urgent">Blocked</em>
+                  )}
+                </button>
+              );
+            })}
           </section>
           {selected ? (
             <Report
@@ -173,6 +227,8 @@ export function Inbox(props: Props) {
               item={selected}
               project={project}
               inbox={inbox}
+              notify={notify}
+              onLook={look}
               busy={busy}
               onDefineGoal={() => props.onDefineGoal(selected)}
               onDecline={(reason) =>
@@ -222,13 +278,18 @@ function SlackChannels({ inbox }: { inbox: ProjectInbox | null }) {
           </span>
         ))}
         {inbox.channels.map((channel) => (
-          <span key={channel.teamId + channel.channelId} className="inbox-channel">
+          <span
+            key={channel.teamId + channel.channelId}
+            className="inbox-channel"
+          >
             <Hash size={12} />
             {channel.channelName}
           </span>
         ))}
       </div>
-      <span className="inbox-channels-note">Manage in Settings › Integrations</span>
+      <span className="inbox-channels-note">
+        Manage in Settings › Integrations
+      </span>
     </section>
   );
 }
@@ -241,8 +302,23 @@ function Report(props: {
   onDefineGoal: () => void;
   onDecline: (reason: string) => void;
   onReopen: () => void;
+  /** The report was looked at, with everything written about it until then. */
+  onLook: (id: string, at: string) => void;
+  notify: (message: string) => void;
 }) {
-  const { item } = props;
+  const { item, onLook } = props;
+  // What was new when it was opened stays marked while it is open.
+  const [seenBefore] = useState(() => seenReports()[item.id]);
+  const fresh = new Set(commentsSince(item, seenBefore));
+  const latest = lastActivity(item);
+  useEffect(() => onLook(item.id, latest), [item.id, latest, onLook]);
+  // The window itself never leaves MemCode: a link opens in the person's browser.
+  const openLink = (url: string) => (event: React.MouseEvent) => {
+    event.preventDefault();
+    window.memcode
+      .openInboxLink({ projectId: props.project.id, url })
+      .catch((error) => props.notify((error as Error).message));
+  };
   const [declining, setDeclining] = useState(false);
   const [reason, setReason] = useState("");
   const channel = props.inbox.channels.find(
@@ -251,9 +327,7 @@ function Report(props: {
   return (
     <section className="inbox-report" aria-label={item.title}>
       <div className="inbox-chips">
-        <em className={"inbox-chip " + item.state}>
-          {stateNames[item.state]}
-        </em>
+        <em className={"inbox-chip " + item.state}>{stateNames[item.state]}</em>
         {item.howBad && (
           <em
             className={
@@ -276,7 +350,7 @@ function Report(props: {
         {item.permalink && (
           <>
             {" · "}
-            <a href={item.permalink} target="_blank" rel="noreferrer">
+            <a href={item.permalink} onClick={openLink(item.permalink)}>
               Open in Slack <ExternalLink size={11} />
             </a>
           </>
@@ -301,15 +375,11 @@ function Report(props: {
       {item.files.length > 0 && (
         <>
           <h3>Evidence</h3>
-          <div className="inbox-files">
-            {item.files.map((file, index) => (
-              <Evidence
-                key={index + file.name}
-                file={file}
-                projectId={props.project.id}
-              />
-            ))}
-          </div>
+          <InboxEvidence
+            files={item.files}
+            projectId={props.project.id}
+            notify={props.notify}
+          />
         </>
       )}
       {item.links.length > 0 && (
@@ -318,7 +388,7 @@ function Report(props: {
           <ul className="inbox-links">
             {item.links.map((link) => (
               <li key={link}>
-                <a href={link} target="_blank" rel="noreferrer">
+                <a href={link} onClick={openLink(link)}>
                   {link}
                 </a>
               </li>
@@ -328,12 +398,21 @@ function Report(props: {
       )}
       {item.replies.length > 0 && (
         <>
-          <h3>In the thread</h3>
-          {item.replies.map((reply, index) => (
-            <p key={index} className="inbox-reply">
-              <strong>{reply.author.name}</strong> {reply.text}
-            </p>
-          ))}
+          <h3>
+            Thread in Slack <span>{count(item.replies.length, "comment")}</span>
+          </h3>
+          <ol className="inbox-thread">
+            {item.replies.map((reply, index) => (
+              <Comment
+                key={reply.writtenAt + index}
+                reply={reply}
+                isNew={fresh.has(reply)}
+                projectId={props.project.id}
+                openLink={openLink}
+                notify={props.notify}
+              />
+            ))}
+          </ol>
         </>
       )}
       <div className="inbox-actions">
@@ -398,41 +477,64 @@ function Report(props: {
   );
 }
 
-/** One file a report brought: a picture is shown, anything else named. */
-function Evidence({ file, projectId }: { file: InboxFile; projectId: string }) {
-  const [picture, setPicture] = useState<string>();
-  const isPicture = file.mime.startsWith("image/") && !!file.sha256;
-  useEffect(() => {
-    if (!isPicture || !file.sha256) return;
-    let current = true;
-    window.memcode
-      .inboxFile({ projectId, sha256: file.sha256 })
-      .then(({ base64 }) => {
-        if (current) setPicture(`data:${file.mime};base64,${base64}`);
-      })
-      .catch(() => undefined);
-    return () => {
-      current = false;
-    };
-  }, [file.mime, file.sha256, isPicture, projectId]);
+const initials = (name: string) =>
+  name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]!.toUpperCase())
+    .join("") || "?";
+
+/** One comment someone wrote in the report's Slack thread. */
+function Comment({
+  reply,
+  isNew,
+  projectId,
+  openLink,
+  notify,
+}: {
+  reply: InboxReply;
+  isNew: boolean;
+  projectId: string;
+  openLink: (url: string) => (event: React.MouseEvent) => void;
+  notify: (message: string) => void;
+}) {
   return (
-    <figure className="inbox-file">
-      {picture ? (
-        <a href={file.slackUrl} target="_blank" rel="noreferrer">
-          <img src={picture} alt={file.name} />
-        </a>
-      ) : (
-        <div className="inbox-file-kind">
-          <FileText size={18} />
-        </div>
-      )}
-      <figcaption>
-        <a href={file.slackUrl} target="_blank" rel="noreferrer">
-          {file.name}
-        </a>
-        <span>{size(file.size)}</span>
-        {file.notKept && <small>{notKeptNames[file.notKept]}</small>}
-      </figcaption>
-    </figure>
+    <li className={"inbox-comment " + (isNew ? "new" : "")}>
+      <span className="inbox-avatar" aria-hidden="true">
+        {initials(reply.author.name)}
+      </span>
+      <div>
+        <header>
+          <strong>{reply.author.name}</strong>
+          <span>
+            {reply.text
+              ? "commented"
+              : `added ${count(reply.files.length, "file")}`}{" "}
+            · <Time at={reply.writtenAt} />
+          </span>
+          {isNew && <em className="inbox-chip new">New comment</em>}
+        </header>
+        {reply.text && <p>{reply.text}</p>}
+        {reply.files.length > 0 && (
+          <InboxEvidence
+            files={reply.files}
+            projectId={projectId}
+            notify={notify}
+          />
+        )}
+        {reply.links.length > 0 && (
+          <ul className="inbox-links">
+            {reply.links.map((link) => (
+              <li key={link}>
+                <a href={link} onClick={openLink(link)}>
+                  {link}
+                </a>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </li>
   );
 }

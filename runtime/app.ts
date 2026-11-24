@@ -9,6 +9,7 @@ import {
 } from "node:fs/promises";
 import {
   basename,
+  dirname,
   join,
   resolve,
   isAbsolute,
@@ -36,6 +37,12 @@ import { deleteProject, registerDeletion } from "./deletion";
 import { tellPerson } from "./notices";
 import { registerBranches } from "./branches";
 import { readArtifactThumbnail } from "./artifact-thumbnail";
+import {
+  AttachmentStore,
+  attachmentsSchema,
+  keptFileSchema,
+} from "./attachments";
+import { OPENABLE } from "../src/inbox";
 import { reconcileArtifacts } from "./artifact-catalog";
 import { WorkerManager } from "./workers";
 import { PreviewManager } from "./preview";
@@ -185,6 +192,25 @@ export async function createRuntime(
   const store = new LocalStore(dataDir);
   await store.load();
   const state = () => store.state;
+  const attachments = new AttachmentStore(store.dir);
+  void attachments
+    .removeUnused(
+      new Set(
+        store.state.tasks.flatMap((item) =>
+          item.messages.flatMap((message) =>
+            (message.attachments ?? []).map((file) => file.sha256),
+          ),
+        ),
+      ),
+    )
+    .catch(() => {});
+  /** Where in the window something is shown. */
+  const viewBounds = z.object({
+    x: z.number().int().min(0),
+    y: z.number().int().min(0),
+    width: z.number().int().min(1),
+    height: z.number().int().min(1),
+  });
   let beta: MemCodeBeta | undefined;
   let betaNeedsAnalysis = false;
   let betaReady = false;
@@ -338,6 +364,7 @@ export async function createRuntime(
       },
       (item) => codeReviews?.occupiedSlots(item) ?? 0,
       (id) => analyze(id),
+      attachments,
     ),
     preview = new PreviewManager(
       host,
@@ -792,6 +819,11 @@ export async function createRuntime(
   // Sharing shows memtrace.io the same session, and holds no credential of its own.
   sharing = new Sharing({
     openSlackInstall: (url) => host.call("open_slack_install", { url }),
+    inboxFiles: {
+      folder: join(store.dir, "inbox-files"),
+      openFile: (path) => host.call("open_saved_file", { path }),
+      openLink: (url) => host.call("open_inbox_link", { url }),
+    },
     state,
     changed,
     projectGone: async (link) => {
@@ -1292,10 +1324,12 @@ export async function createRuntime(
         id: identifier,
         text: nonempty.max(20000),
         references: z.array(reviewReferenceSchema).max(8).optional(),
+        attachments: attachmentsSchema.optional(),
       })
       .strict(),
-    async ({ id, text, references }) => {
+    async ({ id, text, references, attachments: files }) => {
       const item = task(id);
+      await attachments.assertKept(files);
       if (references?.some((ref: ReviewReference) => ref.taskId !== id))
         throw Error("Comments must belong to this work item.");
       const body = references?.length
@@ -1311,11 +1345,48 @@ export async function createRuntime(
         text: body,
         at: now(),
         ...(references?.length ? { references } : {}),
+        ...(files?.length ? { attachments: files } : {}),
       });
       item.updatedAt = now();
       await changed();
     },
   );
+  register(
+    "attachment:add",
+    z
+      .object({
+        name: nonempty.max(500),
+        mime: z.string().max(200),
+        base64: z.string().min(1),
+        text: z.string().max(1_000_000).optional(),
+        from: z.string().max(300).optional(),
+      })
+      .strict(),
+    (input) => attachments.add(input),
+  );
+  register("attachment:read", keptFileSchema, async (file) => ({
+    base64: (await attachments.read(file)).toString("base64"),
+  }));
+  register("attachment:thumbnail", keptFileSchema, async (file) => {
+    const path = await attachments.path(file);
+    return readArtifactThumbnail({ name: file.name, path }, [dirname(path)]);
+  });
+  register(
+    "attachment:show",
+    keptFileSchema.extend({ bounds: viewBounds }),
+    async ({ bounds, ...file }) =>
+      preview.showFile({
+        path: await attachments.path(file),
+        name: file.name,
+        revision: file.sha256,
+        bounds,
+      }),
+  );
+  register("attachment:open", keptFileSchema, async (file) => {
+    if (!OPENABLE.test(file.name))
+      throw Error("MemCode does not open this kind of file.");
+    await host.call("open_saved_file", { path: await attachments.path(file) });
+  });
   register("task:qualify", identifier, (id) => assignStory(id));
   register("worker:start", identifier, async (id) => {
     const item = task(id);
@@ -1633,6 +1704,7 @@ export async function createRuntime(
       dataDir: store.dir,
       state,
       relatedFiles,
+      attachmentText: (file) => attachments.text(file),
       reviewOptions: { dshAdmission: () => dshGate.admit("plan") },
     }),
   );
@@ -1678,6 +1750,8 @@ export async function createRuntime(
     () => preview.publishComments(),
     workers,
     {
+      isElsewhere: (item) =>
+        !!sharing?.showsRunElsewhere(item.id) || !!team?.remoteSession(item.id),
       remoteSend: (item, body) => {
         // A worker a shared project's card shows from another computer gets it through the card's log.
         if (sharing?.showsRunElsewhere(item.id))
@@ -1691,6 +1765,7 @@ export async function createRuntime(
         return true;
       },
     },
+    attachments,
   );
   codeReviews = new CodeReviewManager(store.dir, state, engine, changed, {
     onSaved: (run) => team?.reviewSaved(run),
@@ -1881,10 +1956,12 @@ export async function createRuntime(
       kind: kind.optional(),
       runbook: z.array(z.string().max(2000)).max(100).optional(),
       scope: z.array(z.string().max(1000)).max(20).optional(),
+      attachments: attachmentsSchema.optional(),
       ...taskPlanningShape,
     }),
-    async (input) => {
+    async ({ attachments: files, ...input }) => {
       const parent = project(input.projectId);
+      await attachments.assertKept(files);
       if (
         input.cycleId &&
         !state().cycles.some(
@@ -1923,6 +2000,7 @@ export async function createRuntime(
             role: "user",
             text: input.description || input.title,
             at: now(),
+            ...(files?.length ? { attachments: files } : {}),
           },
         ],
         run: { state: "idle" },
@@ -2014,12 +2092,7 @@ export async function createRuntime(
       commentId: identifier.optional(),
       commentFocus: z.number().int().min(0).optional(),
       line: z.number().int().min(1).max(10000000).optional(),
-      bounds: z.object({
-        x: z.number().int().min(0),
-        y: z.number().int().min(0),
-        width: z.number().int().min(1),
-        height: z.number().int().min(1),
-      }),
+      bounds: viewBounds,
     }),
     (input) => preview.show(input),
   );
@@ -2029,6 +2102,25 @@ export async function createRuntime(
     ({ taskId, request }) => browsers.execute(taskId, request),
   );
   register("preview:hide", z.undefined(), () => preview.hide());
+  const inboxFile = z
+    .object({
+      projectId: identifier,
+      sha256: z.string().regex(/^[0-9a-f]{64}$/),
+      name: z.string().min(1).max(500),
+    })
+    .strict();
+  register("inbox:thumbnail", inboxFile, async (input) => {
+    const kept = await sharing!.keptInboxFile(input);
+    return readArtifactThumbnail(kept, [kept.folder]);
+  });
+  register(
+    "inbox:show-file",
+    inboxFile.extend({ bounds: viewBounds }),
+    async ({ bounds, ...input }) => {
+      const { path, name } = await sharing!.keptInboxFile(input);
+      await preview.showFile({ path, name, revision: input.sha256, bounds });
+    },
+  );
   register("worker:changes", identifier, async (id) => {
     if (sharing?.showsRunElsewhere(id))
       return (

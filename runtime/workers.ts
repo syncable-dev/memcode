@@ -1,7 +1,7 @@
 import { ClaudeEditJournal, recoverClaudeEdits } from "./claude-changes";
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
-import { join, dirname, resolve } from "node:path";
+import { join, dirname, resolve, relative } from "node:path";
 import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline";
 import type {
@@ -48,6 +48,7 @@ import { startHarnessSession } from "./agents";
 import { prepareWorkerAnalysis } from "./worker-analysis";
 import { WorkerStartupQueue } from "./worker-startup";
 import { workerCheckoutBrief, workerContextForPrompt, workerTurnContext } from "./worker-turn";
+import { attachmentsBrief, shownImagesOf, type AttachmentStore } from "./attachments";
 import { previousProviderSession, resumableProviderSession } from "./provider-session";
 import { effectivePermissionMode, supportsPermissionMode } from "../src/permissions";
 import type { AgentEvent } from "./agents/types";
@@ -259,6 +260,7 @@ export class WorkerManager {
     private readonly reviewStarting?: (task: WorkItem) => Promise<void>,
     private readonly reviewSlots: (task?: WorkItem) => number = () => 0,
     private readonly prepareProject?: (id: string) => Promise<void>,
+    private readonly attachments?: AttachmentStore,
   ) {
     this.inputs = new WorkerInputs(state, changed);
     for (const task of state().tasks)
@@ -1085,7 +1087,26 @@ export class WorkerManager {
       continuing();
       conversation = claimReviewContext(task.messages, now());
       await this.changed();
-      const turn = workerTurnContext(task, conversation, resumeSessionId ? 0 : 8000);
+      const laid =
+        (await this.attachments?.layOut(
+          conversation,
+          join(workspace, workerRoot, "attachments"),
+        )) ?? new Map();
+      const inCheckout = (path: string) =>
+        relative(workspace, path).replaceAll("\\", "/");
+      const turn = workerTurnContext(
+        task,
+        conversation,
+        resumeSessionId ? 0 : 8000,
+        (message) => attachmentsBrief(message.attachments, laid, inCheckout),
+      );
+      const earlierFiles = attachmentsBrief(
+        conversation
+          .filter((message) => !turn.requests.includes(message))
+          .flatMap((message) => message.attachments ?? []),
+        laid,
+        inCheckout,
+      );
       const contextForPrompt = (value: unknown) => contextConfig
         ? workerContextForPrompt(value, workspace, project.path!)
         : JSON.stringify(value);
@@ -1115,6 +1136,7 @@ export class WorkerManager {
               contextForPrompt(task.evidence)
             : "Memtrace context is not attached. Read and qualify the relevant source before changing it.",
         turn.history,
+        earlierFiles && `FROM EARLIER IN THE CONVERSATION. ${earlierFiles}`,
         turn.current,
       ]
         .filter(Boolean)
@@ -1266,6 +1288,7 @@ export class WorkerManager {
         ...(launchedHarness === "dsh" ? { dshProfile } : {}),
         permissionMode,
         prompt,
+        images: shownImagesOf(turn.requests, laid),
         briefPath,
         contextConfig,
         toolArgs: toolProfile.args,

@@ -70,7 +70,7 @@ export function Integrations({
   const [filter, setFilter] = useState<Filter>("all");
 
   const reload = useCallback(async () => {
-    if (!project || !shared) return null;
+    if (!project || project.example) return null;
     try {
       const read = await window.memcode.projectInbox(project.id);
       setInbox(read);
@@ -79,7 +79,7 @@ export function Integrations({
       notify((error as Error).message);
       return null;
     }
-  }, [project?.id, shared]);
+  }, [project?.id, project?.example]);
 
   useEffect(() => {
     setInbox(null);
@@ -230,7 +230,7 @@ function SlackPage({ context }: { context: IntegrationContext }) {
 
   const workspaces = inbox?.workspaces ?? [];
   const channels = inbox?.channels ?? [];
-  const canConnect = shared && !!inbox && !inbox.channelsUnavailable;
+  const canConnect = !!inbox && !inbox.channelsUnavailable;
 
   return (
     <article className="integration-page" aria-label="Slack">
@@ -264,18 +264,23 @@ function SlackPage({ context }: { context: IntegrationContext }) {
           itself.
         </p>
       )}
-      {!shared && (
+      {project?.example && (
         <p className="integration-note">
-          Share this project first. Slack reports go to a shared project’s Inbox, so your
-          team sees them too.
+          The example project cannot get reports. Open one of your own projects first.
         </p>
       )}
-      {shared && !inbox && (
+      {!project?.example && !shared && (
+        <p className="integration-note">
+          Reports wait for you on MemSync, so they arrive even while MemCode is closed.
+          Your board and code stay on this computer.
+        </p>
+      )}
+      {!project?.example && !inbox && (
         <p className="integration-note">
           <Spinner /> Checking the connection
         </p>
       )}
-      {shared && inbox?.channelsUnavailable && (
+      {inbox?.channelsUnavailable && (
         <p className="integration-note">The sharing service does not offer Slack yet.</p>
       )}
 
@@ -318,7 +323,8 @@ function SlackPage({ context }: { context: IntegrationContext }) {
             first time in a channel, Slack offers to add MemCode to it: choose Add.
           </li>
           <li>
-            <strong>Send to MemCode</strong> in a message’s menu opens a short form: what
+            <strong>Send to MemCode</strong>, in a message’s ⋯ menu under Connect to apps,
+            opens a short form: what
             happened, what you expected, where, how bad, and more files.
           </li>
           <li>

@@ -103,6 +103,22 @@ export function registerSharing(register: Register, sharing: Sharing) {
       .strict(),
     (input) => sharing.inboxFile(input),
   );
+  register(
+    "sharing:open-inbox-file",
+    z
+      .object({
+        projectId: id,
+        sha256: z.string().regex(/^[0-9a-f]{64}$/),
+        name: z.string().min(1).max(500),
+      })
+      .strict(),
+    (input) => sharing.openInboxFile(input),
+  );
+  register(
+    "sharing:open-inbox-link",
+    z.object({ projectId: id, url: z.string().min(1).max(4096) }).strict(),
+    (input) => sharing.openInboxLink(input),
+  );
   register("sharing:share", project, ({ projectId }) =>
     sharing.shareProject(projectId),
   );

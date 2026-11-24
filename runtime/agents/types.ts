@@ -38,6 +38,8 @@ export interface AgentSessionOptions {
   /** Device-local provider session to continue for this story and checkout. */
   resumeSessionId?: string;
   prompt: string;
+  /** Images from the request, for workers that can be shown them. The prompt names them too. */
+  images?: import("../attachments").AgentImage[];
   briefPath: string;
   contextConfig?: string;
   toolArgs: string[];

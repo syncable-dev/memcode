@@ -14,11 +14,14 @@ import "../styles-worker-input.css";
 export function DeleteProject({
   project,
   sharing,
+  hasInbox,
   onDeleted,
 }: {
   project: Project;
   /** Whom else deleting it reaches, which the confirmation names. */
   sharing: ProjectSharing;
+  /** Whether an Inbox of its own goes with it. */
+  hasInbox: boolean;
   onDeleted(): void;
 }) {
   const labels = projectDeletionLabels(sharing);
@@ -62,7 +65,7 @@ export function DeleteProject({
         >
           <div className="modal-body">
             <p className="delete-explanation">
-              {projectDeletionNote(project, sharing)}
+              {projectDeletionNote(project, sharing, hasInbox)}
             </p>
             {error && (
               <p role="alert" className="worker-input-error">

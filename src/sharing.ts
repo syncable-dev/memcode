@@ -65,6 +65,21 @@ export interface SharedProjectLink {
   applied?: number;
 }
 
+/**
+ * The Inbox of a project that is not shared: a project of the person's own on the sharing
+ * service that holds reports and their files, and no board. Kept on this computer.
+ */
+export interface InboxLink {
+  projectId: string;
+  /** The project on the sharing service. */
+  sharedProjectId: string;
+  /** The Memtrace account it belongs to. */
+  accountId: string;
+  /** The sharing service it lives on. */
+  service: string;
+  startedAt: string;
+}
+
 /** How the board of one connected project stands with the shared one. */
 export interface SharedBoardStatus {
   projectId: string;

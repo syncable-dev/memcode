@@ -185,6 +185,19 @@ test("a shared project is taken off the sharing service for this account before 
   assert.equal(w.state.projects.some((item) => item.id === WEBSITE), false);
 });
 
+test("an Inbox of a project that is not shared goes with the project", async () => {
+  const forgotten: string[] = [];
+  const w = workspace({ forgotten });
+  w.state.inboxLinks = [{ projectId: WEBSITE } as never];
+  await w.deleteProject(WEBSITE);
+  assert.deepEqual(forgotten, [WEBSITE]);
+  assert.deepEqual(w.state.inboxLinks, []);
+  assert.match(
+    projectDeletionNote(website, { kind: "free" }, true),
+    /and its Inbox with every report from Slack/,
+  );
+});
+
 test("a project with a worker running is not deleted, and nothing of it is removed", async () => {
   const w = workspace();
   w.state.tasks.find((task) => task.id === "web-1")!.run = {

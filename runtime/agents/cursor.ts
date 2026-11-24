@@ -1,3 +1,4 @@
+import { imageData } from "../attachments";
 import { spawn, execFile } from "node:child_process";
 import { appVersion } from "../../src/version";
 import { createInterface } from "node:readline";
@@ -828,7 +829,13 @@ function runCursorSession(
       emit({ type: "prompted" });
       const result = await request(
         "session/prompt",
-        { sessionId, prompt: [{ type: "text", text: options.prompt }] },
+        {
+          sessionId,
+          prompt: acpPrompt(
+            options,
+            initialized.agentCapabilities?.promptCapabilities?.image === true,
+          ),
+        },
         0,
       );
       // Installed Cursor ACP reports logical completion but omits native token
@@ -859,4 +866,22 @@ function runCursorSession(
       await finish({ exitCode: null });
     },
   };
+}
+
+/** The prompt, with the request's images when the worker says it takes images. */
+export function acpPrompt(
+  options: Pick<AgentSessionOptions, "prompt" | "images" | "localModel">,
+  takesImages: boolean,
+) {
+  const images =
+    takesImages && !options.localModel ? (options.images ?? []) : [];
+  return [
+    { type: "text" as const, text: options.prompt },
+    ...images.flatMap((image) => {
+      const data = imageData(image);
+      return data
+        ? [{ type: "image" as const, mimeType: image.mime, data }]
+        : [];
+    }),
+  ];
 }
