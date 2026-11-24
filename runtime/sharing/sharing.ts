@@ -37,6 +37,18 @@ import {
 } from "./memsync/projects-api";
 import { SignedCalls } from "./memsync/signed-calls";
 import {
+  MemsyncSlackChannels,
+  type SlackChannelsApi,
+} from "./memsync/slack-api";
+import {
+  decisionEntry,
+  INBOX_CARD,
+  inboxItems,
+  type InboxDecision,
+  type InboxLogEntry,
+  type ProjectInbox,
+} from "../../src/inbox";
+import {
   SharingRefused,
   SharingSignedOut,
   SharingUnavailable,
@@ -81,6 +93,7 @@ interface Service {
   projects: ProjectsApi;
   boards: BoardsApi;
   cards: CardsApi;
+  slack: SlackChannelsApi;
 }
 export interface CardHost {
   /** The latest code review report of a task on this computer. */
@@ -391,6 +404,80 @@ export class Sharing {
     const link = this.linkOf(projectId, service);
     if (!link) throw new Error("This project is not shared.");
     return { service, link };
+  }
+
+  /**
+   * A shared project's Inbox: what people reported from Slack, and the channels that
+   * report into it. The Inbox is the card log of the nil card (MemSync ADR-0020).
+   */
+  async inbox(projectId: string): Promise<ProjectInbox> {
+    const { service, link } = await this.linkedProject(projectId);
+    const entries: InboxLogEntry[] = [];
+    for (let after = 0; ; ) {
+      const page = await service.cards.readAfter(
+        link.sharedProjectId,
+        INBOX_CARD,
+        after,
+      );
+      if (!page.length) break;
+      entries.push(...page);
+      after = page[page.length - 1].sequence;
+    }
+    // An older MemSync has no Slack channels; the Inbox still reads.
+    const channels = await service.slack
+      .list(link.sharedProjectId)
+      .catch(() => null);
+    return {
+      items: inboxItems(entries),
+      channels: channels ?? [],
+      channelsUnavailable: channels === null,
+    };
+  }
+
+  /** Links the Slack channel that gave this code with `/memcode link`. */
+  async linkSlackChannel(input: { projectId: string; code: string }) {
+    const { service, link } = await this.linkedProject(input.projectId);
+    await service.slack.link(link.sharedProjectId, input.code);
+    return this.inbox(input.projectId);
+  }
+
+  async unlinkSlackChannel(input: {
+    projectId: string;
+    teamId: string;
+    channelId: string;
+  }) {
+    const { service, link } = await this.linkedProject(input.projectId);
+    await service.slack.unlink(
+      link.sharedProjectId,
+      input.teamId,
+      input.channelId,
+    );
+    return this.inbox(input.projectId);
+  }
+
+  /** Records what became of a report: picked up as a goal, declined, or reopened. */
+  async decideInboxItem(input: {
+    projectId: string;
+    itemId: string;
+    decision: InboxDecision;
+  }) {
+    const { service, link } = await this.linkedProject(input.projectId);
+    const entry = decisionEntry(input.itemId, input.decision);
+    const payload = new TextEncoder().encode(JSON.stringify(entry));
+    await service.cards.append(link.sharedProjectId, INBOX_CARD, [
+      { id: randomUUID(), payload },
+    ]);
+    return this.inbox(input.projectId);
+  }
+
+  /** A file a report brought, from the project's files, to show in the window. */
+  async inboxFile(input: { projectId: string; sha256: string }) {
+    const { service, link } = await this.linkedProject(input.projectId);
+    const { content } = await service.cards.download(
+      link.sharedProjectId,
+      input.sha256,
+    );
+    return { base64: Buffer.from(content).toString("base64") };
   }
 
   /** Records that a local project's board belongs to a shared project the person is on. */
@@ -929,6 +1016,7 @@ export class Sharing {
       boards: new MemsyncBoards(calls),
       // A whole file goes in one call, so a call is given longer.
       cards: new MemsyncCards(new SignedCalls(channel, access, 60_000)),
+      slack: new MemsyncSlackChannels(calls),
     };
     return this.service;
   }

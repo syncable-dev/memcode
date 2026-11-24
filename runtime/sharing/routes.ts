@@ -50,6 +50,51 @@ export function registerSharing(register: Register, sharing: Sharing) {
     (input) => sharing.openSharedResult(input),
   );
   const project = z.object({ projectId: id }).strict();
+  register("sharing:inbox", project, ({ projectId }) =>
+    sharing.inbox(projectId),
+  );
+  register(
+    "sharing:link-slack",
+    z
+      .object({ projectId: id, code: z.string().trim().min(8).max(20) })
+      .strict(),
+    (input) => sharing.linkSlackChannel(input),
+  );
+  register(
+    "sharing:unlink-slack",
+    z.object({ projectId: id, teamId: id, channelId: id }).strict(),
+    (input) => sharing.unlinkSlackChannel(input),
+  );
+  register(
+    "sharing:decide-inbox-item",
+    z
+      .object({
+        projectId: id,
+        itemId: id,
+        decision: z.discriminatedUnion("kind", [
+          z
+            .object({
+              kind: z.literal("picked_up"),
+              goal: id,
+              goalTitle: z.string().max(500),
+            })
+            .strict(),
+          z
+            .object({ kind: z.literal("declined"), reason: z.string().max(2000) })
+            .strict(),
+          z.object({ kind: z.literal("reopened") }).strict(),
+        ]),
+      })
+      .strict(),
+    (input) => sharing.decideInboxItem(input),
+  );
+  register(
+    "sharing:inbox-file",
+    z
+      .object({ projectId: id, sha256: z.string().regex(/^[0-9a-f]{64}$/) })
+      .strict(),
+    (input) => sharing.inboxFile(input),
+  );
   register("sharing:share", project, ({ projectId }) =>
     sharing.shareProject(projectId),
   );

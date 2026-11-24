@@ -30,6 +30,7 @@ import {
   Workflow,
   Users,
   X,
+  Inbox as InboxIcon,
 } from "lucide-react";
 import {
   harnessIds,
@@ -56,6 +57,8 @@ import { Roadmap } from "./components/Roadmap";
 import { BaseBranchPicker } from "./components/BaseBranchPicker";
 import { PullRequestSheet } from "./components/PullRequest";
 import { NewWork } from "./components/NewWork";
+import { Inbox } from "./components/Inbox";
+import { requestFrom, type InboxItem } from "./inbox";
 import { FleetDecisions } from "./components/FleetDecisions";
 import { Cycles } from "./components/Cycles";
 import { InsightsPage } from "./components/InsightsPage";
@@ -114,6 +117,7 @@ import { hasTeamPage } from "./team-presentation";
 import { DeleteProject } from "./components/DeleteProject";
 
 type View =
+  | "inbox"
   | "board"
   | "roadmap"
   | "cycles"
@@ -127,6 +131,11 @@ type View =
   | "docs"
   | "team";
 const pageCopy: Record<View, [string, string, string]> = {
+  inbox: [
+    "FROM THE PEOPLE YOU WORK WITH",
+    "Reports, ready to pick up.",
+    "What your team sent from Slack, with the evidence. Pick one up and define the goal.",
+  ],
   team: [
     "BUILD WITH YOUR TEAM",
     "Better together. Still local.",
@@ -198,6 +207,8 @@ export function App() {
   );
   const [runtime, setRuntime] = useState<RuntimeInfo | null>(null);
   const [view, setView] = useState<View>("board");
+  /** The Inbox report a new goal is being defined from, if any. */
+  const [inboxItem, setInboxItem] = useState<InboxItem | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [guideReviewId, setGuideReviewId] = useState<string | null>(null);
   const [selectedArtifact, setSelectedArtifact] = useState<Artifact | null>(
@@ -602,6 +613,7 @@ export function App() {
     count?: number;
   }> = [
     { id: "board", label: "Workspace", icon: LayoutGrid },
+    { id: "inbox", label: "Inbox", icon: InboxIcon },
     { id: "roadmap", label: "Roadmap", icon: Route, count: epics.length },
     {
       id: "cycles",
@@ -1004,6 +1016,17 @@ export function App() {
                 )}
               </div>
             )}
+          {view === "inbox" && (
+            <Inbox
+              project={project}
+              shared={isSharedHere(state, project.id)}
+              onDefineGoal={(item) => {
+                setInboxItem(item);
+                setDialog("task");
+              }}
+              notify={notify}
+            />
+          )}
           {view === "docs" && (
             <Suspense fallback={<Spinner />}>
               <Docs
@@ -1334,12 +1357,16 @@ export function App() {
           )}
           fixedEpicId={storyEpic}
           statusId={storyStatus}
+          initialRequest={inboxItem ? requestFrom(inboxItem) : undefined}
           workerLimit={state.settings.maxWorkers}
           freeSlots={Math.max(
             0,
             state.settings.maxWorkers - state.tasks.filter(isActive).length,
           )}
-          onClose={() => setDialog(null)}
+          onClose={() => {
+            setDialog(null);
+            setInboxItem(null);
+          }}
           onAdvanced={() => setDetailedTask(true)}
           onConnectWorkers={() => {
             setDialog(null);
@@ -1347,6 +1374,20 @@ export function App() {
           }}
           onCreated={(task) => {
             setDialog(null);
+            if (inboxItem) {
+              const goal = task.epicId ?? task.id;
+              const goalTitle =
+                epics.find((epic) => epic.id === task.epicId)?.title ??
+                task.title;
+              window.memcode
+                .decideInboxItem({
+                  projectId: project.id,
+                  itemId: inboxItem.id,
+                  decision: { kind: "picked_up", goal, goalTitle },
+                })
+                .catch((error: Error) => notify(error.message));
+              setInboxItem(null);
+            }
             setSelectedId(task.id);
             if (guideProgress?.step === "story" && !guideProgress.dismissed)
               updateGuide({

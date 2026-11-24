@@ -26,6 +26,8 @@ export const refusalRules = [
   "project_storage_full",
   "no_such_file",
   "unknown_readers",
+  "unknown_link_code",
+  "invalid_link_code",
 ] as const;
 export type RefusalRule = (typeof refusalRules)[number];
 
@@ -73,4 +75,8 @@ export const refusalSentences: Record<RefusalRule, string> = {
     "That file is no longer kept for this project. Ask whoever shared it to share it again.",
   unknown_readers:
     "MemCode named readers for a card entry that the sharing service does not know. This is a fault in MemCode, not something you did.",
+  unknown_link_code:
+    "That code is used or more than 15 minutes old. Type /memcode link in the Slack channel again for a new one.",
+  invalid_link_code:
+    "That is not a code from /memcode link. It is 8 letters and digits, such as ABCD-EFGH.",
 };

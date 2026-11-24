@@ -8,7 +8,8 @@ import {
 
 // The table in MemSync's docs/08_crosscutting_concepts.md, as of 21 November 2026,
 // the four the Cards service added on 22 November (ADR-0014), and the one for a card
-// entry's readers added on 23 November (ADR-0019).
+// entry's readers added on 23 November (ADR-0019), and the two for linking a Slack
+// channel added on 24 November (ADR-0020).
 const namedByMemsync = [
   "no_such_project",
   "no_such_invitation",
@@ -32,6 +33,8 @@ const namedByMemsync = [
   "project_storage_full",
   "no_such_file",
   "unknown_readers",
+  "invalid_link_code",
+  "unknown_link_code",
 ];
 
 test("every rule MemSync can refuse by is known by name", () => {
