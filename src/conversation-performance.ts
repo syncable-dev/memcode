@@ -25,6 +25,7 @@ export function sameDisplayedMessage(a: Message, b: Message) {
     a.reviewText === b.reviewText &&
     JSON.stringify(a.actor) === JSON.stringify(b.actor) &&
     JSON.stringify(a.commentIds) === JSON.stringify(b.commentIds) &&
+    JSON.stringify(a.attachments) === JSON.stringify(b.attachments) &&
     JSON.stringify(a.references) === JSON.stringify(b.references)
   );
 }

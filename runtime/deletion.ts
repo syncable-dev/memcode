@@ -246,7 +246,8 @@ export async function deleteProject(
       throw Error(`${project.name} is in a Team Sync team, which MemCode can't leave right now.`);
     await sharing.leaveTeam(id);
   }
-  if (state.sharedProjectLinks?.some((link) => link.projectId === id))
+  const isOfThis = (link: { projectId: string }) => link.projectId === id;
+  if (state.sharedProjectLinks?.some(isOfThis) || state.inboxLinks?.some(isOfThis))
     await sharing.removeSharing?.(id);
   removeStories(state, new Set(tasks.map((task) => task.id)));
   removeProjectRecords(state, id);
@@ -274,6 +275,7 @@ function removeProjectRecords(state: AppState, id: string): void {
     state.fleetDeclarations = ofOtherProjects(state.fleetDeclarations);
   if (state.fleetProposals)
     state.fleetProposals = ofOtherProjects(state.fleetProposals);
+  if (state.inboxLinks) state.inboxLinks = ofOtherProjects(state.inboxLinks);
   if (state.sharedBoards) state.sharedBoards = ofOtherProjects(state.sharedBoards);
   if (state.team) state.team = ofOtherProjects(state.team);
   if (state.pullRequests)

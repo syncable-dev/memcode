@@ -1,3 +1,5 @@
+import type { Attachment } from "../src/attachments";
+import { attachmentsSchema, type AttachmentStore } from "./attachments";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { AppState, WorkItem } from "../src/shared";
@@ -60,7 +62,10 @@ export function registerReview(
     remoteSend(task: WorkItem, body: string): Promise<string | undefined>;
     actor(task: WorkItem): import("../src/team-session").SessionActor | undefined;
     edit(task: WorkItem, messageId: string, text?: string, cancel?: boolean): Promise<boolean>;
+    /** The task's worker runs on another computer. */
+    isElsewhere?(task: WorkItem): boolean;
   },
+  attachments?: AttachmentStore,
 ) {
   const id = z.string().min(1).max(250),
     task = (taskId: string) => {
@@ -139,7 +144,12 @@ export function registerReview(
     },
   );
   const send = async (
-    input: { taskId: string; ids?: string[]; text: string },
+    input: {
+      taskId: string;
+      ids?: string[];
+      text: string;
+      attachments?: Attachment[];
+    },
     dispatch = false,
   ) => {
     const item = task(input.taskId),
@@ -160,6 +170,11 @@ export function registerReview(
       throw Error("Select fewer comments for this follow-up.");
     if (dispatch && !item.example && !queue)
       throw Error("Worker dispatch is unavailable.");
+    if (input.attachments?.length && sharing?.isElsewhere?.(item))
+      throw Error(
+        "Files can't be sent to a worker on another computer yet. Remove them, or send them from the computer it runs on.",
+      );
+    await attachments?.assertKept(input.attachments);
     const messageId = randomUUID(),
       at = new Date().toISOString();
     const remoteId = dispatch ? await sharing?.remoteSend(item, body) : undefined;
@@ -176,6 +191,9 @@ export function registerReview(
       references: notes.length ? references : undefined,
       commentIds: notes.length ? ids : undefined,
       reviewText: notes.length ? input.text : undefined,
+      ...(input.attachments?.length
+        ? { attachments: input.attachments }
+        : {}),
     });
     item.updatedAt = at;
     for (const comment of notes)
@@ -194,6 +212,7 @@ export function registerReview(
         taskId: id,
         ids: z.array(id).min(1).max(30),
         text: z.string().trim().min(1).max(20000),
+        attachments: attachmentsSchema.optional(),
       })
       .strict(),
     (input) => send(input),
@@ -205,6 +224,7 @@ export function registerReview(
         taskId: id,
         ids: z.array(id).min(1).max(30).optional(),
         text: z.string().trim().min(1).max(20000),
+        attachments: attachmentsSchema.optional(),
       })
       .strict(),
     async (input) => ({ messageId: await send(input, true) }),

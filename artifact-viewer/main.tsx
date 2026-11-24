@@ -16,6 +16,8 @@ interface DocumentData {
   format: ArtifactFormat;
   bytes: ArrayBuffer;
   line?: number;
+  /** It belongs to no task, so there is nothing to comment on. */
+  readOnly?: boolean;
 }
 function App() {
   const [document, setDocument] = useState<DocumentData>(),
@@ -88,8 +90,8 @@ function App() {
           </div>
         )}
       </Suspense>
-      {document && !error && <SelectionTools />}
-      {document && !error && <Annotations />}
+      {document && !document.readOnly && !error && <SelectionTools />}
+      {document && !document.readOnly && !error && <Annotations />}
     </ErrorBoundary>
   );
 }

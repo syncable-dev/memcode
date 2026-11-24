@@ -1,5 +1,7 @@
 import { Select } from "./Select";
 import { Integrations } from "./Integrations";
+import type { Attachment } from "../attachments";
+import { AttachButton, AttachedFiles, useAttach } from "./Attachments";
 import { ModelSelect } from "./ModelSelect";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -152,6 +154,8 @@ export function NewTaskDialog({
   initialStatusId,
   cycles = [],
   parent,
+  initialDescription = "",
+  initialFiles = [],
   onClose,
   onCreated,
   notify,
@@ -163,12 +167,16 @@ export function NewTaskDialog({
   initialStatusId?: string;
   cycles?: Cycle[];
   parent?: WorkItem;
+  initialDescription?: string;
+  initialFiles?: Attachment[];
   onClose: () => void;
   onCreated: (task: WorkItem) => void;
   notify: (s: string) => void;
 }) {
   const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
+  const [description, setDescription] = useState(initialDescription);
+  const [files, setFiles] = useState<Attachment[]>(initialFiles);
+  const attach = useAttach(files, setFiles, notify);
   const [harness, setHarness] = useState<Harness>(defaultHarness);
   const [assignment, setAssignment] = useState("auto");
   const [epicId, setEpicId] = useState(
@@ -208,6 +216,7 @@ export function NewTaskDialog({
             ? { statusId: initialStatusId }
             : {}),
           description: description.trim(),
+          ...(files.length ? { attachments: files } : {}),
           harness,
           assignment: assignment === "auto" ? "auto" : "manual",
           epicId: epicId === "none" ? null : epicId,
@@ -273,13 +282,25 @@ export function NewTaskDialog({
               )}
             </p>
           </div>
-          <div className="brief-input-wrap">
+          <div
+            className={
+              "brief-input-wrap" + (attach.over ? " attach-over" : "")
+            }
+            {...attach.drop}
+          >
             <textarea
               aria-label="Work item brief"
               placeholder="Describe the outcome, context, and what good looks like…"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
+              {...attach.paste}
               maxLength={20000}
+            />
+            <AttachedFiles
+              items={files}
+              setItems={setFiles}
+              notify={notify}
+              notes
             />
             <div className="brief-input-footer">
               <span>
@@ -287,6 +308,7 @@ export function NewTaskDialog({
                   ? "A few clear sentences are a good start."
                   : dictation.label}
               </span>
+              <AttachButton attach={attach} />
               <button
                 type="button"
                 className={"dictation-button " + dictation.phase}

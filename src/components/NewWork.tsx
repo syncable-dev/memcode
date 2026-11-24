@@ -30,6 +30,13 @@ import {
 } from "../new-work";
 import { isQuickChanges } from "../domain";
 import { taskDraftTitle } from "../task-draft";
+import { withAttachments, type Attachment } from "../attachments";
+import {
+  AttachButton,
+  AttachedFiles,
+  useAttach,
+  type Attach,
+} from "./Attachments";
 import { Modal } from "./Dialogs";
 import { Select } from "./Select";
 import { Spinner } from "./UI";
@@ -46,9 +53,15 @@ interface Props {
   statusId?: string;
   /** What the request starts as, such as a report from the Inbox. */
   initialRequest?: string;
+  /** The files it starts with, as they are got. */
+  initialFiles?: (
+    add: (file: Attachment) => void,
+    starting: () => boolean,
+  ) => Promise<void>;
   onClose: () => void;
   onCreated: (task: WorkItem) => void;
-  onAdvanced: () => void;
+  /** More options, with what was written and attached so far. */
+  onAdvanced: (request: string, files: Attachment[]) => void;
   onConnectWorkers: () => void;
   /** Workers that can start right now, and the most that run at once (Settings). */
   freeSlots: number;
@@ -67,6 +80,28 @@ export function NewWork(props: Props) {
   const { project, goals, fixedEpicId } = props;
   const [step, setStep] = useState<Step>("write");
   const [request, setRequest] = useState(props.initialRequest ?? "");
+  const [files, setFiles] = useState<Attachment[]>([]);
+  const [gathering, setGathering] = useState(!!props.initialFiles);
+  const attach = useAttach(files, setFiles, props.notify);
+  const { initialFiles } = props;
+  useEffect(() => {
+    if (!initialFiles) return;
+    let open = true;
+    initialFiles(
+      (file) => {
+        if (open) setFiles((known) => withAttachments(known, [file]));
+      },
+      () => open,
+    )
+      .catch((error: Error) => props.notify(error.message))
+      .finally(() => {
+        if (open) setGathering(false);
+      });
+    return () => {
+      open = false;
+    };
+    // Once: the composer is opened anew for each report.
+  }, []);
   const [planner, setPlanner] = useState<Harness | undefined>(
     props.connected.includes(props.defaultHarness)
       ? props.defaultHarness
@@ -98,6 +133,7 @@ export function NewWork(props: Props) {
         projectId: project.id,
         request,
         harness,
+        ...(files.length ? { attachments: files } : {}),
       });
     } catch (error) {
       props.notify((error as Error).message);
@@ -203,6 +239,7 @@ export function NewWork(props: Props) {
       priority: "medium",
       harness: props.defaultHarness,
       assignment: "auto",
+      ...(files.length ? { attachments: files } : {}),
       ...(props.statusId ? { statusId: props.statusId } : {}),
     });
 
@@ -285,12 +322,17 @@ export function NewWork(props: Props) {
         <WriteStep
           request={request}
           onChange={setRequest}
+          files={files}
+          setFiles={setFiles}
+          attach={attach}
+          gathering={gathering}
+          notify={props.notify}
           planner={planner}
           connected={props.connected}
           onPlanner={setPlanner}
           onConnectWorkers={props.onConnectWorkers}
           onContinue={() => void think()}
-          onAdvanced={props.onAdvanced}
+          onAdvanced={() => props.onAdvanced(request, files)}
           onClose={props.onClose}
         />
       )}
@@ -339,6 +381,12 @@ export function NewWork(props: Props) {
 function WriteStep(props: {
   request: string;
   onChange: (value: string) => void;
+  files: Attachment[];
+  setFiles: (change: (files: Attachment[]) => Attachment[]) => void;
+  attach: Attach;
+  /** The report's files are still on their way. */
+  gathering: boolean;
+  notify: (message: string) => void;
   planner?: Harness;
   connected: Harness[];
   onPlanner: (harness: Harness) => void;
@@ -349,20 +397,46 @@ function WriteStep(props: {
 }) {
   return (
     <>
-      <div className="modal-body nw-body">
+      <div
+        className={
+          "modal-body nw-body" + (props.attach.over ? " attach-over" : "")
+        }
+        {...props.attach.drop}
+      >
         <textarea
-          className="nw-ask"
+          className={"nw-ask" + (props.request.length > 200 ? " long" : "")}
           autoFocus
           aria-label="What do you want to get done?"
           placeholder="e.g. People get logged out on every deploy. Keep sessions alive and let them sign out other devices."
           value={props.request}
           onChange={(event) => props.onChange(event.target.value)}
+          {...props.attach.paste}
           onKeyDown={(event) => {
             if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
               event.preventDefault();
               props.onContinue();
             }
           }}
+        />
+        <div className="nw-attach">
+          <AttachButton attach={props.attach} label="Attach files" />
+          <span>
+            {props.gathering ? (
+              <>
+                <Spinner size={12} /> Adding the report’s files
+              </>
+            ) : props.files.length ? (
+              "Say what each file shows, if it isn’t obvious. Workers get the files and your notes."
+            ) : (
+              "Images, PDFs, spreadsheets, presentations or any file. Drop or paste them here too."
+            )}
+          </span>
+        </div>
+        <AttachedFiles
+          items={props.files}
+          setItems={props.setFiles}
+          notify={props.notify}
+          notes
         />
         <div className="nw-planner">
           {props.planner ? (
@@ -415,7 +489,11 @@ function WriteStep(props: {
           <button
             className="button primary"
             type="button"
-            disabled={!props.request.trim()}
+            disabled={
+              !props.request.trim() ||
+              props.gathering ||
+              props.attach.adding > 0
+            }
             onClick={props.onContinue}
           >
             {props.planner ? "Plan it" : "Continue"} <kbd>⌘↵</kbd>

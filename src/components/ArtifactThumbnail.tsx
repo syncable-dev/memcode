@@ -94,13 +94,12 @@ async function videoThumbnail(dataUrl: string) {
     URL.revokeObjectURL(blob);
   }
 }
-function load(artifact: Artifact) {
-  const key = `${artifact.id}:${artifact.revision ?? artifact.createdAt}:${artifact.path}`;
+function load(key: string, name: string, read: () => Promise<Thumbnail>) {
   let result = cache.get(key);
   if (!result) {
     result = schedule(async (): Promise<Thumbnail> => {
       try {
-        const value = await window.memcode.readArtifactThumbnail(artifact.id);
+        const value = await read();
         if (value.kind === "image")
           return { ...value, dataUrl: await imageThumbnail(value.dataUrl) };
         if (value.kind === "media") {
@@ -116,8 +115,8 @@ function load(artifact: Artifact) {
       } catch {
         return {
           kind: "fallback",
-          format: artifactFormat(artifact.name),
-          label: artifactTypeLabel(artifact.name),
+          format: artifactFormat(name),
+          label: artifactTypeLabel(name),
           detail: "Open for the full preview",
         };
       }
@@ -137,6 +136,25 @@ function readable(line: string) {
 }
 
 export function ArtifactThumbnail({ artifact }: { artifact: Artifact }) {
+  return (
+    <FileThumbnail
+      name={artifact.name}
+      id={`${artifact.id}:${artifact.revision ?? artifact.createdAt}:${artifact.path}`}
+      read={() => window.memcode.readArtifactThumbnail(artifact.id)}
+    />
+  );
+}
+
+/** A small, inert preview of a saved file. `id` names this version of it. */
+export function FileThumbnail({
+  name,
+  id,
+  read,
+}: {
+  name: string;
+  id: string;
+  read: () => Promise<Thumbnail>;
+}) {
   const ref = useRef<HTMLDivElement>(null);
   const [thumbnail, setThumbnail] = useState<Thumbnail | null>(null);
   useEffect(() => {
@@ -154,12 +172,12 @@ export function ArtifactThumbnail({ artifact }: { artifact: Artifact }) {
           if (current)
             setThumbnail({
               kind: "fallback",
-              format: artifactFormat(artifact.name),
-              label: artifactTypeLabel(artifact.name),
+              format: artifactFormat(name),
+              label: artifactTypeLabel(name),
               detail: "Preview delayed · open to view the file",
             });
         }, 8000);
-        void load(artifact).then((value) => {
+        void load(id, name, read).then((value) => {
           clearTimeout(delayed);
           if (current) setThumbnail(value);
         });
@@ -172,13 +190,13 @@ export function ArtifactThumbnail({ artifact }: { artifact: Artifact }) {
       clearTimeout(delayed);
       observer.disconnect();
     };
-  }, [artifact.id, artifact.revision, artifact.createdAt, artifact.path]);
-  const format = thumbnail?.format ?? artifactFormat(artifact.name);
+  }, [id, name]);
+  const format = thumbnail?.format ?? artifactFormat(name);
   return (
     <div
       ref={ref}
       className={`artifact-tile-preview artifact-thumbnail format-${format}`}
-      aria-label={`${artifactTypeLabel(artifact.name)} preview`}
+      aria-label={`${artifactTypeLabel(name)} preview`}
     >
       {!thumbnail ? (
         <div
@@ -193,7 +211,7 @@ export function ArtifactThumbnail({ artifact }: { artifact: Artifact }) {
         <>
           <img
             src={thumbnail.dataUrl}
-            alt={`Preview of ${artifact.name}`}
+            alt={`Preview of ${name}`}
             loading="lazy"
             decoding="async"
           />
@@ -258,7 +276,7 @@ export function ArtifactThumbnail({ artifact }: { artifact: Artifact }) {
           <strong>
             {thumbnail.kind === "fallback"
               ? thumbnail.label
-              : artifactTypeLabel(artifact.name)}
+              : artifactTypeLabel(name)}
           </strong>
           <span>
             {thumbnail.kind === "fallback"
