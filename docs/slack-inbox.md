@@ -2,31 +2,36 @@
 
 A shared project has an Inbox. People on your team report problems in Slack, with
 screenshots, recordings, PDFs, logs and links, and the reports land here. Nothing is added
-to the board until someone picks a report up. No AI reads them on the way.
+to the board until someone picks a report up, and no AI reads them on the way.
 
-## Link a Slack channel
+## Connect Slack
 
-1. In the Slack channel, type `/memcode link`. Slack shows a code, such as `ABCD-EFGH`, that
-   works once for 15 minutes.
-2. In MemCode, open the shared project, choose **Inbox**, and enter the code under
-   **Link a Slack channel**.
+1. Open the shared project, then **Settings › Integrations** and choose **Slack**.
+2. Choose **Add to Slack**. Slack opens in your browser: choose **Allow**.
+3. The Slack page in MemCode turns **Connected** within a few seconds.
 
-The channel then says it sends reports to the project. Anyone in that channel can report,
-even if they are not on the project. Reports are written as the person who linked the
-channel, and each one names who wrote it. If that person leaves the project, the channel
-stops sending reports until someone links it again.
+That connects the whole Slack workspace to the project. There is nothing to set up per
+channel. A project that is not shared yet has no Inbox: share it first.
 
-The MemCode app has to be added to the Slack workspace first. Whoever runs the sharing
-service does that once.
+**Disconnect** on the same page stops the workspace, and every channel in it, sending
+reports to the project.
 
 ## Report something from Slack
 
-- Mention @MemCode in a message. Its files come with it.
-- Choose **Send to MemCode** in a message's menu to add what you expected, where it happens,
-  how bad it is, and more files.
-- React with 📥 to send someone else's message.
+- **Mention @MemCode** in a message. It goes to the Inbox as written, with its files and
+  links. In a thread, the thread's first message is sent, with what you wrote added to it.
+- **Send to MemCode** in a message's ⋯ menu opens a short form: what happened, what you
+  expected, where it happens, how bad it is, and more files.
 
-Mentioning @MemCode in a thread sends the thread's first message, with what you wrote.
+MemCode answers in the thread: "Added to *Project* › Inbox: “…”". The first time someone
+mentions @MemCode in a channel, Slack offers to add it to that channel: choose **Add**.
+
+Anyone in the workspace can report, even if they are not on the project. Reports are
+written as the person who connected the workspace, and each one names who wrote it.
+
+When a workspace is connected to several projects, a message that names one, such as
+"@MemCode Checkout: …", goes there. Otherwise MemCode asks once in the thread which
+project it is for, and that channel remembers the answer.
 
 ## Pick a report up
 
@@ -40,3 +45,6 @@ and the links. Then:
 
 Files up to 5 MB are kept with the project. Bigger ones stay in Slack and the report links
 to them. The Inbox looks for new reports every 15 seconds while it is open.
+
+The sharing service has to offer Slack for any of this. An older service shows "does not
+offer Slack yet" on the Slack page, and the Inbox still lists what is there.
