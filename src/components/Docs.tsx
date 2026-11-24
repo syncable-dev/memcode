@@ -3,13 +3,20 @@ import {
   ArrowRight,
   BookOpen,
   Check,
+  ChevronDown,
   ChevronRight,
   CirclePlay,
   Search,
   Sparkles,
   X,
 } from "lucide-react";
-import { guideArticles, type GuideDestination } from "../guide-content";
+import {
+  guideArticles,
+  guideIntegrations,
+  type GuideArticle,
+  type GuideDestination,
+} from "../guide-content";
+import { IntegrationMark } from "./IntegrationMark";
 import { GuideFlow } from "./GuideFlow";
 import { GuidePreview } from "./GuidePreview";
 import "../styles-docs.css";
@@ -32,15 +39,38 @@ export function Docs({
       .querySelector(".workspace-scroll")
       ?.scrollTo({ top: 0, behavior: "instant" });
   }, [selected]);
+  const integrationOf = (item: GuideArticle) =>
+    guideIntegrations.find((one) => one.id === item.integration);
   const article =
       guideArticles.find((item) => item.id === selected) ?? guideArticles[0],
     filtered = guideArticles.filter((item) =>
-      [item.title, item.summary, ...item.steps, ...(item.details ?? [])]
+      [
+        item.title,
+        item.summary,
+        integrationOf(item)?.name ?? "",
+        ...item.steps,
+        ...(item.details ?? []),
+      ]
         .join(" ")
         .toLowerCase()
         .includes(search.toLowerCase()),
     ),
     groups = [...new Set(guideArticles.map((item) => item.group))];
+  // One integration is unfolded at a time, so a long list of them stays short.
+  const [unfolded, setUnfolded] = useState<string | undefined>();
+  useEffect(() => {
+    if (article.integration) setUnfolded(article.integration);
+  }, [article]);
+  const pageButton = (item: GuideArticle) => (
+    <button
+      key={item.id}
+      aria-current={article.id === item.id ? "page" : undefined}
+      onClick={() => setSelected(item.id)}
+    >
+      {item.title}
+      {article.id === item.id && <ChevronRight size={12} />}
+    </button>
+  );
   return (
     <section className="docs-suite" aria-label="MemCode user guide">
       <aside className="docs-index">
@@ -68,17 +98,35 @@ export function Docs({
                 <h3>{group}</h3>
               )}
               {filtered
-                .filter((item) => item.group === group)
-                .map((item) => (
-                  <button
-                    key={item.id}
-                    aria-current={article.id === item.id ? "page" : undefined}
-                    onClick={() => setSelected(item.id)}
-                  >
-                    {item.title}
-                    {article.id === item.id && <ChevronRight size={12} />}
-                  </button>
-                ))}
+                .filter((item) => item.group === group && !item.integration)
+                .map(pageButton)}
+              {guideIntegrations.map((integration) => {
+                const pages = filtered.filter(
+                  (item) => item.group === group && item.integration === integration.id,
+                );
+                if (!pages.length) return null;
+                const open = !!search || unfolded === integration.id;
+                return (
+                  <div key={integration.id} className="docs-integration">
+                    <button
+                      className={article.integration === integration.id ? "within" : ""}
+                      aria-expanded={open}
+                      onClick={() => {
+                        setUnfolded(open && !search ? undefined : integration.id);
+                        if (!open && article.integration !== integration.id)
+                          setSelected(pages[0].id);
+                      }}
+                    >
+                      <IntegrationMark id={integration.id} size={15} />
+                      <span>{integration.name}</span>
+                      {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                    </button>
+                    {open && (
+                      <div className="docs-integration-pages">{pages.map(pageButton)}</div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           ))}
           {!filtered.length && (
@@ -92,6 +140,12 @@ export function Docs({
         <div className="docs-breadcrumb">
           <BookOpen size={12} /> THE MEMCODE GUIDE<span>/</span>
           {article.group}
+          {article.integration && (
+            <>
+              <span>/</span>
+              {integrationOf(article)?.name}
+            </>
+          )}
         </div>
         <h2>{article.title}</h2>
         <p className="docs-lead">{article.summary}</p>

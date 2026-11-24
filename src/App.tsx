@@ -623,8 +623,8 @@ export function App() {
       setDialog("settings");
       return;
     }
-    if (destination === "account") {
-      setSettingsSection("account");
+    if (destination === "account" || destination === "integrations") {
+      setSettingsSection(destination);
       setDialog("settings");
       return;
     }

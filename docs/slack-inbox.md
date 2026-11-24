@@ -39,9 +39,10 @@ Anyone in the workspace can report, even if they are not on the project. People 
 companies, in a channel you share with them, cannot. Reports are
 written as the person who connected the workspace, and each one names who wrote it.
 
-When a workspace is connected to several projects, a message that names one, such as
-"@MemCode Checkout: …", goes there. Otherwise MemCode asks once in the thread which
-project it is for, and that channel remembers the answer.
+When a workspace is connected to several projects, MemCode asks once in the thread which
+project a report is for, unless the message names one, such as "@MemCode Checkout: …". The
+channel remembers the answer, and every later report from it goes there. `/memcode unlink` in
+the channel makes it forget.
 
 ## Pick a report up
 
