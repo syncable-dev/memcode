@@ -44,6 +44,8 @@ interface Props {
   connected: Harness[];
   fixedEpicId?: string;
   statusId?: string;
+  /** What the request starts as, such as a report from the Inbox. */
+  initialRequest?: string;
   onClose: () => void;
   onCreated: (task: WorkItem) => void;
   onAdvanced: () => void;
@@ -64,7 +66,7 @@ const maximumScope = 20;
 export function NewWork(props: Props) {
   const { project, goals, fixedEpicId } = props;
   const [step, setStep] = useState<Step>("write");
-  const [request, setRequest] = useState("");
+  const [request, setRequest] = useState(props.initialRequest ?? "");
   const [planner, setPlanner] = useState<Harness | undefined>(
     props.connected.includes(props.defaultHarness)
       ? props.defaultHarness

@@ -1,0 +1,61 @@
+syntax = "proto3";
+
+package memsync.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// The Slack channels whose reports go to a project's Inbox (ADR-0020).
+//
+// Someone types /memcode link in a channel and gets a one-time code. A member of the
+// project enters it in MemCode, which links the channel with this service. From then on
+// reports from that channel are written to the Inbox as that member.
+//
+// Calls are signed in and turned down as in the Projects service. Only someone on the
+// project may link, list or unlink its channels; to anyone else the project does not
+// exist. Refusal rules: `unknown_link_code` when the code is unknown, used or expired,
+// and `invalid_link_code` when it is not a code at all.
+service SlackChannels {
+  // Links the channel that gave this code to the project, replacing whatever project it
+  // was linked to before. A code works once, within 15 minutes of being given.
+  rpc LinkChannel(LinkChannelRequest) returns (SlackChannel);
+  // The project's linked channels, oldest link first.
+  rpc ListChannels(ListChannelsRequest) returns (ListChannelsResponse);
+  // Stops a channel sending reports to the project. Unlinking a channel that is not
+  // linked to it does nothing.
+  rpc UnlinkChannel(UnlinkChannelRequest) returns (UnlinkChannelResponse);
+}
+
+message SlackChannel {
+  // Slack's ids for the workspace and the channel.
+  string team_id = 1;
+  string channel_id = 2;
+  // The channel's name when it was linked, without the #.
+  string channel_name = 3;
+  // The workspace's name when the app was installed. Empty if not known.
+  string team_name = 4;
+  // The member reports are written as.
+  string linked_by_account_id = 5;
+  google.protobuf.Timestamp linked_at = 6;
+}
+
+message LinkChannelRequest {
+  string project_id = 1;
+  // As /memcode link showed it. Case, spaces and dashes do not matter.
+  string code = 2;
+}
+
+message ListChannelsRequest {
+  string project_id = 1;
+}
+
+message ListChannelsResponse {
+  repeated SlackChannel channels = 1;
+}
+
+message UnlinkChannelRequest {
+  string project_id = 1;
+  string team_id = 2;
+  string channel_id = 3;
+}
+
+message UnlinkChannelResponse {}

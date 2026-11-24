@@ -557,6 +557,26 @@ export interface MemCodeAPI extends CodeReviewAPI {
   ): Promise<import("./local-analysis").LocalAnalysisDiagnostics>;
   /** The signed-in person's shared projects and invitations, or why they cannot be shown. */
   sharingOverview(): Promise<import("./sharing").SharingOverview>;
+  /** A shared project's Inbox of reports from Slack, and its linked channels. */
+  projectInbox(projectId: string): Promise<import("./inbox").ProjectInbox>;
+  linkSlackChannel(input: {
+    projectId: string;
+    code: string;
+  }): Promise<import("./inbox").ProjectInbox>;
+  unlinkSlackChannel(input: {
+    projectId: string;
+    teamId: string;
+    channelId: string;
+  }): Promise<import("./inbox").ProjectInbox>;
+  decideInboxItem(input: {
+    projectId: string;
+    itemId: string;
+    decision: import("./inbox").InboxDecision;
+  }): Promise<import("./inbox").ProjectInbox>;
+  inboxFile(input: {
+    projectId: string;
+    sha256: string;
+  }): Promise<{ base64: string }>;
   acceptSharedInvitation(input: {
     projectId: string;
     invitationId: string;
