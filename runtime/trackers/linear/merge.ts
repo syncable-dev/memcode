@@ -2,6 +2,7 @@ import type { WorkItem } from "../../../src/shared";
 import type { KeptValue, TrackedField } from "../../../src/tracker";
 import {
   applyThere,
+  changedSince,
   clipped,
   hasUnshippedWork,
   hereOf,
@@ -100,19 +101,22 @@ export function baseFor(task: WorkItem, issue: Issue, frame: Frame): Base {
 }
 
 /**
- * Two that were in step once, and nothing is remembered of it. Where they differ, a value
- * Linear has not changed since they were known to be in step was changed here, and is sent.
- * Of any other nobody can say which is newer: Linear's wins, and the one here is kept.
+ * Two that were in step once, and nothing is remembered of it here: kept in step by another
+ * computer, disconnected, or made into an issue with an answer that got lost. The card says
+ * what was agreed on, field by field, and until when it holds its issue. What was changed on
+ * one side is taken to the other. Where both changed, nobody can say which is newer: Linear's
+ * stays, and the one here is kept.
  */
 export function reunited(
   task: WorkItem,
   issue: Issue,
   frame: Frame,
   history: History = { at: {} },
-  /** When both were known to hold the same. */
-  since?: string,
+  /** The issue was made of this card: what differs was changed here since. */
+  made = false,
 ): Base {
   const base = baseFor(task, issue, frame);
+  const since = made ? issue.createdAt : task.tracker?.seen;
   for (const field of order) {
     if (field === "title" && isCut(String(base.here.title), String(base.there.title))) {
       // What a shared board holds of a long title: the whole of it is in Linear.
@@ -126,9 +130,17 @@ export function reunited(
       continue;
     }
     const said = toThere(field, base.here[field], frame, base.there, task);
-    if (said === undefined || same(said, base.there[field])) continue;
+    if (said !== undefined && same(said, base.there[field])) continue;
+    const here = made || changedSince(field, task, frame);
+    const there = !since || lastChanged(field, issue, history) > since;
+    if (here === false) {
+      // Each as it is, or as Linear has it since.
+      if (there) base.there[field] = apart as never;
+      continue;
+    }
+    if (said === undefined) continue;
     base.here[field] = apart as never;
-    if (since && lastChanged(field, issue, history) <= since) {
+    if (here && !there) {
       base.touched[field] = task.updatedAt;
       continue;
     }
@@ -150,17 +162,6 @@ const isPart = (task: WorkItem, base: Base) =>
   (base.here.description !== base.there.description &&
     base.here.description === clipped(String(base.there.description)));
 
-/** Values here that differ from what was agreed on are no newer than this. */
-export function asOld(task: WorkItem, base: Base, frame: Frame, at: string): void {
-  const here = hereOf(task, frame);
-  for (const field of order) {
-    if (same(here[field], base.here[field])) continue;
-    if (base.touched[field] && same(base.seen?.[field], here[field])) continue;
-    base.touched[field] = at;
-    (base.seen ??= {})[field] = here[field] as never;
-  }
-}
-
 /** From here on both count as agreed, each as it is: nothing that differs now is sent. */
 export function agreeAsIs(task: WorkItem, base: Base, frame: Frame): void {
   base.here = hereOf(task, frame);
@@ -181,26 +182,23 @@ export function goalsChosenAnew(task: WorkItem, base: Base): void {
 const anyGoal = "\u0000any";
 
 /**
- * The cards of a lane that was deleted went elsewhere by themselves: to where the issue's
- * status shows now, or to the first lane of their stage. Anywhere else a person moved them.
+ * The cards of a lane that was deleted went elsewhere by themselves, in the stage they were:
+ * to where the issue's status shows now, or to the first lane. Anywhere else a person, or a
+ * worker, moved them.
  */
 function followGoneLane(task: WorkItem, base: Base, here: Here, frame: Frame): void {
-  if (!isGoneLane(String(base.here.status), frame)) return;
-  const stages: Record<string, string[]> = {
-    backlog: ["planned"],
-    unstarted: ["planned"],
-    started: ["working", "review"],
-    completed: ["done"],
-  };
-  const type = frame.statuses.get(String(base.there.status))?.type ?? "";
+  const gone = String(base.here.status);
+  if (!isGoneLane(gone, frame)) return;
+  const stage = frame.stages?.[gone];
   const byItself = [
     laneFor(base.there.status, frame),
     taskStatus({ ...task, statusId: undefined }, workflowFor(frame.state, task.projectId)).id,
-    `${task.projectId}:planned`,
-    backlogStatusId(task.projectId),
+    ...(task.stage === "planned"
+      ? [`${task.projectId}:planned`, backlogStatusId(task.projectId)]
+      : []),
   ];
-  if (!stages[type]?.includes(task.stage) || !byItself.includes(String(here.status))) {
-    // What it was before is not here any more; what it is now is a change.
+  // Where nothing is known of the lane, nothing is said about it.
+  if (stage && (stage !== task.stage || !byItself.includes(String(here.status)))) {
     base.here.status = apart;
     return;
   }

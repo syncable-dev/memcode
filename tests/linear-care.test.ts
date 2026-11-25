@@ -62,9 +62,11 @@ test("when what was agreed on is lost, Linear's newer value stays", () =>
   using(async (w) => {
     const { linear } = w;
     const there = linear.issue({ title: "Old" });
-    const here = linear.issue({ title: "Footer" });
+    const here = linear.issue({ title: "Footer" }), both = linear.issue({ title: "Header" });
     await w.imported();
     await w.service.stop();
+    linear.edit(both, { title: "Header there" });
+    w.edit(w.task(both), { title: "Header here" });
     linear.edit(there, { title: "Newer in Linear" });
     w.edit(w.task(there), { startDate: "2026-11-26" });
     w.edit(w.task(here), { title: "Footer here" });
@@ -75,7 +77,9 @@ test("when what was agreed on is lost, Linear's newer value stays", () =>
     await w.sync();
     assert.equal(linear.issues.get(there.id)!.title, "Newer in Linear");
     assert.equal(w.task(there).title, "Newer in Linear");
-    assert.equal(w.task(there).tracker?.kept?.[0].shown, "Old");
+    assert.equal(w.task(there).tracker?.kept, undefined, "nobody had changed it here");
+    assert.equal(linear.issues.get(both.id)!.title, "Header there");
+    assert.equal(w.task(both).tracker?.kept?.[0].shown, "Header here");
     assert.equal(linear.issues.get(here.id)!.title, "Footer here", "Linear has not changed it since");
   }));
 
@@ -543,4 +547,24 @@ test("a goal that could not follow Linear yet is not taken for a change here", (
     await w.sync();
     assert.equal(linear(w, issue.id).project, projects[1].id);
     assert.equal(w.task(issue).tracker?.standing, "attention");
+  }));
+
+test("deleting a lane moves no issue, whatever lane it was for", () =>
+  using(async (w) => {
+    w.state.workflowStates = [
+      ...defaultWorkflow(w.projectId),
+      { id: "custom-blocked", projectId: w.projectId, name: "Blocked", stage: "planned", color: "#fff", order: 2 },
+    ];
+    const { connection, choices } = await w.connect();
+    const issues = [1, 2, 3].map((n) => w.linear.issue({ title: "B" + n, state: w.linear.states.progress.id }));
+    await w.service.import(connection.id, { ...choices, lanes: { ...choices.lanes, [w.linear.states.progress.id]: "custom-blocked" } });
+    assert.equal(w.task(issues[0]).statusId, "custom-blocked");
+    w.linear.calls.length = 0;
+    w.state.workflowStates = w.state.workflowStates.filter((state) => state.id !== "custom-blocked");
+    await w.sync();
+    assert.equal(said(w).length, 0);
+    w.edit(w.task(issues[0]), { statusId: w.lane("done") });
+    await w.sync();
+    assert.equal(linear(w, issues[0].id).state, w.linear.states.done.id);
+    assert.equal(linear(w, issues[1].id).state, w.linear.states.progress.id);
   }));

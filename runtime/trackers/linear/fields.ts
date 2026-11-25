@@ -71,6 +71,8 @@ export interface Frame {
   statuses: Map<string, TrackerStatus>;
   labels: Map<string, Label>;
   people: Map<string, Person>;
+  /** The stages of lanes, also of those that are not here any more. */
+  stages?: Record<string, string>;
 }
 
 const priorityThere: Record<Priority, number> = {
@@ -172,6 +174,47 @@ export function hereOf(task: WorkItem, frame: Frame): Here {
     goal: task.epicId ?? null,
     parent: task.parentId ?? null,
   };
+}
+
+function short(text: string): string {
+  let hash = 0x811c9dc5;
+  for (let at = 0; at < text.length; at++)
+    hash = Math.imul(hash ^ text.charCodeAt(at), 0x01000193);
+  return (hash >>> 0).toString(36);
+}
+/**
+ * What a card says in a field, short: the same on every computer that has the card, and so
+ * without what is only known where its worker ran.
+ */
+function markOf(field: TrackedField, task: WorkItem, here: Here, lanes: WorkflowState[]): string {
+  // A shared board carries no more of a title.
+  if (field === "title") return short(task.title.slice(0, 230));
+  if (field !== "status") return short(JSON.stringify(here[field]));
+  const lane = taskStatus(task, lanes).id;
+  const own = task.projectId + ":";
+  return short(
+    [lane.startsWith(own) ? lane.slice(own.length - 1) : lane, !!task.archivedAt, task.closedAs].join(),
+  );
+}
+/** The marks of the fields both sides agree on now. The others keep what they had. */
+export function marksNow(task: WorkItem, frame: Frame, agreed?: Here): string {
+  const here = hereOf(task, frame);
+  const lanes = workflowFor(frame.state, task.projectId);
+  const before = (task.tracker?.marks ?? "").split(".");
+  return trackedFields
+    .map((field, at) =>
+      !agreed || same(here[field], agreed[field])
+        ? markOf(field, task, here, lanes)
+        : (before[at] ?? ""),
+    )
+    .join(".");
+}
+/** Whether a field was changed here since both sides agreed on it, where that is known. */
+export function changedSince(field: TrackedField, task: WorkItem, frame: Frame): boolean | undefined {
+  const mark = (task.tracker?.marks ?? "").split(".")[trackedFields.indexOf(field)];
+  if (!mark) return undefined;
+  const lanes = workflowFor(frame.state, task.projectId);
+  return mark !== markOf(field, task, hereOf(task, frame), lanes);
 }
 
 /**

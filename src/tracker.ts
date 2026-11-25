@@ -44,6 +44,8 @@ export interface TrackedItem {
   unlinked?: true;
   /** When the issue last changed of what is taken in here, or sent from here. */
   seen?: string;
+  /** What each field was here when both sides last agreed on it, short, in the fields' order. */
+  marks?: string;
 }
 
 /** A value that lost to a newer one. One click puts it back. */
@@ -144,6 +146,9 @@ export interface TrackerKeeper {
   workspace: string;
   team: string;
   since: string;
+  /** How it is kept in step. */
+  direction?: "both" | "in";
+  goals?: TrackerGoals;
   /** What a person took out of the project: issues, and goals as "goal:…". Not brought in again. */
   left?: string[];
 }
