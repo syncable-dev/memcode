@@ -1,3 +1,4 @@
+import { priorities } from "../planning/priority";
 import {
   Children,
   Fragment,
@@ -75,7 +76,7 @@ function OptionIcon({ value }: { value: string }) {
         <Sparkles size={13} />
       </span>
     );
-  if (["high", "medium", "low"].includes(value))
+  if ((priorities as readonly string[]).includes(value) && value !== "none")
     return (
       <span className="select-priority-icon">
         <PriorityMark value={value} />

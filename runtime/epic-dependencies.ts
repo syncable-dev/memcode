@@ -78,6 +78,10 @@ export async function assertEpicDependencies(
     if (dependency.epicId === task.epicId || dependency.kind === "research")
       continue;
     const changes = await readWorkerChanges(dependency);
+    // Done in the tracker by someone who never worked on it here: the repository has it
+    // or not, and nothing here can tell. The worker reads the code that is there.
+    if (dependency.tracker && !dependency.run.startedAt && !changes.checkpoints.length)
+      continue;
     if (!changes.checkpoints.length)
       throw Error(
         `${dependency.identifier} is Done, but its source handoff has not been verified. Integrate and review its changes before starting this dependent goal.`,

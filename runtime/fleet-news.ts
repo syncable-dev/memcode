@@ -24,6 +24,10 @@ export class FleetNews {
     this.waiting.set(taskId, queue.slice(-keptPerWorker));
     for (const wake of this.listeners.get(taskId) ?? []) wake();
   }
+  /** What the worker has not heard yet. */
+  unheard(taskId: string): readonly FleetNewsItem[] {
+    return this.waiting.get(taskId) ?? [];
+  }
   /** Hands over what is waiting; each update is delivered once. */
   take(taskId: string): FleetNewsItem[] {
     const queue = this.waiting.get(taskId) ?? [];

@@ -10,6 +10,7 @@ import {
   type WorkItem,
 } from "../src/shared";
 import { isActive } from "../src/domain";
+import { isOnBranch } from "../src/goal-work";
 import type { WorkerChanges } from "../src/changes";
 import type { HandoffText } from "../src/handoff";
 import { appVersion } from "../src/version";
@@ -51,6 +52,8 @@ export interface EpicReceipt {
   /** The epic's reason for existing; absent for the default project epic. */
   summary?: string;
   generic: boolean;
+  /** The goal has other tasks, shipped before this or still to do. */
+  partial?: boolean;
   branch?: string;
   stories: StoryReceipt[];
   decisions: DecisionReceipt[];
@@ -99,7 +102,7 @@ export async function collectEpicReceipt(
 ): Promise<EpicReceipt> {
   const epic = sources.epics.find((item) => item.id === epicId);
   if (!epic) throw Error("Goal not found.");
-  const stories = sources.tasks.filter((task) => task.epicId === epicId);
+  const stories = sources.tasks.filter((task) => isOnBranch(task, epic));
   const conflicts = sources.fleetConflicts.filter((item) =>
     belongsToEpic(item, epic),
   );
@@ -114,6 +117,12 @@ export async function collectEpicReceipt(
       ? { summary: epic.description.trim() }
       : {}),
     generic,
+    ...(sources.tasks.some(
+      (task) =>
+        task.epicId === epicId && !task.archivedAt && !isOnBranch(task, epic),
+    )
+      ? { partial: true }
+      : {}),
     branch: epic.branch,
     stories: await recordedStories(stories, readChanges, projectPath),
     decisions: conflicts
@@ -216,7 +225,8 @@ export function composeEpicHandoff(
 
 function pullRequestTitle(receipt: EpicReceipt): string {
   const [first, ...rest] = receipt.stories;
-  if (!receipt.generic || !first) return singleLine(receipt.title);
+  if (!first || (!receipt.generic && !receipt.partial))
+    return singleLine(receipt.title);
   if (!rest.length) return singleLine(first.title);
   return `${singleLine(first.title)} and ${counted(rest.length, "more change", "more changes")}`;
 }

@@ -1379,8 +1379,28 @@ kbd {
 .priority-mark > i:nth-child(3) {
   height: 9px;
 }
+.priority-mark.urgent > i {
+  background: #c4643f;
+}
 .priority-mark.high > i {
   background: #b3a179;
+}
+.priority-mark.none > i {
+  height: 2.5px;
+  align-self: center;
+}
+.person-mark {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #e2eee6;
+  color: #37614b;
+  font-size: 8px;
+  font-weight: 650;
+  letter-spacing: 0;
 }
 .priority-mark.medium > i:nth-child(1),
 .priority-mark.medium > i:nth-child(2) {

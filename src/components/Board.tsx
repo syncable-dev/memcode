@@ -19,7 +19,9 @@ import { isActive, stageLabel } from "../domain";
 import { cardActivityFeed } from "../card-activity";
 import { dateLabel, dayAt } from "../planning/dates";
 import type { StoryReadiness } from "../planning/readiness";
-import { PriorityMark, StageIcon, WorkerMark } from "./UI";
+import { PersonMark, PriorityMark, StageIcon, WorkerMark } from "./UI";
+import { priorityLabels } from "../planning/priority";
+import { TrackedKey } from "./TrackedIssue";
 import { Select } from "./Select";
 
 export interface BoardGroup {
@@ -318,7 +320,7 @@ function BoardContent({
                 <span role="cell">{checkbox(task)}</span>
                 <span role="cell">
                   <button className="row-title" onClick={() => open(task)}>
-                    <small>{task.identifier}</small>
+                    <small>{task.tracker?.key ?? task.identifier}</small>
                     <span>{task.title}</span>
                     {task.parentId && (
                       <span className="sub-story-tag">sub</span>
@@ -331,7 +333,7 @@ function BoardContent({
                 </span>
                 <span role="cell">
                   <PriorityMark value={task.priority} />
-                  <small className="capitalize">{task.priority}</small>
+                  <small>{priorityLabels[task.priority].replace(" priority", "")}</small>
                 </span>
                 <span role="cell" className="row-points">
                   {task.estimate ?? "—"}
@@ -515,8 +517,10 @@ function BoardContent({
                       <span className="card-identifier card-selection">
                         {toggle && checkbox(task)}
                         <span>{task.identifier}</span>
+                        <TrackedKey task={task} />
                       </span>
                       <div className="card-actions">
+                        {task.assignee && <PersonMark person={task.assignee} />}
                         <PriorityMark value={task.priority} />
                         <span
                           onClick={(event) => event.stopPropagation()}

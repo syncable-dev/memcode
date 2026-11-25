@@ -48,10 +48,27 @@ export class FleetDecisions {
         sharedSymbols(item.scope, symbols).length > 0,
     );
   }
-  /** Whether a peer's edit was already part of a settled disagreement with this task. */
-  settledWith(task: WorkItem, peer: FleetDeclaration) {
-    const decision = peer.decisionId ? this.find(peer.decisionId) : undefined;
-    return decision?.status === "resolved" && decision.taskIds.includes(task.id);
+  /** A disagreement not yet settled that involves the task. */
+  openWith(task: WorkItem) {
+    return this.all().find(
+      (item) => item.status === "open" && item.taskIds.includes(task.id),
+    );
+  }
+  /**
+   * Whether the two tasks' disagreement about these symbols was already settled. What
+   * either does there afterwards follows from the outcome, so nobody is asked again.
+   */
+  settledWith(task: WorkItem, peer: FleetDeclaration, symbols: string[]) {
+    return this.all().some(
+      (item) =>
+        item.status === "resolved" &&
+        item.severity === "C" &&
+        item.projectId === task.projectId &&
+        item.branch === task.run.branch &&
+        item.taskIds.includes(task.id) &&
+        item.taskIds.includes(peer.taskId) &&
+        symbols.every((symbol) => item.scope.includes(symbol)),
+    );
   }
   raise(
     project: Project,

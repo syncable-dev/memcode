@@ -1,12 +1,18 @@
 import { isActive } from "./domain";
+import { isOnBranch, isUnfinished, openTasks } from "./goal-work";
 import type { HandoffAttribution } from "./handoff";
-import type { WorkItem } from "./shared";
+import type { Epic, WorkItem } from "./shared";
 
-/** One epic is one branch, so every story in it lands in one pull request. */
+/** A goal's branch is one pull request, with every task that was worked on there. */
 export interface EpicReadiness {
+  /** The tasks on the branch. */
   total: number;
   ready: number;
   active: number;
+  /** The goal's other tasks that are still to do. They hold nothing up. */
+  waiting: number;
+  /** Tasks on the branch whose worker stopped before it was done. */
+  unfinished: number;
   isReady: boolean;
 }
 
@@ -19,6 +25,12 @@ export interface EpicPullRequest {
   number?: number;
   state?: "open" | "merged" | "closed";
   mergedAt?: string;
+  /** When MemCode last pushed the branch for it. Work finished later is not in it. */
+  pushedAt?: string;
+  /** The commit it pushed. */
+  revision?: string;
+  /** How many tasks it finished when it merged. */
+  tasks?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -36,6 +48,8 @@ export interface PullRequestStatus {
   mergeMethod?: MergeMethod;
   /** Why Merge is unavailable; absent when GitHub would merge it now. */
   mergeBlocker?: string;
+  /** The base moved: bringing it in is what makes it mergeable. */
+  needsBase?: boolean;
 }
 
 export interface MergeResult {
@@ -48,6 +62,12 @@ export interface GitHubRepository {
   repo: string;
 }
 
+export interface UnfinishedTask {
+  identifier: string;
+  title: string;
+  state: "failed" | "stopped" | "waiting";
+}
+
 export interface PullRequestPlan {
   epicId: string;
   branch: string;
@@ -58,6 +78,8 @@ export interface PullRequestPlan {
   remote?: string;
   github?: GitHubRepository;
   readiness: EpicReadiness;
+  /** Tasks whose worker stopped before it was done. Shipping them takes a yes. */
+  unfinished: UnfinishedTask[];
   openConflicts: number;
   existing?: EpicPullRequest;
   status?: PullRequestStatus;
@@ -75,6 +97,8 @@ export interface CreatePullRequest {
   title: string;
   description: string;
   commitMessage: string;
+  /** The person said yes to shipping what unfinished tasks left behind. */
+  shipUnfinished?: boolean;
 }
 
 export interface PullRequestResult {
@@ -87,17 +111,20 @@ export interface PullRequestResult {
 
 export function epicReadiness(
   tasks: WorkItem[],
-  epicId: string,
+  goal: Pick<Epic, "id" | "branch">,
 ): EpicReadiness {
-  const stories = tasks.filter((task) => task.epicId === epicId);
+  const stories = tasks.filter((task) => isOnBranch(task, goal));
   const ready = stories.filter(
-    (task) => task.stage === "review" || task.stage === "done",
+    (task) =>
+      (task.stage === "review" || task.stage === "done") && !isUnfinished(task),
   ).length;
   const active = stories.filter(isActive).length;
   return {
     total: stories.length,
     ready,
     active,
+    waiting: openTasks(tasks, goal).filter((task) => !isOnBranch(task, goal)).length,
+    unfinished: stories.filter(isUnfinished).length,
     isReady: stories.length > 0 && ready === stories.length && active === 0,
   };
 }

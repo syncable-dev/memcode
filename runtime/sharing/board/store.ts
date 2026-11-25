@@ -105,6 +105,9 @@ export class BoardStore {
   private async read(name: string): Promise<StateFile | undefined> {
     try {
       const read: unknown = JSON.parse(await readFile(this.path(name), "utf8"));
+      const seen = (read as Partial<StateFile> | null)?.seen;
+      // Kept by a MemCode from before boards said who keeps them in step with a tracker.
+      if (seen && typeof seen === "object") seen.trackers ??= {};
       return isStateFile(read) ? read : undefined;
     } catch (problem) {
       if (isMissing(problem) || problem instanceof SyntaxError)

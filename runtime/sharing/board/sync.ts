@@ -84,6 +84,7 @@ const WRITING_ORDER: Collection[] = [
   "lanes",
   "fields",
   "views",
+  "trackers",
   "cycles",
   "goals",
   "tasks",

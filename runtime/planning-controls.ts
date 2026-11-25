@@ -1,3 +1,5 @@
+import { assertOwnCycle } from "./trackers/routes";
+import { priorities } from "../src/planning/priority";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import type { AppState, Project } from "../src/shared";
@@ -52,6 +54,9 @@ export function registerPlanningControls(
         throw new Error(
           "Completed cycles keep their recorded dates and scope.",
         );
+      // Capacity and calendar are MemCode's own, also for a cycle that comes from Linear.
+      if (Object.keys(patch).some((key) => !["capacity", "calendar"].includes(key)))
+        assertOwnCycle(state(), id);
       const next = { ...cycle, ...patch };
       validateCycle(next);
       Object.assign(cycle, patch);
@@ -59,6 +64,7 @@ export function registerPlanningControls(
     },
   );
   register("cycle:start", id, async (id) => {
+    assertOwnCycle(state(), id);
     beginCycle(state(), id);
     await changed();
   });
@@ -66,6 +72,7 @@ export function registerPlanningControls(
     "cycle:complete",
     z.object({ id, targetCycleId: id.nullable().optional() }),
     async ({ id, targetCycleId }) => {
+      assertOwnCycle(state(), id);
       const result = finishCycle(state(), id, targetCycleId);
       await changed();
       return result;
@@ -73,7 +80,8 @@ export function registerPlanningControls(
   );
   const filters = z.object({
     query: z.string().max(500),
-    priority: z.enum(["all", "high", "medium", "low"]),
+    priority: z.enum(["all", ...priorities]),
+    assignee: z.string().max(200).optional(),
     epicId: id,
     cycleId: id,
     label: z.string().max(100),

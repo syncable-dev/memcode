@@ -1,3 +1,5 @@
+import { initials, type Person } from "../people";
+import { priorityLabels, type Priority } from "../planning/priority";
 import {
   Check,
   Circle,
@@ -81,15 +83,21 @@ export function StageIcon({ stage }: { stage: Stage }) {
 }
 
 export function PriorityMark({ value }: { value: string }) {
+  const label = priorityLabels[value as Priority] ?? value;
   return (
-    <span
-      className={`priority-mark ${value}`}
-      title={`${value} priority`}
-      aria-label={`${value} priority`}
-    >
+    <span className={`priority-mark ${value}`} title={label} aria-label={label}>
       <i />
       <i />
       <i />
+    </span>
+  );
+}
+
+/** Whose task it is. */
+export function PersonMark({ person }: { person: Person }) {
+  return (
+    <span className="person-mark" title={person.name} aria-label={person.name}>
+      {initials(person.name)}
     </span>
   );
 }

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { childEnv, findCommand, type Command } from "./commands";
 import { exec, git } from "./local";
 import type { BaseReason } from "../src/branches";
@@ -80,10 +81,12 @@ export function goalBranchName(
 export function quickChangesBranchName(
   strategy: Pick<BranchStrategy, "featurePrefix">,
   day: Date,
+  /** What sets it apart from another computer's batch of the same day. */
+  title = "",
 ): string {
   return branchName(
     strategy.featurePrefix,
-    `quick-changes-${day.toISOString().slice(0, 10)}`,
+    `quick-changes-${day.toISOString().slice(0, 10)} ${title}`,
   );
 }
 
@@ -92,12 +95,17 @@ export async function availableBranch(
   cwd: string,
   name: string,
   remote?: string,
+  /** Names in use that Git here does not know, such as a goal's on another computer. */
+  inUse: ReadonlySet<string> = new Set(),
 ): Promise<string> {
   for (let attempt = 1; ; attempt++) {
     const candidate = attempt === 1 ? name : `${name}-${attempt}`;
     const taken =
+      inUse.has(candidate) ||
       (await refExists(cwd, `refs/heads/${candidate}`)) ||
-      (!!remote && (await refExists(cwd, `refs/remotes/${remote}/${candidate}`)));
+      (!!remote &&
+        ((await refExists(cwd, `refs/remotes/${remote}/${candidate}`)) ||
+          (await isPushed(cwd, remote, candidate))));
     if (!taken) return candidate;
   }
 }
@@ -198,7 +206,10 @@ function branchName(prefix: string, words: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
-  return prefix + clippedAtWord(stem, branchNameLimit - prefix.length);
+  // Words with no Latin letter or digit, such as a Japanese title, leave nothing to use.
+  const name =
+    stem || `work-${createHash("sha1").update(words).digest("hex").slice(0, 8)}`;
+  return prefix + clippedAtWord(name, branchNameLimit - prefix.length);
 }
 
 function clippedAtWord(stem: string, limit: number): string {
@@ -311,6 +322,24 @@ function mergedBranchFrom(subject: string, base: string): MergedBranch[] {
 }
 
 /** Fetches one branch from a remote, giving up quietly when the network does not answer. */
+/** Someone pushed it since the last fetch. Offline, what Git here knows has to do. */
+export async function isPushed(
+  cwd: string,
+  remote: string,
+  branch: string,
+): Promise<boolean> {
+  return exec("git", ["ls-remote", "--heads", remote, `refs/heads/${branch}`], {
+    cwd,
+    windowsHide: true,
+    encoding: "utf8",
+    timeout: networkTimeoutMs,
+    env: { ...childEnv(), GIT_TERMINAL_PROMPT: "0" },
+  }).then(
+    ({ stdout }) => !!stdout.trim(),
+    () => false,
+  );
+}
+
 export async function fetchBranch(cwd: string, remote: string, branch: string) {
   await exec("git", ["fetch", "--quiet", remote, branch], {
     cwd,

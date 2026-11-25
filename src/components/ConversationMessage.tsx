@@ -26,6 +26,8 @@ interface Props {
   message: Message;
   harness: WorkItem["harness"];
   comments: ReviewComment[];
+  /** Where the words came from, when nobody here wrote them. */
+  from?: string;
   onOpenLink: (href: string) => void;
   onOpenReference: (reference: ReviewReference, id?: string) => void;
 }
@@ -59,6 +61,7 @@ const ConversationMessage = memo(
     harness,
     onOpenLink,
     comments,
+    from,
     onOpenReference,
   }: Props) {
     if (message.role === "tool") return <ToolMessage text={message.text} />;
@@ -73,12 +76,16 @@ const ConversationMessage = memo(
       <article className={"message-block " + message.role}>
         <header>
           {message.role === "user" ? (
-            <span className="message-avatar">{message.actor?.name.slice(0, 1) ?? "A"}</span>
+            <span className="message-avatar">
+              {from?.slice(0, 1) ?? message.actor?.name.slice(0, 1) ?? "A"}
+            </span>
           ) : (
             <HarnessMark id={harness} small />
           )}
           <strong>
-            {message.role === "user" ? message.actor?.name ?? "You" : harnessNames[harness]}
+            {message.role === "user"
+              ? (from ?? message.actor?.name ?? "You")
+              : harnessNames[harness]}
           </strong>
           {message.actor && <span className="message-origin" title={message.actor.name + " · " + message.actor.device}>{message.actor.device}</span>}
           <Time at={message.at} />
@@ -144,6 +151,7 @@ const ConversationMessage = memo(
   },
   (a, b) =>
     a.harness === b.harness &&
+    a.from === b.from &&
     sameDisplayedMessage(a.message, b.message) &&
     a.comments.length === b.comments.length &&
     a.comments.every(
@@ -160,6 +168,7 @@ export function ConversationMessages({
   messages,
   harness,
   comments,
+  from,
   onOpenLink,
   onOpenReference,
 }: Omit<Props, "message"> & { messages: Message[] }) {
@@ -214,6 +223,7 @@ export function ConversationMessages({
         <ConversationMessage
           key={message.id}
           message={message}
+          from={message === messages[0] ? from : undefined}
           harness={harness}
           onOpenLink={openLink}
           onOpenReference={openReference}

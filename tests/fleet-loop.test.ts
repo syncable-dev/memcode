@@ -444,6 +444,76 @@ test("once the person has chosen between two shapes, the chosen task reshapes th
   assert.equal(f.state.fleetConflicts.filter((item) => item.status === "open").length, 0);
 });
 
+test("the file that exports what two workers reshape is nobody's signature", async (t) => {
+  const f = await goal(t, 3);
+  const [first, second, third] = f.tasks;
+  // Each names the file it exports from in the same group, so it comes as a signature too.
+  await f.say(first, declare([cartTotal, "src/index.js"], "signature", "Take the tax rate."));
+  const joined = await f.say(second, declare(["src/index.js", "src/cart.js::currencies"], "add", "List currencies."));
+  assert.equal(joined.canEdit, true, "nobody waits for an export list");
+  assert.equal((await f.say(first, { action: "record" })).class, "B");
+  assert.equal((await f.say(second, { action: "record" })).class, "B");
+  const later = await f.say(third, declare([applyDiscount, "src/index.js"], "signature", "Take a code."));
+  assert.equal(later.canEdit, true, "two reshapings that share only the export list");
+  assert.equal((await f.say(third, { action: "record" })).class, "A");
+  assert.equal(f.state.fleetConflicts.length, 0);
+});
+
+test("removing a whole file under someone's edit is still a disagreement", async (t) => {
+  const f = await goal(t);
+  const [remover, editor] = f.tasks;
+  await f.say(editor, declare(["src/discounts.js"], "change", "Rename the codes."));
+  await f.say(remover, declare(["src/discounts.js"], "remove", "Discounts are gone."));
+  assert.equal((await f.say(remover, { action: "record" })).class, "C");
+});
+
+test("what was settled between two tasks is not asked again, also when a third was in an earlier disagreement", async (t) => {
+  const f = await goal(t, 3);
+  const [options, currency, other] = f.tasks;
+  await f.say(options, declare([formatPrice], "signature", "Take an options object."));
+  await f.say(options, { action: "record" });
+  // The first task's shape was already part of a disagreement with someone else.
+  const earlier = await f.say(other, declare([formatPrice], "signature", "Take a locale."));
+  await f.fleet.resolve(earlier.decision.id, "Options stand.", "task-1");
+  const stopped = await f.say(currency, declare([formatPrice], "signature", "Take a currency code."));
+  assert.equal(stopped.canEdit, false, "a new pair has its own disagreement");
+  await f.fleet.resolve(stopped.decision.id, "The currency code.", "task-2");
+  assert.equal((await f.say(currency, declare([formatPrice], "signature", "Take a currency code."))).canEdit, true);
+  assert.equal((await f.say(currency, { action: "record" })).class, "A");
+  // The other task rebuilds on it, and the one that stands touches it again.
+  assert.equal((await f.say(options, declare([formatPrice], "signature", "Options that hold the code."))).canEdit, true);
+  await f.say(options, { action: "record" });
+  assert.equal((await f.say(currency, declare([formatPrice], "signature", "Name the code."))).canEdit, true);
+  assert.equal(f.state.fleetConflicts.filter((item) => item.status === "open").length, 0);
+  assert.equal(f.state.fleetConflicts.length, 2);
+});
+
+test("an intent Fleet still holds from an earlier, settled edit does not bring the person in", async (t) => {
+  const f = await goal(t, 3);
+  const [tax, coupon, history] = f.tasks;
+  await f.say(tax, declare([cartTotal], "signature", "Take the tax rate."));
+  await f.say(tax, { action: "record" });
+  const stopped = await f.say(coupon, declare([cartTotal], "signature", "Take a coupon."));
+  await f.fleet.resolve(stopped.decision.id, "Tax first, then the coupon.", "task-1");
+  // The tax worker is done. Fleet goes on holding what it announced for two minutes.
+  tax.run.state = "finished";
+  await f.say(history, declare([cartTotal], "change", "Keep the lines."));
+  await f.say(coupon, declare([cartTotal], "signature", "Take a coupon after the tax rate."));
+  const recorded = await f.say(coupon, { action: "record" });
+  assert.equal(recorded.class, "C");
+  const judged = await f.say(coupon, {
+    action: "verdict",
+    decisionId: recorded.decision.id,
+    verdict: "reconcile",
+    reason: "Keeping the lines fits inside.",
+  });
+  assert.equal(judged.outcome, "settled", "a signature change over an ordinary edit");
+  const decision = f.state.fleetConflicts.at(-1)!;
+  assert.equal(decision.resolutionKind, "agents");
+  assert.equal(decision.needs, undefined);
+  assert.equal(f.engine.counts().fleet_resolve_escalation! >= 1, true, "Fleet's own record is closed too");
+});
+
 test("a shape the person has already accepted is history to build on, not a disagreement", async (t) => {
   const { f, options, currency } = await rivalShapes(t);
   options.run.state = "finished";

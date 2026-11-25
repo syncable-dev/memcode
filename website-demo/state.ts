@@ -1,4 +1,5 @@
 import { initialState } from '../src/seed';
+import { harnessNames } from '../src/shared';
 import type { AppState, CreateTask, WorkItem, MemCodeAPI, RuntimeInfo, Harness } from '../src/shared';
 
 const at = '2026-11-16T10:00:00.000Z';
@@ -8,7 +9,7 @@ const terminalListeners = new Set<(value: any) => void>();
 export const state = initialState();
 const project = { ...state.projects[0], id: 'example', name: 'Lumen', description: 'Build a thoughtful documentation experience. Keep the plan, worker conversations and review together.', path: '/example/lumen', branch: 'epic/documentation', analysis: 'ready' as const, example: false };
 const harnesses: Harness[] = ['codex', 'claude', 'cursor'];
-export const runtime: RuntimeInfo = { appVersion: 'Website example', memtraceAvailable: true, dataPath: 'In-memory website example', harnesses: harnesses.map((id) => ({ id, name: { codex: 'Codex', claude: 'Claude Code', cursor: 'Cursor' }[id], available: true, path: `/example/${id}`, models: [{ id: 'configured-model', label: 'Your configured model', tier: 'balanced' } as any] })) };
+export const runtime: RuntimeInfo = { appVersion: 'Website example', memtraceAvailable: true, dataPath: 'In-memory website example', harnesses: harnesses.map((id) => ({ id, name: harnessNames[id], available: true, path: `/example/${id}`, models: [{ id: 'configured-model', label: 'Your configured model', tier: 'balanced' } as any] })) };
 Object.assign(state, { projects: [project], activeProjectId: project.id, tasks: state.tasks.slice(0, 6), epics: [], artifacts: [], onboarding: { version: 1, step: 'ready', dismissed: true }, workerConnections: Object.fromEntries(harnesses.map((id) => [id, { harness: id, approvedAt: at, runtimePath: `/example/${id}`, auth: 'authenticated', scopeVersion: 1 }])), storyComments: [], reviewComments: [] });
 const titles = ['Create a fast documentation search', 'Make navigation work beautifully on mobile', 'Build the documentation landing page', 'Add a readable dark theme', 'Review keyboard navigation', 'Write the getting-started guide'];
 state.tasks.forEach((task, index) => {

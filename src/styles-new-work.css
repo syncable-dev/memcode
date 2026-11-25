@@ -437,6 +437,14 @@
   min-width: 0;
   margin-top: 3px;
 }
+.nw-after {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 4px;
+  font-size: 11px;
+  color: #8a7445;
+}
 .nw-steps-toggle {
   display: inline-flex;
   align-items: center;

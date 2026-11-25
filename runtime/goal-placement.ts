@@ -50,7 +50,7 @@ export class GoalPlacement {
       if (epic.projectId !== projectId || epic.closedAt || isQuickChanges(epic))
         continue;
       const shared = [
-        ...(await goalFiles(state, epic.id, this.deps.readChanges)),
+        ...(await goalFiles(state, epic.id, this.deps.readChanges, epic)),
       ]
         .filter((file) => wanted.has(file))
         .sort();

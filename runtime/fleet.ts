@@ -4,9 +4,11 @@ import { join } from "node:path";
 import type { AppState, FleetConflict, Project, WorkItem } from "../src/shared";
 import { workerRecordsFolder } from "./worker-records";
 import {
+  breaksAt,
   breaksCallers,
   changeKinds,
   changeVerbs,
+  onlyAdds,
   type ChangeKind,
   type FleetDeclaration,
   type FleetPosition,
@@ -18,7 +20,7 @@ import { coordinationSchema, type CoordinationRequest } from "./fleet-requests";
 import { engineBreaks, engineIntent, fileOf, symbolIdentity } from "./fleet-symbols";
 import { conflictClass } from "./fleet-classes";
 import { ruling } from "./fleet-referee";
-import { FleetDeclarations, sharedSymbols } from "./fleet-declarations";
+import { brokenBetween, FleetDeclarations, sharedSymbols } from "./fleet-declarations";
 import { FleetDecisions, agentOf } from "./fleet-decisions";
 import { FleetNews, type FleetNewsItem } from "./fleet-news";
 import { rereadFleetSource } from "./fleet-source";
@@ -31,6 +33,22 @@ type Edit = Pick<CoordinationRequest, "symbols" | "kind" | "plan">;
 /** An agent outside MemCode working on the same branch, as Fleet reports it. */
 type Outsider = { agentId: string; plan?: string; breaks: boolean; symbols: string[] };
 
+interface Hold {
+  symbols: string[];
+  decisionId?: string;
+}
+/** What a worker that ended its turn was still waiting for. */
+export interface Owed {
+  /** A disagreement that is still open. */
+  open?: FleetConflict;
+  /** One settled after the worker last heard from MemCode. */
+  settled?: FleetConflict;
+  /** Code a peer's change held, which is free now. */
+  freed: string[];
+  /** Code a peer is still reshaping. */
+  busy: string[];
+}
+
 /** Fleet forgets a declaration after two minutes; one still being edited is renewed before that. */
 const renewDeclarationMs = 45_000;
 /** How often a goal asks Fleet whether a decision was settled somewhere else. */
@@ -42,6 +60,8 @@ const keptMessages = 250;
 const callersAsked = 5;
 /** A change of this kind reaches the code that calls the symbol, not only the symbol itself. */
 const reachesCallers = (kind: ChangeKind) => breaksCallers(kind) || kind === "rename";
+/** Fleet's reason when it counts two sides that each break what the other relies on. */
+const bothDestructive = "destructive change on both sides";
 /** A person may take minutes or hours: the worker stops cleanly and MemCode brings it back. */
 const whileThePersonDecides =
   "Finish your other symbols first. When nothing else is left, end your turn and say you are waiting for the decision: MemCode pauses this task and brings you back with the decision, so do not keep polling.";
@@ -60,6 +80,12 @@ export class FleetCoordinator {
   private news = new FleetNews();
   /** Symbols a worker was told to hold; it hears when they change. */
   private watching = new Map<string, Set<string>>();
+  /** What each worker was told to hold and has not declared again. */
+  private held = new Map<string, Hold[]>();
+  /** A disagreement was settled: the workers that stopped for it can carry on. */
+  onSettled?: (decision: FleetConflict) => void;
+  /** A worker is done reshaping these symbols: those that stopped for them can carry on. */
+  onFreed?: (task: WorkItem, symbols: string[]) => void;
   private renewed = new Map<string, number>();
   private outsiders = new Map<string, Outsider[]>();
   private decisionsChecked = new Map<string, number>();
@@ -98,6 +124,7 @@ export class FleetCoordinator {
     if (signal?.aborted) throw Error("Worker coordination was cancelled.");
     const reply = await this.respond(project, task, request, signal);
     const news = this.news.take(task.id);
+    this.heard(task, news);
     await this.remember(task, request, reply);
     await this.changed();
     return news.length ? { ...reply, news } : reply;
@@ -121,7 +148,23 @@ export class FleetCoordinator {
   }
   /** Updates waiting for the worker, handed over with whatever it asked MemCode next. */
   pendingNews(task: WorkItem): FleetNewsItem[] {
-    return this.news.take(task.id);
+    const news = this.news.take(task.id);
+    this.heard(task, news);
+    return news;
+  }
+  /** A worker that was told its code is free again knows: what it does with that is its call. */
+  private heard(task: WorkItem, news: FleetNewsItem[]) {
+    for (const item of news)
+      this.held.set(
+        task.id,
+        (this.held.get(task.id) ?? []).filter((hold) =>
+          item.type === "decided"
+            ? hold.decisionId !== item.decisionId
+            : item.type !== "peer_changed" ||
+              !!hold.decisionId ||
+              !sharedSymbols(hold.symbols, (item.symbols as string[]) ?? []).length,
+        ),
+      );
   }
 
   // ── Declare: say what you are about to change, then edit ────────────────────
@@ -167,10 +210,20 @@ export class FleetCoordinator {
   }
   /** Peers' unsettled reshapings of a symbol this task is about to reshape as well. */
   private rivalShapes(task: WorkItem, symbols: string[], kind: ChangeKind) {
-    if (!breaksCallers(kind)) return [];
+    const reshaped = symbols.filter((symbol) => breaksAt(kind, symbol));
+    if (!reshaped.length) return [];
     return this.declarations
-      .reshapedBy(task, symbols)
-      .filter((peer) => !this.decisions.settledWith(task, peer));
+      .reshapedBy(task, reshaped)
+      .filter((peer) => !this.settledBetween(task, { symbols: reshaped, kind }, peer));
+  }
+  /** A disagreement about what the two edits break between them that is already settled. */
+  private settledBetween(
+    task: WorkItem,
+    own: Pick<FleetDeclaration, "symbols" | "kind">,
+    peer: FleetDeclaration,
+  ) {
+    const broken = brokenBetween(own, peer);
+    return broken.length > 0 && this.decisions.settledWith(task, peer, broken);
   }
   /**
    * Two tasks want different shapes for the same symbol. The second one does not edit it:
@@ -183,7 +236,7 @@ export class FleetCoordinator {
     rivals: FleetDeclaration[],
   ) {
     const contested = [
-      ...new Set(rivals.flatMap((rival) => sharedSymbols(wanted.symbols, rival.symbols))),
+      ...new Set(rivals.flatMap((rival) => brokenBetween(wanted, rival))),
     ];
     const decision = this.decisions.raise(project, task, contested, [
       { taskId: task.id, agentId: agentOf(task.id), kind: wanted.kind, plan: wanted.plan },
@@ -238,10 +291,24 @@ export class FleetCoordinator {
     const watched = this.watching.get(task.id) ?? new Set<string>();
     for (const symbol of heldSymbols) watched.add(symbol);
     this.watching.set(task.id, watched);
+    const held = (this.held.get(task.id) ?? []).filter(
+      (item) => !sharedSymbols(item.symbols, heldSymbols).length,
+    );
+    this.held.set(task.id, [
+      ...held,
+      { symbols: heldSymbols, decisionId: detail.decision?.id },
+    ]);
     return { directive: "hold", canEdit: false, heldSymbols, ...detail };
   }
   private stopWatching(task: WorkItem, symbols: string[]) {
     for (const symbol of symbols) this.watching.get(task.id)?.delete(symbol);
+    // It named part of what it was held on and went ahead: the rest it can do without.
+    this.held.set(
+      task.id,
+      (this.held.get(task.id) ?? []).filter(
+        (item) => !sharedSymbols(item.symbols, symbols).length,
+      ),
+    );
   }
   /** A breaking change is about to land under peers' edits: they hear now, not after the fact. */
   private warnEditors(task: WorkItem, own: FleetDeclaration, editing: FleetDeclaration[]) {
@@ -289,13 +356,14 @@ export class FleetCoordinator {
       ...this.rivalShapes(task, own.symbols, own.kind).filter(
         (rival) => !overlapping.some((peer) => peer.taskId === rival.taskId),
       ),
-    ].filter((peer) => !this.decisions.settledWith(task, peer));
+    ].filter((peer) => !this.settledBetween(task, own, peer));
     const outsiders = this.outsidersAt(own, episode);
-    const reached = conflictClass(own.kind, [
-      ...peers.map((peer) => breaksCallers(peer.kind)),
-      ...outsiders.map((outsider) => outsider.breaks),
+    const reached = conflictClass(onlyAdds(own.kind) ? own.kind : "change", [
+      ...peers.map((peer) => brokenBetween(own, peer).length > 0),
+      ...outsiders.map((outsider) => breaksCallers(own.kind) || outsider.breaks),
     ]);
     this.declarations.close(own, reached);
+    this.onFreed?.(task, own.symbols);
     const told = this.tellPeers(task, own);
     if (reachesCallers(own.kind))
       await this.tellCallers(project, task, own, "peer_changed", told);
@@ -483,7 +551,7 @@ export class FleetCoordinator {
     ];
     const contested = [
       ...new Set([
-        ...peers.flatMap((peer) => sharedSymbols(own.symbols, peer.symbols)),
+        ...peers.flatMap((peer) => brokenBetween(own, peer)),
         ...outsiders.flatMap((outsider) => sharedSymbols(own.symbols, outsider.symbols)),
       ]),
     ];
@@ -601,10 +669,12 @@ export class FleetCoordinator {
       decision.recommendedTaskId = own.recommendedTaskId;
       return this.decisions.askPerson(decision, own.person, own.reason);
     }
-    if (fleet.outcome === "human_required")
+    const outdated = this.countsEarlierEdits(decision, fleet);
+    if (fleet.outcome === "human_required" && !outdated)
       return this.decisions.askPerson(decision, "decide", fleet.detail?.reason);
     if ("wait" in own) return;
-    if (fleet.outcome !== "auto_apply") {
+    if (outdated) this.tellFleet(decision, own.winnerTaskId);
+    else if (fleet.outcome !== "auto_apply") {
       decision.recommendedTaskId = own.winnerTaskId;
       return this.decisions.askPerson(decision, "confirm", "Fleet is set to ask before it settles anything.");
     }
@@ -613,6 +683,31 @@ export class FleetCoordinator {
       { by: "agents", winnerTaskId: own.winnerTaskId, resolution: this.reasoning(decision) },
       actor,
     );
+  }
+  /**
+   * Fleet keeps an intent for two minutes, also after its edit was recorded and settled,
+   * and counts it as one more side that breaks something. MemCode knows the sides: when
+   * every one of them is here and only one breaks callers, that rule does not apply.
+   */
+  private countsEarlierEdits(decision: FleetConflict, fleet: Json) {
+    const positions = decision.positions ?? [];
+    return (
+      fleet.outcome === "human_required" &&
+      fleet.detail?.reason === bothDestructive &&
+      positions.every((position) => position.taskId && position.kind) &&
+      positions.filter((position) => breaksCallers(position.kind!)).length <= 1
+    );
+  }
+  /** Closes Fleet's own record of a disagreement MemCode settled. */
+  private tellFleet(decision: FleetConflict, winnerTaskId?: string) {
+    const project = this.state().projects.find((item) => item.id === decision.projectId);
+    const task = project && this.onBranch(project, decision.branch);
+    if (!project || !task || !decision.escalationId) return;
+    void this.direct(project, task, "fleet_resolve_escalation", {
+      escalation_id: decision.escalationId,
+      resolution: this.reasoning(decision),
+      ...(winnerTaskId ? { winner: agentOf(winnerTaskId) } : {}),
+    }).catch(() => {});
   }
   private reasoning(decision: FleetConflict) {
     return (decision.positions ?? [])
@@ -629,6 +724,7 @@ export class FleetCoordinator {
     actor?: WorkItem,
   ) {
     this.decisions.settle(decision, outcome);
+    this.onSettled?.(decision);
     const winner = this.state().tasks.find((task) => task.id === outcome.winnerTaskId);
     for (const task of this.state().tasks) {
       if (!decision.taskIds.includes(task.id) || task.id === actor?.id) continue;
@@ -645,6 +741,20 @@ export class FleetCoordinator {
             : `Settled for ${decision.scope.join(", ")}: ${winner?.identifier ?? "the other change"} stands. Re-read it and rebuild your change on that version. ${outcome.resolution}`,
       });
     }
+    // Workers that were only held off by it hear that the code is free again.
+    for (const [taskId, held] of this.held)
+      if (
+        !decision.taskIds.includes(taskId) &&
+        held.some((hold) => hold.decisionId === decision.id)
+      )
+        this.news.tell(taskId, {
+          type: "decided",
+          at: now(),
+          decisionId: decision.id,
+          directive: "proceed",
+          resolution: outcome.resolution,
+          message: `Settled for ${decision.scope.join(", ")}: that code is free again. ${outcome.resolution} Declare it and build on the version there now.`,
+        });
   }
   private standing(decision: FleetConflict, task: WorkItem) {
     const directive = this.decisions.directive(decision, task);
@@ -696,12 +806,47 @@ export class FleetCoordinator {
   async after(project: Project, task: WorkItem): Promise<void> {
     if (this.declarations.open(task)) await this.record(project, task, {});
   }
+  /**
+   * What a worker whose turn ended was still waiting for. Taken before it is released and
+   * answered after, because a person can decide in between: a model writing its last
+   * message hears nothing any more.
+   */
+  owed(task: WorkItem): () => Owed {
+    const held = this.held.get(task.id) ?? [];
+    const unheard = this.news
+      .unheard(task.id)
+      .flatMap((item) =>
+        item.type === "decided" && item.directive !== "proceed"
+          ? [String(item.decisionId)]
+          : [],
+      );
+    return () => {
+      const about = [...held.flatMap((item) => item.decisionId ?? []), ...unheard].flatMap(
+        (id) => this.decisions.find(id) ?? [],
+      );
+      const waited = held.flatMap((item) => (item.decisionId ? [] : item.symbols));
+      const busy = waited.filter((symbol) =>
+        this.declarations.breakingInFlight(task, [symbol]),
+      );
+      return {
+        open:
+          this.decisions.openWith(task) ??
+          about.find((decision) => decision.status === "open"),
+        settled: about.findLast((decision) => decision.status === "resolved"),
+        freed: waited.filter((symbol) => !busy.includes(symbol)),
+        busy,
+      };
+    };
+  }
   async release(project: Project, task: WorkItem): Promise<void> {
     try {
       await this.changes.release(project, task, this.sharing(task, []));
     } finally {
+      const left = this.declarations.open(task)?.symbols;
       this.declarations.abandon(task);
+      if (left) this.onFreed?.(task, left);
       this.watching.delete(task.id);
+      this.held.delete(task.id);
       this.news.forget(task.id);
     }
   }

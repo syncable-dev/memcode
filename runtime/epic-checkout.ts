@@ -18,12 +18,21 @@ export async function enterEpicCheckout(
   project: Project,
   epic: Epic,
   branch: string,
+  /** The goal shipped an earlier branch, whose checkout may still be there. */
+  shippedBefore = false,
 ): Promise<{ workspace: string; created: boolean }> {
   const root = await realpath(project.path!);
   await git(root, ["check-ref-format", "--branch", branch]);
   const common = await commonDirectory(root);
   const checkoutId = createHash("sha256")
-    .update(key(common) + "\0" + project.id + "\0" + epic.id)
+    .update(
+      key(common) +
+        "\0" +
+        project.id +
+        "\0" +
+        epic.id +
+        (shippedBefore ? "\0" + branch : ""),
+    )
     .digest("hex")
     .slice(0, 24);
   const anchor = join(resolve(dataDir), "epic-checkouts");
@@ -78,8 +87,13 @@ export async function enterEpicCheckout(
     (entry) => entry.branch === `refs/heads/${branch}`,
   );
   if (occupied) {
-    if (key(await realpath(occupied.worktree)) === key(root))
-      return { workspace: root, created: false };
+    const open = await realpath(occupied.worktree);
+    if (key(open) === key(root)) return { workspace: root, created: false };
+    // MemCode made it for this goal before the branch got the name it has now.
+    if (within(actualAnchor, open) && occupied.locked === undefined) {
+      await ensureLocalRuntimeIgnored(open);
+      return { workspace: open, created: false };
+    }
     throw Error(
       "This goal branch is already open in another checkout. Connect that checkout explicitly; MemCode has not moved or overwritten it.",
     );

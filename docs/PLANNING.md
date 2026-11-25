@@ -14,7 +14,7 @@ MemCode implements its own domain model and UI; no itsaplan source is incorporat
 | Labels and relationships | Labels, parent/child hierarchy, existing prerequisites, related tasks and duplicate links |
 | Bulk organization | Atomic changes and archive/restore, honoring active worker constraints |
 | Delivery dashboards | Burndown, burnup, recorded Done transitions, scope/state breakdowns and conditional pace projections |
-| Initiative direction | Now/Next/Later roadmap of goals, one branch per goal and the dogfood backlog |
+| Initiative direction | Now/Next/Later roadmap of goals, one branch per goal at a time and the dogfood backlog |
 
 Account management, SSO, team permissions, general document canvases, and broad
 import/template systems remain separate product decisions for this local prototype.

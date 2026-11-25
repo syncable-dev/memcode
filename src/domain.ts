@@ -124,7 +124,9 @@ export function restartSafeState(state: AppState): AppState {
           return rest;
         }),
       };
-      return !task.example && isActive(task)
+      // The worker it waited for is not running any more either.
+      const waited = !!task.run.waitingOnCode;
+      return !task.example && (isActive(task) || waited)
         ? {
             ...task,
             stage: "review",
@@ -137,6 +139,7 @@ export function restartSafeState(state: AppState): AppState {
               ...task.run,
               state: "stopped",
               activity: undefined,
+              waitingOnCode: undefined,
               error:
                 "MemCode restarted. The goal may contain unfinished changes.",
             },

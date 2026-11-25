@@ -1,3 +1,4 @@
+import { priorities } from "../planning/priority";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   Archive,
@@ -342,7 +343,7 @@ export function Workspace({
                     Move to {status.name}
                   </option>
                 ))}
-                {(["high", "medium", "low"] as const).map((priority) => (
+                {priorities.map((priority) => (
                   <option key={priority} value={"priority|" + priority}>
                     Priority: {priority}
                   </option>
