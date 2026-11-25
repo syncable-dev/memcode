@@ -21,7 +21,9 @@ MemCode talks to Linear from this computer. There is no server in between, so wh
 is closed nothing goes back and forth. The next start catches up.
 
 **Disconnect** forgets the sign-in here and ends it at Linear, the renewal and the access both.
-When Linear cannot be reached it says so, and MemCode can be removed there in Settings ›
+What both sides last agreed on is kept, so connecting the same workspace and team again goes on
+from there: what changed on one side only follows, and of what changed on both, Linear's stays
+and the one here is kept on the card. When Linear cannot be reached it says so, and MemCode can be removed there in Settings ›
 Security & access. An API key is ended where it was made.
 
 MemCode is registered in Linear as an application without a secret (`LINEAR_CLIENT_ID` in
@@ -34,7 +36,12 @@ MemCode uses neither. A build without an application offers the API key only.
 Choose a team, what to bring (open work, the current cycle, everything) and what becomes a
 goal. Everything is filled in already, and nothing changes until **Import**. Running it again
 adds nothing twice. It can be taken back for seven days: cards that were brought in and nobody
-here touched go, and Linear is not told. They come back only when someone brings work in again.
+here worked on go, and Linear is not told. MemCode says how many first. They come back only
+when someone brings work in again.
+
+A choice is for what comes after it. New tasks become issues, and changes here are sent, from
+when that is switched on: nothing from before. A card in a goal stays there when what a goal
+is changes, and a lane that is deleted here moves no issue.
 
 | In Linear | Here |
 | --- | --- |
@@ -57,6 +64,7 @@ it was measured. What is compared is each field, not the whole issue:
 
 - Changed on one side: the other follows.
 - Changed on both: the newest stays. The other value is kept on the card, with **Put it back**.
+  Labels are added and taken off on both sides, and one MemCode does not know stays on the issue.
 - Refused by Linear: the card says why, and it is asked again when it changes or on **Try
   again**. One refused value does not hold back the others, and a new task is an issue without
   it.
@@ -70,13 +78,16 @@ way, takes away a due date when a deadline rule applies, and puts a started issu
 current cycle and on the person who started it.
 
 While a worker runs, a change that would move its card waits; a cycle does not move it. Work
-that has not shipped is never moved, canceled or taken away by Linear: the card says what Linear wanted. An issue
+that has not shipped is never canceled, taken away or put in another goal by Linear: the card
+says what Linear wanted. Its lane follows the issue's status. An issue
 canceled there while its worker runs stays canceled there when the worker ends. Shipping the
 work, moving the card or canceling it here settles it.
 
-A new task here becomes an issue unless **Keep in MemCode** is ticked where it is made.
+A new task here becomes an issue unless **Keep in MemCode** is ticked where it is made. One made
+from Intelligence stays in MemCode until that is unticked on its card: it names files.
 **Cancel task and its issue** cancels both. **Archive** hides the card here only. A card deleted here leaves its
-issue alone and is not brought in again.
+issue alone and is not brought in again, until the project is disconnected and connected again.
+One that was unlinked stays so.
 
 Linear says nothing when an issue is deleted, put back or moved to another team, or when a
 comment is deleted: none of them changes when it was last updated. A deleted issue is seen at
@@ -90,7 +101,12 @@ which. Everyone's edits reach Linear through it, as the person who connected. An
 who has connected can choose **Do it from here**; the first one hears so and stops.
 
 Two MemCodes must not both write what Linear said into the same board: the board merges text
-edits, so the same edit made twice would be there twice.
+edits, so the same edit made twice would be there twice. So the one that keeps it looks and
+sends only while the shared board is connected: it would not hear that somebody else does it
+now. The page says so when that takes longer than a minute.
+
+A long title or description that a computer holds only a part of never replaces the whole of it
+in Linear, also when that computer takes over.
 
 ## Not built
 

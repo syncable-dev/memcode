@@ -19,7 +19,7 @@ function dice(seed: number) {
 const fields = ["title", "description", "priority", "estimate", "dueDate", "labels", "assignee", "status", "cycle", "goal"] as const;
 
 /** One person at MemCode, one in Linear, a bad network, and MemCode closed now and then. */
-async function run(seed: number, steps: number, withWorkers = false, withTrash = false) {
+async function run(seed: number, steps: number, withWorkers = false, withTrash = false, anew = false) {
   const w = await linearWorld();
   const roll = dice(seed);
   const pick = <T>(list: T[]): T => list[roll(list.length)];
@@ -51,6 +51,7 @@ async function run(seed: number, steps: number, withWorkers = false, withTrash =
   let words = 0;
   const settle = async () => {
     w.service.noticed();
+    if (!w.connection) return;
     // What it remembers is read from a file after MemCode was opened again.
     await (w.service as unknown as { memoryOf(id: string): Promise<unknown> }).memoryOf(w.connection.id);
     await new Promise((resolve) => setImmediate(resolve));
@@ -130,7 +131,20 @@ async function run(seed: number, steps: number, withWorkers = false, withTrash =
     }
     await settle();
   };
+  /** Work is brought in again, or the project is disconnected and connected again. */
+  const again = async () => {
+    const { id, choices } = w.connection;
+    trouble = false;
+    if (roll(2)) {
+      await w.service.disconnect(id);
+      for (let n = roll(4); n > 0; n--) await (roll(2) ? editThere() : editHere());
+      await w.service.connect(w.projectId, "key-good");
+    }
+    await w.service.import(w.connection.id, choices!);
+    trouble = true;
+  };
   for (let step = 0; step < steps; step++) {
+    if (anew && roll(25) === 0) await again();
     const what = roll(withWorkers ? 14 : 12);
     if (what >= 12) {
       await worker();
@@ -207,13 +221,14 @@ async function run(seed: number, steps: number, withWorkers = false, withTrash =
   return { apart, lost, echoes, standing, calls: linear.calls.length };
 }
 
-for (const [withWorkers, withTrash] of [[false, false], [true, false], [false, true], [true, true]])
-test(`whatever happens in between${withWorkers ? ", with workers on it" : ""}${withTrash ? ", with issues deleted and moved" : ""}, both sides end up the same, with the newest of everything`, async () => {
+for (const [withWorkers, withTrash, anew] of [[false, false], [true, false], [false, true], [true, true], [false, false, true], [true, true, true]])
+test(`whatever happens in between${withWorkers ? ", with workers on it" : ""}${withTrash ? ", with issues deleted and moved" : ""}${anew ? ", brought in and connected anew" : ""}, both sides end up the same, with the newest of everything`, async () => {
   const runs = Number(process.env.LINEAR_RUNS ?? 40);
   for (let seed = 1; seed <= runs; seed++) {
-    const result = await run(seed * 7919, Number(process.env.LINEAR_STEPS ?? 160), withWorkers, withTrash);
+    const result = await run(seed * 7919, Number(process.env.LINEAR_STEPS ?? 160), withWorkers, withTrash, anew);
     assert.deepEqual(result.apart, [], `run ${seed}: out of step`);
-    assert.deepEqual(result.lost, [], `run ${seed}: a newer value was lost`);
+    // Connected anew, Linear's stays where both changed: nobody saw when it was changed here.
+    if (!anew) assert.deepEqual(result.lost, [], `run ${seed}: a newer value was lost`);
     assert.equal(result.echoes, 0, `run ${seed}: something goes round in circles`);
     assert.deepEqual(result.standing, [], `run ${seed}: a card does not know it is in step`);
   }

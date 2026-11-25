@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readdir, rm, truncate, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, truncate, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { emptyBoard } from "../runtime/sharing/board/document";
@@ -169,4 +169,36 @@ test("removing forgets everything, and removing twice is fine", async (context) 
   await store.remove();
   assert.equal(await new BoardStore(where).load(3), undefined);
   await assert.rejects(readdir(where), { code: "ENOENT" });
+});
+
+test("what older MemCodes do not know lies beside what they read, and is told to be missing when one kept the board", async (context) => {
+  const at = await folder(context);
+  const seen = {
+    ...emptyBoard(),
+    goals: { g: { fields: { title: "Goal", tracker: { id: "m" } }, texts: {}, sets: {} } },
+    tasks: {
+      t: {
+        fields: { title: "Task", priority: "high", urgency: "urgent", assignee: { id: "a", name: "A" }, keepHere: true },
+        texts: {},
+        sets: {},
+      },
+      u: { fields: { title: "Other" }, texts: {}, sets: {} },
+    },
+    trackers: { linear: { fields: { keeper: { by: "A" } }, texts: {}, sets: {} } },
+  };
+  const store = new BoardStore(at);
+  await store.save(kept({ seen }));
+  const path = join(at, "sync.json");
+  const file = JSON.parse(await readFile(path, "utf8"));
+  assert.deepEqual(file.seen.tasks.t.fields, { title: "Task", priority: "high" });
+  assert.deepEqual(file.seen.goals.g.fields, { title: "Goal" });
+  assert.deepEqual(file.seen.trackers, {});
+  const read = await new BoardStore(at).load(3);
+  assert.deepEqual(read?.seen, seen);
+  assert.equal(read?.newerUnread, undefined);
+  // An older one kept it: it writes what it knows and nothing else.
+  delete file.newer;
+  delete file.seen.trackers;
+  await writeFile(path, JSON.stringify(file));
+  assert.equal((await new BoardStore(at).load(3))?.newerUnread, true);
 });

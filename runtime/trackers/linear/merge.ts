@@ -2,10 +2,14 @@ import type { WorkItem } from "../../../src/shared";
 import type { KeptValue, TrackedField } from "../../../src/tracker";
 import {
   applyThere,
+  clipped,
   hasUnshippedWork,
   hereOf,
+  isGoneLane,
+  laneFor,
   same,
   shown,
+  sorted,
   thereOf,
   toThere,
   type Frame,
@@ -38,6 +42,15 @@ export interface Base {
   brought?: true;
   /** Somebody here has changed it since, also when Linear has heard so. */
   mine?: true;
+  /** What else was on the card when it was brought in: more on it since is somebody's work. */
+  made?: string;
+}
+
+/** When each field last changed in Linear, as far as it was asked. */
+export interface History {
+  at: Partial<Record<TrackedField, string>>;
+  /** A field that is not in it has not changed since then. */
+  reaches?: string;
 }
 
 /** What can let through something that was held: a worker that ends, work that ships. */
@@ -84,21 +97,102 @@ export function baseFor(task: WorkItem, issue: Issue, frame: Frame): Base {
 }
 
 /**
- * Two that were in step once and have gone on apart. Where they differ, both count as
- * changed, so the newer value wins and the other is kept.
+ * Two that were in step once, and nothing is remembered of it. Where they differ, a value
+ * Linear has not changed since they were known to be in step was changed here, and is sent.
+ * Of any other nobody can say which is newer: Linear's wins, and the one here is kept.
  */
-export function reunited(task: WorkItem, issue: Issue, frame: Frame): Base {
+export function reunited(
+  task: WorkItem,
+  issue: Issue,
+  frame: Frame,
+  history: History = { at: {} },
+  /** When both were known to hold the same. */
+  since?: string,
+): Base {
   const base = baseFor(task, issue, frame);
   for (const field of order) {
+    if (field === "title" && isCut(String(base.here.title), String(base.there.title))) {
+      // What a shared board holds of a long title: the whole of it is in Linear.
+      base.there.title = apart;
+      continue;
+    }
+    if (field === "description" && isPart(task, base)) {
+      if (task.tracker) task.tracker.clipped = true;
+      if (base.here.description !== clipped(String(base.there.description)))
+        base.there.description = apart;
+      continue;
+    }
     const said = toThere(field, base.here[field], frame, base.there, task);
     if (said === undefined || same(said, base.there[field])) continue;
     base.here[field] = apart as never;
+    if (since && lastChanged(field, issue, history) <= since) {
+      base.touched[field] = task.updatedAt;
+      continue;
+    }
     base.there[field] = apart as never;
-    base.touched[field] = task.updatedAt;
+    base.touched[field] = never;
   }
   return base;
 }
 const apart = "\u0000apart";
+/** Before anything else: whatever Linear has is newer. */
+const never = "";
+/** A milestone is not in the history, and neither is what nobody asked for. */
+const lastChanged = (field: TrackedField, issue: Issue, history: History): string =>
+  history.at[field] ??
+  (field === "goal" ? issue.updatedAt : (history.reaches ?? issue.updatedAt));
+/** As much of a title as a shared board carries. */
+const isCut = (here: string, there: string) =>
+  here.length >= 240 && there.length > here.length && there.startsWith(here);
+const isPart = (task: WorkItem, base: Base) =>
+  toThere("description", base.here.description, {} as Frame, base.there, task) === undefined ||
+  (base.here.description !== base.there.description &&
+    base.here.description === clipped(String(base.there.description)));
+
+/** Values here that differ from what was agreed on are no newer than this. */
+export function asOld(task: WorkItem, base: Base, frame: Frame, at: string): void {
+  const here = hereOf(task, frame);
+  for (const field of order) {
+    if (same(here[field], base.here[field])) continue;
+    if (base.touched[field] && same(base.seen?.[field], here[field])) continue;
+    base.touched[field] = at;
+    (base.seen ??= {})[field] = here[field] as never;
+  }
+}
+
+/** From here on both count as agreed, each as it is: nothing that differs now is sent. */
+export function agreeAsIs(task: WorkItem, base: Base, frame: Frame): void {
+  base.here = hereOf(task, frame);
+  base.touched = {};
+  delete base.seen;
+  delete base.stuck;
+}
+
+/**
+ * What a goal is was chosen anew. A card that is in one stays there; any other goes where
+ * Linear has it.
+ */
+export function goalsChosenAnew(task: WorkItem, base: Base): void {
+  base.there.goal = task.epicId ? (anyGoal as never) : null;
+  base.here.goal = task.epicId ?? null;
+  delete base.touched.goal;
+}
+const anyGoal = "\u0000any";
+
+/** The cards of a lane that was deleted went elsewhere by themselves. */
+function followGoneLane(base: Base, here: Here, frame: Frame): void {
+  if (!isGoneLane(String(base.here.status), frame)) return;
+  base.here.status = here.status;
+  delete base.touched.status;
+  delete base.seen?.status;
+}
+
+/** Labels added and taken off on both sides, all of them. */
+const bothLabels = (here: string[], was: string[], there: string[]): string[] =>
+  sorted([
+    ...there.filter((name) => here.includes(name) || !was.includes(name)),
+    ...here.filter((name) => !was.includes(name)),
+  ]);
 
 /** Values the issue was made without: Linear has still to hear them, one by one. */
 export function unsaid(base: Base, fields: TrackedField[], at: string): void {
@@ -140,6 +234,7 @@ export function observe(
   at: string,
 ): { differs: boolean; marked: boolean } {
   const here = hereOf(task, frame);
+  followGoneLane(base, here, frame);
   let differs = false,
     marked = false;
   for (const field of order)
@@ -190,6 +285,8 @@ export function mergeIssue(
   const merge: Merge = { push: {}, refused: {}, changed: false };
   const mine = new Set<TrackedField>();
   const pending = new Set<TrackedField>();
+  followGoneLane(base, before, frame);
+  if (base.there.goal === anyGoal) base.there.goal = there.goal;
   // Without its cycle it is in the backlog on both sides, and Planned is a change of its own.
   if (placedByHand(task, before, base, frame))
     base.here.status = backlogStatusId(task.projectId);
@@ -213,6 +310,29 @@ export function mergeIssue(
       mine.add(field);
       continue;
     }
+    if (
+      field === "labels" &&
+      changedHere &&
+      bothWays &&
+      Array.isArray(base.here.labels) &&
+      Array.isArray(base.there.labels)
+    ) {
+      const labels = bothLabels(before.labels, base.here.labels, there.labels);
+      const last = task.updatedAt;
+      const result = applyThere(task, "labels", labels, frame, at);
+      if ("done" in result) {
+        task.updatedAt = last > issue.updatedAt ? last : issue.updatedAt;
+        // What is there is on the card now: anything else on it, or off it, was done here.
+        base.there.labels = there.labels;
+        base.here.labels = there.labels;
+        merge.changed = true;
+        if (!same(labels, there.labels)) {
+          merge.push.labels = labels;
+          mine.add("labels");
+        }
+        continue;
+      }
+    }
     if (changedHere && said !== undefined && bothWays) {
       const when = base.touched[field] ?? task.updatedAt;
       const theirs = changedAt[field] ?? issue.updatedAt;
@@ -228,7 +348,7 @@ export function mergeIssue(
     const result = applyThere(task, field, there[field], frame, at);
     if ("done" in result) {
       if (changedHere && said !== undefined)
-        keep(task, field, before[field], "here", base.touched[field] ?? at, frame);
+        keep(task, field, before[field], "here", base.touched[field] || at, frame);
       task.updatedAt = last > issue.updatedAt ? last : issue.updatedAt;
       base.there[field] = there[field] as never;
       merge.changed = true;
@@ -270,7 +390,7 @@ function placedByHand(task: WorkItem, here: Here, base: Base, frame: Frame): boo
     !!base.here.cycle &&
     !here.cycle &&
     here.status === `${task.projectId}:planned` &&
-    frame.connection.choices?.lanes[base.there.status] === backlogStatusId(task.projectId)
+    laneFor(base.there.status, frame) === backlogStatusId(task.projectId)
   );
 }
 

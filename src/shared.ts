@@ -410,6 +410,8 @@ export interface Epic {
   };
   /** The commit of this goal's branch that merged, when newer work goes on from it. */
   mergedRevision?: string;
+  /** The branch another computer put on the shared board for this goal. */
+  boardBranch?: { branch: string; baseRevision?: string };
   id: string;
   projectId: string;
   identifier: string;
@@ -620,6 +622,8 @@ export interface MemCodeAPI extends CodeReviewAPI {
   ): Promise<{ tasks: number; goals: number; comments: number }>;
   /** Takes back what the import brought and nobody has touched. Linear is not told. */
   undoTrackerImport(id: string): Promise<{ removed: number; kept: number }>;
+  /** What undoing it would do now. */
+  previewUndoTrackerImport(id: string): Promise<{ removed: number; kept: number }>;
   syncTracker(id: string): Promise<void>;
   /** Puts back a value that gave way to a newer one. */
   restoreTracked(taskId: string, field: import("./tracker").TrackedField): Promise<void>;

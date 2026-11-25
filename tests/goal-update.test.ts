@@ -274,3 +274,56 @@ test("only what is new conflicts on a branch that goes on after a squash merge",
     await rm(f.root, { recursive: true, force: true });
   }
 });
+
+test("a worker that did not get to its end commits nothing, whatever the files look like", async () => {
+  const f = await conflicting();
+  try {
+    await f.updates.resolveWithWorker("e1");
+    const head = await git(f.goal, ["rev-parse", "HEAD"]);
+    await writeFile(join(f.goal, "app.ts"), "half of it\n");
+    for (const state of ["failed", "stopped", "blocked"] as const) {
+      f.task.run.state = state;
+      await f.updates.workerEnded(f.task);
+      assert.deepEqual(f.epic.resolving?.files, ["app.ts"], state);
+      assert.equal(await git(f.goal, ["rev-parse", "HEAD"]), head);
+    }
+    // Asked again, it is the worker's to say that it is done.
+    assert.equal((await f.updates.resolveWithWorker("e1")).asked, "MC-1");
+    f.task.run.state = "finished";
+    await f.updates.workerEnded(f.task);
+    assert.equal(f.epic.resolving, undefined);
+  } finally {
+    await rm(f.root, { recursive: true, force: true });
+  }
+});
+
+test("a file that was deleted or is not text is for a person to resolve", async () => {
+  const f = await conflicting();
+  try {
+    await rm(join(f.teammate, "app.ts"));
+    await git(f.teammate, ["add", "-A"]);
+    await git(f.teammate, ["commit", "-m", "Without app.ts"]);
+    await git(f.teammate, ["push", "origin", "dev"]);
+    await assert.rejects(f.updates.resolveWithWorker("e1"), /app\.ts: one side deleted or replaced the whole file/);
+    assert.equal(f.epic.resolving, undefined);
+    assert.deepEqual(f.asked, []);
+    assert.equal(await git(f.goal, ["status", "--porcelain"]), "");
+    assert.equal(await git(f.goal, ["show", "HEAD:app.ts"]), "export const version = 2;");
+  } finally {
+    await rm(f.root, { recursive: true, force: true });
+  }
+});
+
+test("a merge that was ended in the folder is not recorded as done", async () => {
+  const f = await conflicting();
+  try {
+    await f.updates.resolveWithWorker("e1");
+    await git(f.goal, ["merge", "--abort"]);
+    f.task.run.state = "finished";
+    await assert.rejects(f.updates.workerEnded(f.task), /Update from dev again/);
+    assert.equal(f.epic.resolving, undefined);
+    assert.ok(f.epic.updateNeeded, "it still needs its update");
+  } finally {
+    await rm(f.root, { recursive: true, force: true });
+  }
+});

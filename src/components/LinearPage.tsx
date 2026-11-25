@@ -15,14 +15,6 @@ import { Select } from "./Select";
 import { Spinner } from "./UI";
 
 const counted = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
-const ago = (at: string) => {
-  const seconds = Math.max(0, Math.round((Date.now() - Date.parse(at)) / 1000));
-  return seconds < 60
-    ? "a moment ago"
-    : seconds < 3600
-      ? `${counted(Math.round(seconds / 60), "minute")} ago`
-      : "earlier today";
-};
 
 /** Linear's page: connect, choose what to bring in, and see that it is kept in step. */
 export function LinearPage({
@@ -262,6 +254,10 @@ function LinearStatus({
   change: () => void;
   notify: (message: string) => void;
 }) {
+  const [undo, setUndo] = useState<{ removed: number; kept: number }>();
+  const shared = state.sharedProjectLinks?.some(
+    (link) => link.projectId === connection.projectId,
+  );
   const cards = state.tasks.filter(
     (task) => task.projectId === connection.projectId && task.tracker,
   );
@@ -284,9 +280,7 @@ function LinearStatus({
               ? "Paused. Nothing goes back and forth."
               : connection.problem
                 ? connection.problem
-                : connection.lastCheckedAt
-                  ? `Checked ${ago(connection.lastCheckedAt)}. While MemCode is open, changes arrive within half a minute.`
-                  : "Not checked yet."}
+                : "While MemCode is open, changes arrive within half a minute."}
           </small>
           <div>
             <button
@@ -334,19 +328,53 @@ function LinearStatus({
           </ul>
         </section>
       )}
-      {connection.undoUntil && connection.undoUntil > new Date().toISOString() && (
+      {undo && (
+        <div className="linear-undo" role="group" aria-label="Undo the import">
+          <p>
+            {undo.removed
+              ? `Take ${counted(undo.removed, "card")} out of this project again${shared ? ", for everyone on it" : ""}?`
+              : "There is no card to take out."}
+            {undo.kept > 0 &&
+              ` ${counted(undo.kept, "card")} someone worked on ${undo.kept === 1 ? "stays" : "stay"}.`}{" "}
+            Linear is not changed.
+          </p>
+          <button
+            type="button"
+            className="button secondary"
+            disabled={!!busy || !undo.removed}
+            onClick={() =>
+              void act("undo", async () => {
+                const { removed, kept } = await window.memcode.undoTrackerImport(connection.id);
+                setUndo(undefined);
+                notify(
+                  `${counted(removed, "card")} taken out again.${kept ? ` ${kept} that someone worked on stay.` : ""} Linear was not changed.`,
+                );
+              })
+            }
+          >
+            {busy === "undo" && <Spinner size={12} />}
+            Take them out
+          </button>
+          <button
+            type="button"
+            className="button secondary"
+            disabled={!!busy}
+            onClick={() => setUndo(undefined)}
+          >
+            Keep everything
+          </button>
+        </div>
+      )}
+      {!undo && connection.undoUntil && connection.undoUntil > new Date().toISOString() && (
         <p className="integration-note">
           <button
             type="button"
             className="integration-link"
             disabled={!!busy}
             onClick={() =>
-              void act("undo", async () => {
-                const { removed, kept } = await window.memcode.undoTrackerImport(connection.id);
-                notify(
-                  `${counted(removed, "card")} taken out again.${kept ? ` ${kept} that someone worked on stay.` : ""} Linear was not changed.`,
-                );
-              })
+              void act("undo", async () =>
+                setUndo(await window.memcode.previewUndoTrackerImport(connection.id)),
+              )
             }
           >
             Undo the import
@@ -356,7 +384,7 @@ function LinearStatus({
             day: "numeric",
             month: "long",
           })}
-          . Cards someone touched stay.
+          . Cards someone worked on stay.
         </p>
       )}
     </>

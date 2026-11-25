@@ -1712,11 +1712,16 @@ export async function createRuntime(
   });
   registerPullRequests(register, pullRequests);
   /** Offline, a start does not wait for GitHub's answer. */
-  const noticeMerges = (isWanted: (goal: Epic) => boolean, starting?: string) =>
-    Promise.race([
+  const noticeMerges = (isWanted: (goal: Epic) => boolean, taskId?: string) => {
+    const starting = { taskId };
+    return Promise.race([
       pullRequests.noticeMerges(isWanted, starting).catch(() => {}),
       new Promise<void>((resolve) => setTimeout(resolve, 8000).unref()),
-    ]);
+    ]).then(() => {
+      // An answer that comes later finds it at work on the branch.
+      starting.taskId = undefined;
+    });
+  };
   // A pull request merged on GitHub ended its branch. A worker that started on it would
   // work where nothing ships any more.
   workers.beforeBranch = async (task) => {

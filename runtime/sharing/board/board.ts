@@ -38,6 +38,8 @@ export interface ApplyOptions {
   stampOf?: (collection: Collection, id: string) => EntryStamp | undefined;
   /** The name of a person on the project, by account. */
   nameOf?: (accountId: string) => string | undefined;
+  /** It was so already: what is here is no newer for it. */
+  keepTimes?: boolean;
 }
 
 const uuidShape =
@@ -91,6 +93,8 @@ const trackedOnBoard = (item: { tracker?: TrackedItem }): Json | undefined =>
         ...(item.tracker.key ? { key: item.tracker.key } : {}),
         ...(item.tracker.url ? { url: item.tracker.url } : {}),
         ...(item.tracker.kind ? { kind: item.tracker.kind } : {}),
+        ...(item.tracker.within ? { within: item.tracker.within } : {}),
+        ...(item.tracker.clipped ? { clipped: true } : {}),
       } as Json)
     : undefined;
 
@@ -151,8 +155,9 @@ const goalOnBoard = (goal: Epic): Entry =>
       phase: goal.phase,
       color: goal.color,
       order: goal.order,
-      branch: goal.branch,
-      baseRevision: goal.baseRevision,
+      // The branch another computer put on the board is for that one to change or take away.
+      branch: (goal.boardBranch ?? goal).branch,
+      baseRevision: (goal.boardBranch ?? goal).baseRevision,
       baseBranch: goal.baseBranch,
       closed: !!goal.closedAt,
       tracker: trackedOnBoard(goal),
@@ -322,8 +327,10 @@ function trackedFrom(
   const provider = oneOf("linear")(parts?.provider);
   const id = line(100)(parts?.id);
   if (!provider || !id) return value === undefined ? kept : undefined;
+  const { clipped: _clipped, ...mine } = kept?.id === id ? kept : ({} as Partial<TrackedItem>);
+  const within = line(100)(parts!.within) ?? mine.within;
   return {
-    ...(kept?.id === id ? kept : {}),
+    ...mine,
     provider,
     id,
     key: line(60)(parts!.key) ?? kept?.key,
@@ -331,6 +338,8 @@ function trackedFrom(
     kind:
       oneOf("issue", "milestone", "project", "parent", "cycle", "comment")(parts!.kind) ??
       kept?.kind,
+    ...(within ? { within } : {}),
+    ...(flag(parts!.clipped) ? { clipped: true } : {}),
   };
 }
 function personFrom(value: Json | undefined): Person | null {
@@ -488,7 +497,7 @@ function applyTasks(
     const stamp = options.stampOf?.("tasks", id);
     const archived = or(flag(shared.fields.archived), !!kept?.archivedAt);
     const dated = {
-      updatedAt: stamp?.changedAt ?? options.at,
+      updatedAt: kept && options.keepTimes ? kept.updatedAt : (stamp?.changedAt ?? options.at),
       archivedAt: archived
         ? (kept?.archivedAt ?? stamp?.changedAt ?? options.at)
         : null,
@@ -552,6 +561,8 @@ function applyGoals(
       state.tasks.some(
         (task) => task.stage !== "done" && isOnBranch(task, kept) && !!task.run.branch,
       );
+    const branch = line(240)(fields.branch),
+      baseRevision = line(64)(fields.baseRevision);
     const read: Omit<Epic, "id" | "projectId"> = {
       identifier,
       title,
@@ -568,8 +579,13 @@ function applyGoals(
         kept?.color ?? "mint",
       ),
       order: or(numberWithin(-1e9, 1e9)(fields.order), kept?.order ?? 0),
-      branch: mine ? kept.branch : line(240)(fields.branch),
-      baseRevision: mine ? kept.baseRevision : line(64)(fields.baseRevision),
+      branch: mine ? kept.branch : branch,
+      baseRevision: mine ? kept.baseRevision : baseRevision,
+      // Put there by this computer, it is this computer's. Any other is somebody else's.
+      boardBranch:
+        branch && (kept?.boardBranch || branch !== kept?.branch)
+          ? { branch, baseRevision }
+          : undefined,
       baseBranch: mine ? kept.baseBranch : line(240)(fields.baseBranch),
       tracker: trackedFrom(fields.tracker, kept?.tracker),
       closedAt: closed ? (kept?.closedAt ?? at) : undefined,
@@ -704,16 +720,19 @@ function applyComments(
       parentId: parentId ?? undefined,
       reference: referenceFrom(fields.reference),
       ...(fields.tracker ? { tracker: trackedFrom(fields.tracker, kept?.tracker) } : {}),
-      updatedAt: stamp?.changedAt ?? options.at,
+      updatedAt: kept && options.keepTimes ? kept.updatedAt : (stamp?.changedAt ?? options.at),
       deletedAt: undefined,
     };
-    if (kept) {
-      Object.assign(kept, read);
-      continue;
-    }
     const account = stamp?.createdBy;
     const outside = partsOf(fields.outside);
     const writer = oneOf("linear")(outside?.source) && line(200)(outside?.name);
+    if (kept) {
+      Object.assign(kept, read);
+      // It came as whoever's computer brought it, before this MemCode could tell.
+      if (writer && kept.author.source !== "linear")
+        kept.author = { id: "linear:" + kept.author.id, name: writer, source: "linear" };
+      continue;
+    }
     comments.push({
       id,
       ...read,

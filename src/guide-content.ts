@@ -493,7 +493,7 @@ export const guideArticles: GuideArticle[] = [
       "Linear is looked at every 30 seconds while MemCode is open. While it is closed nothing goes back and forth, and the next start catches up.",
       "What MemCode does in Linear is done as you.",
       "On a shared project one person connects, and everyone has the cards. Linear’s page says who it is. Somebody else who has connected can choose Do it from here.",
-      "Disconnect keeps the cards, leaves Linear as it is and ends the sign-in there too. Connecting again makes no doubles.",
+      "Disconnect keeps the cards, leaves Linear as it is and ends the sign-in there too. Connecting again goes on from there and makes no doubles.",
     ],
     destination: "integrations",
     related: ["linear-import", "linear-steps", "linear-apart"],
@@ -514,7 +514,7 @@ export const guideArticles: GuideArticle[] = [
       "Choose Import. Your cards are on the board in a few seconds.",
       "Start a worker on one when you want it built. It reads the issue as its brief.",
     ],
-    note: "An import can be undone for seven days. What was made or changed here stays, and Linear is not changed.",
+    note: "An import can be undone for seven days. Cards somebody worked on stay, and Linear is not changed.",
     details: [
       "A milestone is a goal. A project without milestones is one goal. A Linear cycle is a cycle here: Linear starts and ends it, and MemCode follows.",
       "An issue without a project is a task without a goal until it starts.",
@@ -567,7 +567,7 @@ export const guideArticles: GuideArticle[] = [
       "Needs you: Linear refused something, and the reason is there. The rest of the card went through. Change it, or choose Try again.",
       "Unlink lets a card and its issue go their own ways.",
     ],
-    note: "Work that has not shipped is never moved, canceled or taken away by Linear. The card says what Linear wanted instead.",
+    note: "Linear never cancels, takes away or moves to another goal what has not shipped. The card says what Linear wanted instead.",
     details: [
       "An issue canceled in Linear while its worker runs stays canceled there. Ship the work, move the card or cancel it here to settle it.",
       "An issue deleted in Linear archives its card, unless there is work on it that has not shipped. Put back in Linear, the card is back too.",

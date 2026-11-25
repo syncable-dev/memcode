@@ -321,8 +321,11 @@ test("disconnecting keeps the cards, and connecting again makes no doubles", () 
     assert.equal(result.tasks, 0);
     await w.sync();
     assert.equal(w.state.tasks.length, 2);
-    assert.equal(w.task(other).title, "Footer here", "the newest");
-    assert.equal(linear.issues.get(other.id)!.title, "Footer here");
+    // Nobody can say when it was changed here: Linear's stays, and the other is not lost.
+    assert.equal(w.task(other).title, "Footer there");
+    assert.equal(linear.issues.get(other.id)!.title, "Footer there");
+    assert.equal(w.task(other).tracker?.kept?.[0].shown, "Footer here");
+    assert.equal(w.task(issue).title, "Export as CSV");
     assert.equal(linear.issues.get(issue.id)!.estimate, 2);
     assert.ok(w.state.tasks.every((task) => task.tracker?.standing === "synced"));
   }));

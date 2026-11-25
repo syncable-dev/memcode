@@ -20,6 +20,14 @@ import type { Issue, Label } from "./read";
 /** The longest description a task here can hold. */
 export const longestDescription = 20_000;
 const clipNote = "\n\n… The rest of this description is in Linear.";
+/** What a task here holds of a description that is longer than it can hold. */
+export const clipped = (full: string): string =>
+  full.length > longestDescription
+    ? full.slice(0, longestDescription - clipNote.length) + clipNote
+    : full;
+/** A part of what is in Linear. It is never sent back, whatever else is known of the card. */
+const isClipped = (task: WorkItem, text: string) =>
+  !!task.tracker?.clipped || text.endsWith(clipNote);
 
 /** A task as Linear has it, in Linear's own terms. */
 export interface There {
@@ -184,7 +192,7 @@ export function toThere(
       );
     }
     case "description":
-      return task.tracker?.clipped ? undefined : value;
+      return isClipped(task, String(value ?? "")) ? undefined : value;
     case "assignee":
       return value === null || frame.people.has(String(value)) ? value : undefined;
     case "cycle": {
@@ -192,7 +200,8 @@ export function toThere(
       return frame.state.cycles.find((cycle) => cycle.id === value)?.tracker?.id;
     }
     case "goal": {
-      if (value === null) return null;
+      // A goal there that is none here says nothing about being in no goal.
+      if (value === null) return now.goal && !goalOf(frame, now.goal) ? now.goal : null;
       const goal = frame.state.epics.find((epic) => epic.id === value)?.tracker;
       return goal?.kind ? `${goal.kind}:${goal.id}` : undefined;
     }
@@ -207,6 +216,35 @@ export function toThere(
   }
 }
 
+/** The lane a status shows in: the chosen one, or what it means where that lane is gone. */
+export function laneFor(statusId: string | null, frame: Frame): string | undefined {
+  const { choices, projectId } = frame.connection;
+  const lanes = workflowFor(frame.state, projectId);
+  const chosen = choices?.lanes[statusId ?? ""];
+  if (chosen && (isOwnLane(chosen, projectId) || lanes.some((lane) => lane.id === chosen)))
+    return chosen;
+  const type = frame.statuses.get(statusId ?? "")?.type;
+  if (type === "backlog") return backlogStatusId(projectId);
+  if (type === "unstarted") return `${projectId}:planned`;
+  if (type === "started")
+    return `${projectId}:${choices?.send.review === statusId && choices.send.working !== statusId ? "review" : "working"}`;
+  if (type === "completed") return `${projectId}:done`;
+  return undefined;
+}
+const ownLanes = ["working", "planned", "review", "code-review", "done"];
+/** One of MemCode's own lanes, which stand for its steps whether or not they are shown. */
+const isOwnLane = (lane: string, projectId: string) =>
+  lane === backlogStatusId(projectId) ||
+  ownLanes.some((name) => lane === `${projectId}:${name}`);
+/** A lane that was deleted: where its cards went is nothing a person said about them. */
+export const isGoneLane = (lane: string, frame: Frame): boolean =>
+  lane !== "hidden" &&
+  lane !== "canceled" &&
+  lane !== "duplicate" &&
+  !lane.startsWith("\u0000") &&
+  !isOwnLane(lane, frame.connection.projectId) &&
+  !workflowFor(frame.state, frame.connection.projectId).some((item) => item.id === lane);
+
 function statusThere(lane: string, frame: Frame, now: There): string | undefined {
   const { choices, projectId } = frame.connection;
   if (!choices || lane === "hidden") return undefined;
@@ -220,7 +258,7 @@ function statusThere(lane: string, frame: Frame, now: There): string | undefined
   const isOpen = (status: TrackerStatus | undefined) =>
     status?.type !== "canceled" && status?.type !== "duplicate";
   // Several statuses there can be one lane here: the one it has already is right.
-  if (choices.lanes[now.status] === lane && isOpen(frame.statuses.get(now.status)))
+  if (laneFor(now.status, frame) === lane && isOpen(frame.statuses.get(now.status)))
     return now.status;
   const standard: Record<string, string | undefined> = {
     [backlogStatusId(projectId)]: send.backlog,
@@ -282,14 +320,10 @@ export function applyThere(
       return patch({ title: String(value).slice(0, 255) });
     case "description": {
       const full = String(value ?? "");
-      const clipped = full.length > longestDescription;
-      const result = patch({
-        description: clipped
-          ? full.slice(0, longestDescription - clipNote.length) + clipNote
-          : full,
-      });
+      const part = clipped(full);
+      const result = patch({ description: part });
       if (task.tracker) {
-        if (clipped) task.tracker.clipped = true;
+        if (part !== full) task.tracker.clipped = true;
         else delete task.tracker.clipped;
       }
       return result;
@@ -374,7 +408,7 @@ function applyStatus(
     if (!("done" in restored)) return restored;
   }
   const lanes = workflowFor(frame.state, task.projectId);
-  const wanted = frame.connection.choices?.lanes[statusId];
+  const wanted = laneFor(statusId, frame);
   const lane = lanes.find((item) => item.id === wanted);
   if (!lane) return { done: true };
   const now = taskStatus(task, lanes);
@@ -463,6 +497,8 @@ export function inputOf(
           input.projectId = id;
           input.projectMilestoneId = null;
         } else if (kind === "parent") input.parentId = id;
+        // Out of a parent that is a goal here: its project and milestone stay as they are.
+        else if (frame.connection.choices?.goals === "parents") input.parentId = null;
         else {
           input.projectId = null;
           input.projectMilestoneId = null;

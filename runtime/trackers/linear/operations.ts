@@ -1,3 +1,5 @@
+import { historyLength } from "./read";
+
 /**
  * Everything MemCode asks of Linear. Counts are stated in every list: Linear charges a
  * list by how many entries it may hold, 50 when nothing is said.
@@ -108,7 +110,7 @@ query Issue($id: String!) {
 }`,
   History: `query History($id: String!) {
   issue(id: $id) {
-    history(first: 30) {
+    history(first: ${historyLength}) {
       nodes {
         createdAt updatedDescription
         fromTitle toTitle fromPriority toPriority fromEstimate toEstimate

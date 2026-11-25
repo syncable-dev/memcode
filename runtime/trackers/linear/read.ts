@@ -300,3 +300,12 @@ export function readHistory(nodes: unknown): Partial<Record<TrackedField, string
   return times;
 }
 const differs = (from: unknown, to: unknown) => (from ?? null) !== (to ?? null);
+
+/** How many entries of an issue's history are asked for. */
+export const historyLength = 30;
+/** How far back the entries go: further back than a field that is not among them changed. */
+export function historyReaches(nodes: unknown): string | undefined {
+  if (!Array.isArray(nodes)) return undefined;
+  if (nodes.length < historyLength) return "";
+  return nodes.flatMap((entry) => when(entry?.createdAt) ?? []).sort()[0];
+}

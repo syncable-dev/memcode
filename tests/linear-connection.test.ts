@@ -379,3 +379,28 @@ test("a paused connection neither looks nor sends, and catches up", async () => 
     await w.end();
   }
 });
+
+test("whatever asks at the address it waits on, the sign-in waits on", async () => {
+  let address = "";
+  const { connect } = await import("node:net");
+  const auth = new LinearAuth({
+    store: keptTokens().store,
+    clientId: "client",
+    ports: [0],
+    openExternal: async (url) => void (address = new URL(url).searchParams.get("redirect_uri")!),
+  });
+  const pending = auth.signIn();
+  void pending.catch(() => {});
+  while (!address) await new Promise((resolve) => setTimeout(resolve, 5));
+  const port = Number(new URL(address).port);
+  for (const path of ["//", "///x", "/%", "*", "http://", "//[", "/linear/callback?state=wrong&code=abcdefghij"]) {
+    const answer = await new Promise<string>((resolve) => {
+      const socket = connect(port, "127.0.0.1", () => socket.write(`GET ${path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n`));
+      let text = "";
+      socket.on("data", (part) => (text += part)).on("close", () => resolve(text)).on("error", () => resolve(text));
+    });
+    assert.match(answer, /^HTTP\/1\.1 40[04]/, path);
+  }
+  auth.cancel();
+  await assert.rejects(pending, /cancelled/);
+});

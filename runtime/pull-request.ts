@@ -118,6 +118,11 @@ export function createPullRequestService(deps: PullRequestDependencies) {
   return new PullRequestService(deps);
 }
 
+/** The task a look at GitHub is made for, for as long as its start waits for the answer. */
+export interface Starting {
+  taskId?: string;
+}
+
 /** Commits, pushes, opens and merges a goal's PR, only when the person clicks. */
 export class PullRequestService {
   constructor(private deps: PullRequestDependencies) {}
@@ -240,8 +245,8 @@ export class PullRequestService {
   /** Records merges that happened on GitHub since the last look. */
   async noticeMerges(
     isWanted: (goal: Epic) => boolean,
-    /** A task about to start: it is not work on the branch that merged. */
-    startingTaskId?: string,
+    /** A task about to start: it is not work on the branch that merged, until it has started. */
+    starting?: Starting,
   ): Promise<void> {
     const open = this.deps.state().epics.flatMap((epic) => {
       const record = isWanted(epic) ? this.record(epic) : undefined;
@@ -251,14 +256,14 @@ export class PullRequestService {
     if (!cli) return;
     for (const { epic, record } of open)
       // One project's folder being gone does not stop the others.
-      await this.look(cli, epic, record, startingTaskId).catch(() => {});
+      await this.look(cli, epic, record, starting).catch(() => {});
   }
 
   private async look(
     cli: GitHubCli,
     epic: Epic,
     record: EpicPullRequest,
-    startingTaskId?: string,
+    starting?: Starting,
   ) {
     const status = await cli.status(this.target(epic.id).path, record, record.base);
     const isEarlier =
@@ -272,7 +277,7 @@ export class PullRequestService {
     record.number ??= status.number;
     if (record.number === status.number) record.url = status.url;
     if (status.state === "merged" && record.state !== "merged")
-      await this.finishMerge(epic, record, startingTaskId);
+      await this.finishMerge(epic, record, starting);
     return status;
   }
 
@@ -317,10 +322,12 @@ export class PullRequestService {
   private async finishMerge(
     epic: Epic,
     record: EpicPullRequest,
-    startingTaskId?: string,
+    starting?: Starting,
   ): Promise<MergeResult> {
     const state = this.deps.state();
     const at = now();
+    // One that an older MemCode wrote does not say when it pushed, only when it last did something.
+    const pushedAt = record.pushedAt ?? record.updatedAt ?? at;
     record.state = "merged";
     record.mergedAt = at;
     record.updatedAt = at;
@@ -336,9 +343,8 @@ export class PullRequestService {
       record.branch,
       at,
       (task) =>
-        task.id !== startingTaskId &&
-        (isRunning(task) ||
-          (unpushed && (task.run.finishedAt ?? "") > (record.pushedAt ?? at))),
+        task.id !== starting?.taskId &&
+        (isRunning(task) || (unpushed && (task.run.finishedAt ?? "") > pushedAt)),
     );
     record.tasks = completedStories;
     if (!epic.closedAt && epic.branch === record.branch)

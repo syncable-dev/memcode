@@ -233,6 +233,7 @@ export async function installNativeBridge(): Promise<void> {
     trackerPreview: (id, teamId) => call("tracker:preview", { id, teamId }),
     importFromTracker: (id, choices) => call("tracker:import", { id, choices }),
     undoTrackerImport: (id) => call("tracker:undo-import", { id }),
+    previewUndoTrackerImport: (id) => call("tracker:undo-preview", { id }),
     syncTracker: (id) => call("tracker:sync", { id }),
     restoreTracked: (taskId, field) => call("tracker:restore", { taskId, field }),
     retryTracked: (taskId) => call("tracker:retry", { taskId }),
