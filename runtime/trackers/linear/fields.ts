@@ -190,11 +190,27 @@ function markOf(field: TrackedField, task: WorkItem, here: Here, lanes: Workflow
   // A shared board carries no more of a title.
   if (field === "title") return short(task.title.slice(0, 230));
   if (field !== "status") return short(JSON.stringify(here[field]));
-  const lane = taskStatus(task, lanes).id;
-  const own = task.projectId + ":";
-  return short(
-    [lane.startsWith(own) ? lane.slice(own.length - 1) : lane, !!task.archivedAt, task.closedAs].join(),
-  );
+  return [
+    task.stage[0],
+    task.archivedAt ? (task.closedAs?.[0] ?? "a") : "o",
+    laneMark(taskStatus(task, lanes).id, task.projectId),
+  ].join("");
+}
+/** A lane, the same on every computer: one of MemCode's own begins with the project's id here. */
+const laneMark = (lane: string, projectId: string): string =>
+  short(lane.startsWith(projectId + ":") ? lane.slice(projectId.length) : lane);
+/**
+ * Where a card lies that nobody placed: where its issue's status shows, or in the first lane
+ * of its stage. The cards of a lane that was deleted are there.
+ */
+export function byItself(task: WorkItem, statusThere: string | null, frame: Frame): string[] {
+  return [
+    laneFor(statusThere, frame),
+    taskStatus({ ...task, statusId: undefined }, workflowFor(frame.state, task.projectId)).id,
+    ...(task.stage === "planned"
+      ? [`${task.projectId}:planned`, backlogStatusId(task.projectId)]
+      : []),
+  ].filter((lane): lane is string => !!lane);
 }
 /** The marks of the fields both sides agree on now. The others keep what they had. */
 export function marksNow(task: WorkItem, frame: Frame, agreed?: Here): string {
@@ -210,11 +226,26 @@ export function marksNow(task: WorkItem, frame: Frame, agreed?: Here): string {
     .join(".");
 }
 /** Whether a field was changed here since both sides agreed on it, where that is known. */
-export function changedSince(field: TrackedField, task: WorkItem, frame: Frame): boolean | undefined {
+export function changedSince(
+  field: TrackedField,
+  task: WorkItem,
+  frame: Frame,
+  there: There,
+): boolean | undefined {
   const mark = (task.tracker?.marks ?? "").split(".")[trackedFields.indexOf(field)];
   if (!mark) return undefined;
+  const here = hereOf(task, frame);
   const lanes = workflowFor(frame.state, task.projectId);
-  return mark !== markOf(field, task, hereOf(task, frame), lanes);
+  const now = markOf(field, task, here, lanes);
+  if (mark === now) return false;
+  if (field !== "status") return true;
+  // Its lane is gone: a card of the same stage that lies where it was put is as it was.
+  const isGone = lanes.every((lane) => laneMark(lane.id, task.projectId) !== mark.slice(2));
+  return !(
+    isGone &&
+    mark.slice(0, 2) === now.slice(0, 2) &&
+    byItself(task, there.status, frame).includes(here.status)
+  );
 }
 
 /**

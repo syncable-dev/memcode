@@ -592,7 +592,13 @@ export class LinearService {
     const now = (list: string[]) => list.map((name) => renamed.get(name) ?? name);
     for (const task of this.tasksOf(connection)) {
       const base = live.memory.items[task.id];
-      if (!base || !Array.isArray(base.there.labels)) continue;
+      if (!base) {
+        // Connected anew: its card still has the name from before.
+        if (task.tracker && !task.tracker.unlinked && task.labels?.some((name) => renamed.has(name)))
+          task.labels = now(task.labels);
+        continue;
+      }
+      if (!Array.isArray(base.there.labels)) continue;
       if (!base.there.labels.some((name) => renamed.has(name))) continue;
       task.labels = now(task.labels ?? []);
       base.there.labels = sorted(now(base.there.labels));
@@ -1654,7 +1660,9 @@ export class LinearService {
     const since = made ? issue.createdAt : task.tracker!.seen;
     if (!since || issue.updatedAt <= since || task.tracker?.unlinked) return false;
     const frame = this.frame(connection, live);
-    return !same(reunited(task, issue, frame, undefined, made), baseFor(task, issue, frame));
+    // As if everything had changed there: what would make a difference has to be asked.
+    const at = Object.fromEntries(trackedFields.map((field) => [field, issue.updatedAt]));
+    return !same(reunited(task, issue, frame, { at }, made), baseFor(task, issue, frame));
   }
 
   private takeIssue(

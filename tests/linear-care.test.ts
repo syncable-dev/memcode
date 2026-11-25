@@ -568,3 +568,69 @@ test("deleting a lane moves no issue, whatever lane it was for", () =>
     assert.equal(linear(w, issues[0].id).state, w.linear.states.done.id);
     assert.equal(linear(w, issues[1].id).state, w.linear.states.progress.id);
   }));
+
+test("connected anew, a card stays in a goal that is only here, whatever else changed in Linear", () =>
+  using(async (w) => {
+    const project = w.linear.project("Export");
+    const other = w.linear.issue({ title: "B", project: project.id }), issue = w.linear.issue({ title: "A" });
+    const { connection, choices } = await w.imported();
+    w.state.epics.push({ id: "ours", projectId: w.projectId, identifier: "EP-09", title: "Ours", description: "", phase: "now", color: "mint", order: 9 });
+    w.edit(w.task(issue), { epicId: "ours" });
+    w.edit(w.task(other), { epicId: "ours" });
+    await w.sync();
+    const again = async () => {
+      await w.service.disconnect(w.connection.id);
+      w.linear.edit(issue, { title: "A" + w.linear.tick(), priority: 2 });
+      const next = await w.service.connect(w.projectId, "key-good");
+      await w.service.import(next.id, choices);
+      await w.sync();
+    };
+    void connection;
+    await again();
+    assert.equal(w.task(issue).epicId, "ours");
+    assert.equal(w.task(issue).priority, "high");
+    assert.equal(said(w).length, 0);
+    // Put in a project there: that is said.
+    await w.service.disconnect(w.connection.id);
+    w.linear.edit(issue, { project: project.id });
+    const next = await w.service.connect(w.projectId, "key-good");
+    await w.service.import(next.id, choices);
+    await w.sync();
+    assert.equal(w.state.epics.find((goal) => goal.id === w.task(issue).epicId)?.tracker?.id, project.id);
+  }));
+
+test("a lane deleted while disconnected moves no issue", () =>
+  using(async (w) => {
+    const lane = crypto.randomUUID();
+    w.state.workflowStates = [
+      ...defaultWorkflow(w.projectId),
+      { id: lane, projectId: w.projectId, name: "Ready", stage: "planned", color: "#fff", order: 2 },
+    ];
+    const issues = [1, 2, 3].map((n) => w.linear.issue({ title: "R" + n, state: w.linear.states.ready.id }));
+    const { connection, choices } = await w.imported();
+    assert.equal(w.task(issues[0]).statusId, lane);
+    await w.service.disconnect(connection.id);
+    w.state.workflowStates = w.state.workflowStates.filter((state) => state.id !== lane);
+    w.edit(w.task(issues[2]), { statusId: w.lane("done") });
+    const again = await w.service.connect(w.projectId, "key-good");
+    await w.service.import(again.id, { ...choices, lanes: { ...choices.lanes, [w.linear.states.ready.id]: w.lane("planned") } });
+    await w.sync();
+    assert.deepEqual(issues.map((issue) => linear(w, issue.id).state), [w.linear.states.ready.id, w.linear.states.ready.id, w.linear.states.done.id]);
+  }));
+
+test("a label renamed in Linear while disconnected is the same label", () =>
+  using(async (w) => {
+    const bug = w.linear.label("bug");
+    const issue = w.linear.issue({ title: "A", labels: [bug.id] }), plain = w.linear.issue({ title: "B", labels: [bug.id] });
+    const { connection, choices } = await w.imported();
+    await w.service.disconnect(connection.id);
+    bug.name = "defect";
+    w.edit(w.task(issue), { labels: ["bug", "ui"] });
+    const again = await w.service.connect(w.projectId, "key-good");
+    await w.service.import(again.id, choices);
+    await w.sync();
+    assert.deepEqual(named(w, linear(w, issue.id).labels), ["defect", "ui"]);
+    assert.deepEqual(w.task(issue).labels?.slice().sort(), ["defect", "ui"]);
+    assert.deepEqual(w.task(plain).labels, ["defect"]);
+    assert.equal([...w.linear.labels.values()].filter((label) => label.name === "bug").length, 0);
+  }));
