@@ -2,6 +2,7 @@ import type { WorkItem } from "../../../src/shared";
 import type { KeptValue, TrackedField } from "../../../src/tracker";
 import {
   applyThere,
+  byItself,
   changedSince,
   clipped,
   hasUnshippedWork,
@@ -19,7 +20,7 @@ import {
   type There,
 } from "./fields";
 import type { Issue } from "./read";
-import { backlogStatusId, taskStatus, workflowFor } from "../../../src/planning/workflow";
+import { backlogStatusId } from "../../../src/planning/workflow";
 import { isActive } from "../../../src/domain";
 
 /**
@@ -131,11 +132,18 @@ export function reunited(
     }
     const said = toThere(field, base.here[field], frame, base.there, task);
     if (said !== undefined && same(said, base.there[field])) continue;
-    const here = made || changedSince(field, task, frame);
+    const here = made || changedSince(field, task, frame, base.there);
     const there = !since || lastChanged(field, issue, history) > since;
     if (here === false) {
-      // Each as it is, or as Linear has it since.
-      if (there) base.there[field] = apart as never;
+      // Linear has no place for what is here: it says something only when it says so.
+      const isSaid =
+        said === undefined
+          ? !!since && (history.at[field] ?? "") > since
+          : // Its status and its scale stand for more than one value here.
+            field === "status" || field === "estimate"
+            ? there
+            : true;
+      if (isSaid) base.there[field] = apart as never;
       continue;
     }
     if (said === undefined) continue;
@@ -190,15 +198,9 @@ function followGoneLane(task: WorkItem, base: Base, here: Here, frame: Frame): v
   const gone = String(base.here.status);
   if (!isGoneLane(gone, frame)) return;
   const stage = frame.stages?.[gone];
-  const byItself = [
-    laneFor(base.there.status, frame),
-    taskStatus({ ...task, statusId: undefined }, workflowFor(frame.state, task.projectId)).id,
-    ...(task.stage === "planned"
-      ? [`${task.projectId}:planned`, backlogStatusId(task.projectId)]
-      : []),
-  ];
+  const put = byItself(task, base.there.status, frame);
   // Where nothing is known of the lane, nothing is said about it.
-  if (stage && (stage !== task.stage || !byItself.includes(String(here.status)))) {
+  if (stage && (stage !== task.stage || !put.includes(String(here.status)))) {
     base.here.status = apart;
     return;
   }

@@ -880,3 +880,26 @@ test("whatever was in step, a hand-over sends what was changed on the board sinc
     }
   }
 });
+
+test("a hand-over keeps cards in goals that are only here, and takes the labels as they are called now", async (context) => {
+  const t = await team(context);
+  const { linear, a, b, agree } = t;
+  const bug = linear.label("bug");
+  const issue = linear.issue({ title: "A", labels: [bug.id] });
+  await a.import();
+  await agree();
+  await a.at.edit((state) => state.epics.push({ id: "ours", projectId: a.at.projectId, identifier: "EP-09", title: "Ours", description: "", phase: "now", color: "mint", order: 9 }));
+  await a.edit(a.task(issue), { epicId: "ours" });
+  await a.sync();
+  await agree();
+  linear.tick(3_600_000);
+  linear.edit(issue, { title: "A, renamed" });
+  bug.name = "defect";
+  assert.deepEqual(await handOver(t, b), []);
+  assert.equal(b.task(issue).epicId, "ours");
+  assert.equal(b.task(issue).title, "A, renamed");
+  assert.deepEqual(b.task(issue).labels, ["defect"]);
+  await b.edit(b.task(issue), { labels: ["defect", "ui"] });
+  await b.sync();
+  assert.deepEqual(linear.issues.get(issue.id)!.labels.map((id) => linear.labels.get(id)!.name).sort(), ["defect", "ui"]);
+});
