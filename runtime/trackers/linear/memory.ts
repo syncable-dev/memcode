@@ -29,8 +29,6 @@ export interface Memory {
   making?: Record<string, string>;
   /** When everything was last compared, also what is gone there. */
   comparedAt?: string;
-  /** When the MemCode that kept the project in step before this one began to. */
-  since?: string;
   /** Kept while the project is disconnected, for connecting again. */
   rested?: { at: string; teamId: string; direction: "both" | "in"; goals: string };
 }

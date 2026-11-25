@@ -40,6 +40,10 @@ export interface TrackedItem {
   within?: string;
   /** The text there is longer than a task here can hold; it is never sent back. */
   clipped?: boolean;
+  /** A person unlinked it: it follows no more, on whichever computer. */
+  unlinked?: true;
+  /** When the issue last changed of what is taken in here, or sent from here. */
+  seen?: string;
 }
 
 /** A value that lost to a newer one. One click puts it back. */
@@ -140,6 +144,8 @@ export interface TrackerKeeper {
   workspace: string;
   team: string;
   since: string;
+  /** What a person took out of the project: issues, and goals as "goal:…". Not brought in again. */
+  left?: string[];
 }
 /** The keeper of a project, when it is somewhere else. */
 export function keptElsewhere(

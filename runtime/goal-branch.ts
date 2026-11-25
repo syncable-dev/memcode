@@ -62,6 +62,8 @@ export function shipBranch(
   if (staysOnBranch) return completed;
   // What was being brought into the branch that shipped is nobody's to finish any more.
   if (goal.branch === branch) delete goal.resolving;
+  // It shipped from here: whoever put it on the board, nobody goes on with it.
+  if (goal.boardBranch?.branch === branch) delete goal.boardBranch;
   const left = openTasks(state.tasks, goal);
   if (isQuickChanges(goal)) {
     goal.closedAt ??= at;

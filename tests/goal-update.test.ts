@@ -327,3 +327,38 @@ test("a merge that was ended in the folder is not recorded as done", async () =>
     await rm(f.root, { recursive: true, force: true });
   }
 });
+
+test("an update that conflicts can always be taken out, or finished", async () => {
+  const f = await conflicting();
+  try {
+    // The worker ended the merge itself.
+    await f.updates.resolveWithWorker("e1");
+    await git(f.goal, ["merge", "--abort"]);
+    await f.updates.undo("e1");
+    assert.equal(f.epic.resolving, undefined);
+    // The tasks that worked there are gone.
+    await f.updates.resolveWithWorker("e1");
+    const tasks = f.state.tasks.splice(0);
+    await f.updates.undo("e1");
+    assert.equal(f.epic.resolving, undefined);
+    assert.equal(await git(f.goal, ["status", "--porcelain"]), "");
+    f.state.tasks.push(...tasks);
+    // A worker is on it.
+    await f.updates.resolveWithWorker("e1");
+    f.task.run.state = "running";
+    await assert.rejects(f.updates.undo("e1"), /Wait for 1 running task/);
+    f.task.run.state = "failed";
+    // It also changed a file the merge had brought in by itself.
+    const merged = (await git(f.goal, ["diff", "--name-only", "--cached", "--diff-filter=AM"])).split("\n").find((name) => name && name !== "app.ts");
+    if (merged) {
+      await writeFile(join(f.goal, merged), "more of it\n");
+      await assert.rejects(f.updates.undo("e1"), new RegExp(merged.replace(".", "\\.") + " was changed as well"));
+      assert.ok(f.epic.resolving);
+      await git(f.goal, ["checkout", "--", merged]);
+    }
+    await f.updates.undo("e1");
+    assert.equal(f.epic.resolving, undefined);
+  } finally {
+    await rm(f.root, { recursive: true, force: true });
+  }
+});

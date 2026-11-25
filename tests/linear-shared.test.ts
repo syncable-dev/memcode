@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { shipBranch } from "../runtime/goal-branch";
 import { applyTaskPatch } from "../runtime/task-planning";
 import { LinearAuth } from "../runtime/trackers/linear/auth";
 import { LinearService } from "../runtime/trackers/linear/service";
@@ -38,6 +39,7 @@ async function team(context: test.TestContext) {
     const service = new LinearService({
       state: () => at.state,
       boardState: () => at.sync?.status().state,
+      boardIsNow: async () => (await at.sync?.isNow()) ?? false,
       changed: async () => {
         await at.save();
         await at.sync.capture();
@@ -496,4 +498,149 @@ test("a goal's branch another computer put on the board is that one's to change"
   await agree();
   assert.equal(of(a).branch, undefined);
   assert.equal(of(a).boardBranch, undefined);
+});
+
+test("whoever takes over sends what was done on the board while the one before was away", async (context) => {
+  const { linear, a, b, agree } = await team(context);
+  const issue = linear.issue({ title: "Export", description: "One line.", state: linear.states.todo.id });
+  const other = linear.issue({ title: "Other" });
+  await a.import();
+  await agree();
+  await a.edit(a.task(issue), { statusId: a.at.projectId + ":working" });
+  await a.sync();
+  await agree();
+  await a.edit(a.task(issue), { title: "Export as CSV", description: "Two lines." });
+  await a.sync();
+  await agree();
+  a.at.goOffline();
+  linear.tick(3 * 86_400_000);
+  await b.edit(b.task(issue), { statusId: b.at.projectId + ":done", title: "Export as CSV and PDF", description: "Three lines." });
+  // And Linear goes on by itself, on another card.
+  linear.edit(other, { title: "Other, by the team" });
+  await b.edit(b.task(other), { estimate: 2 });
+  linear.tick(60_000);
+  const { connection, choices } = await b.connect();
+  await b.service.takeOver(connection.id);
+  linear.tick(60_000);
+  await b.service.import(connection.id, choices);
+  await b.sync();
+  const there = linear.issues.get(issue.id)!;
+  assert.deepEqual([there.state, there.title, there.description], [linear.states.done.id, "Export as CSV and PDF", "Three lines."]);
+  assert.equal(b.task(issue).stage, "done");
+  assert.equal(b.task(issue).tracker?.kept, undefined);
+  assert.equal(b.task(other).title, "Other, by the team");
+  assert.equal(linear.issues.get(other.id)!.title, "Other, by the team");
+  assert.equal(linear.issues.get(other.id)!.estimate, 2);
+  a.at.comeBack();
+  await agree();
+});
+
+test("what a person unlinked or took out stays out, whoever keeps it in step", async (context) => {
+  const { linear, a, b, agree } = await team(context);
+  const project = linear.project("Export", ["First"]);
+  const gone = linear.issue({ title: "Deleted here" }), own = linear.issue({ title: "In Linear" });
+  const inGoal = linear.issue({ title: "other", project: project.id, milestone: project.milestones[0].id });
+  await a.import();
+  await agree();
+  await a.service.unlink(a.task(own).id);
+  await a.edit(a.task(own), { title: "My own card now" });
+  await a.at.edit((state) => {
+    state.tasks = state.tasks.filter((task) => task.tracker?.id !== gone.id);
+    state.epics = state.epics.filter((goal) => !goal.tracker);
+    for (const task of state.tasks) if (task.tracker?.id === inGoal.id) task.epicId = null;
+  });
+  await a.sync();
+  await agree();
+  const { connection, choices } = await b.connect();
+  await b.service.takeOver(connection.id);
+  await agree();
+  linear.tick(60_000);
+  await b.service.import(connection.id, choices);
+  linear.edit(inGoal, { title: "other, renamed" });
+  await b.sync();
+  await agree();
+  assert.deepEqual(b.tasks().map((task) => task.title).sort(), ["My own card now", "other, renamed"]);
+  assert.equal(linear.issues.get(own.id)!.title, "In Linear");
+  assert.equal(b.task(own).tracker?.standing, "unlinked");
+  assert.equal(b.goals().length, 0);
+  assert.equal(linear.issues.get(inGoal.id)!.project, project.id);
+});
+
+test("a long title from Linear stays whole when a computer takes over again", async (context) => {
+  const { linear, a, b, agree } = await team(context);
+  const issue = linear.issue({ title: "short" });
+  const odd = linear.issue({ title: "odd" });
+  await a.import();
+  await agree();
+  const { connection, choices } = await b.connect();
+  await b.service.takeOver(connection.id);
+  await agree();
+  linear.tick(60_000);
+  await b.service.import(connection.id, choices);
+  await agree();
+  const long = "t".repeat(250) + "END", halved = "u".repeat(239) + "😀" + "v".repeat(12);
+  linear.edit(issue, { title: long });
+  linear.edit(odd, { title: halved });
+  linear.tick(60_000);
+  await b.sync();
+  await agree();
+  await a.service.takeOver(a.connection.id);
+  await agree();
+  linear.tick(60_000);
+  await a.sync();
+  await agree();
+  await a.sync();
+  assert.equal(linear.issues.get(issue.id)!.title, long);
+  assert.equal(linear.issues.get(odd.id)!.title, halved);
+});
+
+test("a board whose stream is silent is asked before anything goes to Linear", async (context) => {
+  const { linear, a, b, agree } = await team(context);
+  const issue = linear.issue({ title: "Export", description: "One line about export." });
+  await a.import();
+  await agree();
+  // As after a sleep: the stream says nothing, and has not ended yet.
+  const stream = a.at.sync as unknown as { arrive: () => undefined };
+  const arrive = stream.arrive;
+  stream.arrive = () => undefined;
+  const { connection, choices } = await b.connect();
+  await b.service.takeOver(connection.id);
+  linear.tick(8 * 3_600_000);
+  await b.service.import(connection.id, choices);
+  linear.edit(issue, { description: "Two lines about import and more." });
+  await b.sync();
+  assert.equal(a.at.sync.status().state, "synced");
+  await a.sync();
+  stream.arrive = arrive;
+  await a.at.quit();
+  a.at.reopen();
+  await agree();
+  linear.tick(60_000);
+  await b.sync();
+  await agree();
+  assert.equal(linear.issues.get(issue.id)!.description, "Two lines about import and more.");
+  // A service that does not answer is no answer.
+  a.at.isSilent = true;
+  const asked = Date.now();
+  assert.equal(await a.at.sync.isNow(), false);
+  assert.ok(Date.now() - asked < 15_000);
+  a.at.isSilent = false;
+});
+
+test("a branch that was brought here and shipped from here is nobody's on the board", async (context) => {
+  const { a, b, agree } = await team(context);
+  const of = (one: typeof a) => one.goals().find((goal) => goal.id === "goal")!;
+  await a.at.edit((state) =>
+    state.epics.push({ id: "goal", projectId: a.at.projectId, identifier: "EP-01", title: "Export", description: "", phase: "now", color: "mint", order: 1, branch: "feat/x" }),
+  );
+  await agree();
+  const work = (id: string, changes: Partial<WorkItem>): WorkItem => ({ id, identifier: "MC-0" + id.length, projectId: b.at.projectId, title: id, description: "", stage: "review", priority: "medium", category: "Work", kind: "feature", harness: "claude", checklist: [], messages: [], epicId: "goal", run: { state: "finished", branch: "feat/x", sessionId: "s" }, createdAt: "2026-11-21T10:00:00.000Z", updatedAt: "2026-11-21T10:00:00.000Z", ...changes });
+  await b.at.edit((state) => {
+    state.tasks.push(work("done", {}), work("to do", { stage: "planned", run: { state: "idle" } }));
+  });
+  await agree();
+  await b.at.edit((state) => void shipBranch(state, of(b), "feat/x", "2026-11-21T11:00:00.000Z"));
+  await agree();
+  assert.equal(of(b).branch, undefined);
+  assert.equal(of(a).branch, undefined, "its next task does not start on a branch that merged");
 });

@@ -5,6 +5,7 @@ import {
   clipped,
   hasUnshippedWork,
   hereOf,
+  isCut,
   isGoneLane,
   laneFor,
   same,
@@ -17,7 +18,7 @@ import {
   type There,
 } from "./fields";
 import type { Issue } from "./read";
-import { backlogStatusId } from "../../../src/planning/workflow";
+import { backlogStatusId, taskStatus, workflowFor } from "../../../src/planning/workflow";
 import { isActive } from "../../../src/domain";
 
 /**
@@ -85,6 +86,8 @@ export interface Merge {
   refused: Partial<Record<TrackedField, string>>;
   /** Something on the task here changed. */
   changed: boolean;
+  /** Linear said something new, and all of it is taken in. */
+  heard: boolean;
 }
 
 export function baseFor(task: WorkItem, issue: Issue, frame: Frame): Base {
@@ -131,19 +134,17 @@ export function reunited(
     }
     base.there[field] = apart as never;
     base.touched[field] = never;
+    (base.seen ??= {})[field] = hereOf(task, frame)[field] as never;
   }
   return base;
 }
 const apart = "\u0000apart";
 /** Before anything else: whatever Linear has is newer. */
-const never = "";
+const never = "0001-01-01T00:00:00.000Z";
 /** A milestone is not in the history, and neither is what nobody asked for. */
 const lastChanged = (field: TrackedField, issue: Issue, history: History): string =>
   history.at[field] ??
   (field === "goal" ? issue.updatedAt : (history.reaches ?? issue.updatedAt));
-/** As much of a title as a shared board carries. */
-const isCut = (here: string, there: string) =>
-  here.length >= 240 && there.length > here.length && there.startsWith(here);
 const isPart = (task: WorkItem, base: Base) =>
   toThere("description", base.here.description, {} as Frame, base.there, task) === undefined ||
   (base.here.description !== base.there.description &&
@@ -179,9 +180,30 @@ export function goalsChosenAnew(task: WorkItem, base: Base): void {
 }
 const anyGoal = "\u0000any";
 
-/** The cards of a lane that was deleted went elsewhere by themselves. */
-function followGoneLane(base: Base, here: Here, frame: Frame): void {
+/**
+ * The cards of a lane that was deleted went elsewhere by themselves: to where the issue's
+ * status shows now, or to the first lane of their stage. Anywhere else a person moved them.
+ */
+function followGoneLane(task: WorkItem, base: Base, here: Here, frame: Frame): void {
   if (!isGoneLane(String(base.here.status), frame)) return;
+  const stages: Record<string, string[]> = {
+    backlog: ["planned"],
+    unstarted: ["planned"],
+    started: ["working", "review"],
+    completed: ["done"],
+  };
+  const type = frame.statuses.get(String(base.there.status))?.type ?? "";
+  const byItself = [
+    laneFor(base.there.status, frame),
+    taskStatus({ ...task, statusId: undefined }, workflowFor(frame.state, task.projectId)).id,
+    `${task.projectId}:planned`,
+    backlogStatusId(task.projectId),
+  ];
+  if (!stages[type]?.includes(task.stage) || !byItself.includes(String(here.status))) {
+    // What it was before is not here any more; what it is now is a change.
+    base.here.status = apart;
+    return;
+  }
   base.here.status = here.status;
   delete base.touched.status;
   delete base.seen?.status;
@@ -234,7 +256,7 @@ export function observe(
   at: string,
 ): { differs: boolean; marked: boolean } {
   const here = hereOf(task, frame);
-  followGoneLane(base, here, frame);
+  followGoneLane(task, base, here, frame);
   let differs = false,
     marked = false;
   for (const field of order)
@@ -282,10 +304,10 @@ export function mergeIssue(
   const there = thereOf(issue, frame);
   const before = hereOf(task, frame);
   const bothWays = frame.connection.choices?.direction !== "in";
-  const merge: Merge = { push: {}, refused: {}, changed: false };
+  const merge: Merge = { push: {}, refused: {}, changed: false, heard: false };
   const mine = new Set<TrackedField>();
   const pending = new Set<TrackedField>();
-  followGoneLane(base, before, frame);
+  followGoneLane(task, base, before, frame);
   if (base.there.goal === anyGoal) base.there.goal = there.goal;
   // Without its cycle it is in the backlog on both sides, and Planned is a change of its own.
   if (placedByHand(task, before, base, frame))
@@ -294,6 +316,7 @@ export function mergeIssue(
     const changedHere = !same(before[field], base.here[field]);
     const changedThere = !same(there[field], base.there[field]);
     if (!changedHere && !changedThere) continue;
+    merge.heard ||= changedThere;
     const said = changedHere ? toThere(field, before[field], frame, there, task) : undefined;
     if (changedHere && said !== undefined && same(said, there[field])) {
       // Both came to the same value.
@@ -348,7 +371,7 @@ export function mergeIssue(
     const result = applyThere(task, field, there[field], frame, at);
     if ("done" in result) {
       if (changedHere && said !== undefined)
-        keep(task, field, before[field], "here", base.touched[field] || at, frame);
+        keep(task, field, before[field], "here", sinceWhen(base, field) ?? at, frame);
       task.updatedAt = last > issue.updatedAt ? last : issue.updatedAt;
       base.there[field] = there[field] as never;
       merge.changed = true;
@@ -378,8 +401,12 @@ export function mergeIssue(
     }
   if (pending.size) base.held = standsAt(task);
   else delete base.held;
+  merge.heard &&= !pending.size;
   return merge;
 }
+/** When it was changed here, where that is known. */
+const sinceWhen = (base: Base, field: TrackedField): string | undefined =>
+  base.touched[field] === never ? undefined : base.touched[field];
 
 /**
  * In a cycle, an issue of Linear's backlog is planned here. Out of the cycle it would be in

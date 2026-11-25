@@ -853,6 +853,11 @@ export class Sharing {
     );
   }
 
+  /** Whether the project's board is here as it is now. */
+  async boardIsNow(projectId: string): Promise<boolean> {
+    return (await this.boards.get(projectId)?.sync.isNow()) ?? false;
+  }
+
   /** Who a comment written in a connected project is by: the person signed in to Memtrace. */
   author(projectId: string): StoryAuthor | undefined {
     const running = this.boards.get(projectId);

@@ -905,6 +905,7 @@ export async function createRuntime(
   linear = new LinearService({
     state,
     changed,
+    boardIsNow: (projectId) => sharing?.boardIsNow(projectId) ?? Promise.resolve(false),
     dataDir: store.dir,
     tokens: trackerTokens,
     auth: new LinearAuth({ store: trackerTokens, openExternal: openLinear }),

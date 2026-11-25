@@ -106,7 +106,9 @@ sends only while the shared board is connected: it would not hear that somebody 
 now. The page says so when that takes longer than a minute.
 
 A long title or description that a computer holds only a part of never replaces the whole of it
-in Linear, also when that computer takes over.
+in Linear, also when that computer takes over. Each card says on the board until when it holds
+its issue: what was changed here after that is sent by whoever keeps it next, and what was
+changed in Linear after that stays. What a person unlinked or took out stays out.
 
 ## Not built
 

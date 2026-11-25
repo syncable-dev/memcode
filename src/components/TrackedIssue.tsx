@@ -84,7 +84,7 @@ export function TrackedIssue({
       ? task.createdAt > elsewhere.since
       : connection?.importedAt &&
         connection.choices?.createIssues &&
-        task.createdAt > connection.importedAt;
+        task.createdAt > (connection.createsSince ?? connection.importedAt);
     if (!becomes || task.archivedAt) return null;
     return (
       <section className="inspector-section tracked-issue">
