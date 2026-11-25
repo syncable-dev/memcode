@@ -99,6 +99,7 @@ const trackedOnBoard = (item: { tracker?: TrackedItem }): Json | undefined =>
         ...(item.tracker.clipped ? { clipped: true } : {}),
         ...(item.tracker.unlinked ? { unlinked: true } : {}),
         ...(item.tracker.seen ? { seen: item.tracker.seen } : {}),
+        ...(item.tracker.marks ? { marks: item.tracker.marks } : {}),
       } as Json)
     : undefined;
 
@@ -249,6 +250,8 @@ export function boardOf(state: AppState, projectId: string): Board {
             workspace: keeper.workspace,
             team: keeper.team,
             since: keeper.since,
+            ...(keeper.direction ? { direction: keeper.direction } : {}),
+            ...(keeper.goals ? { goals: keeper.goals } : {}),
           },
         },
         {},
@@ -306,6 +309,11 @@ const flag: Read<boolean> = (value) =>
   typeof value === "boolean" ? value : undefined;
 const or = <T>(read: T | undefined, kept: T): T =>
   read === undefined ? kept : read;
+/** The values that are there. */
+const only = <T extends object>(values: T): Partial<T> =>
+  Object.fromEntries(
+    Object.entries(values).filter(([, value]) => value !== undefined),
+  ) as Partial<T>;
 const memberIds = (set: Record<string, Json> | undefined, most: number) =>
   Object.keys(set ?? {})
     .filter((id) => id.length > 0 && id.length <= 1000)
@@ -338,7 +346,8 @@ function trackedFrom(
   const { clipped: _clipped, unlinked: _unlinked, ...mine } =
     kept?.id === id ? kept : ({} as Partial<TrackedItem>);
   const within = line(100)(parts!.within) ?? mine.within,
-    seen = line(40)(parts!.seen) ?? mine.seen;
+    seen = line(40)(parts!.seen) ?? mine.seen,
+    marks = line(200)(parts!.marks) ?? mine.marks;
   return {
     ...mine,
     provider,
@@ -352,6 +361,7 @@ function trackedFrom(
     ...(flag(parts!.clipped) ? { clipped: true } : {}),
     ...(flag(parts!.unlinked) ? { unlinked: true as const } : {}),
     ...(seen ? { seen } : {}),
+    ...(marks ? { marks } : {}),
   };
 }
 function personFrom(value: Json | undefined): Person | null {
@@ -873,6 +883,10 @@ function applyProjectLists(
         workspace: line(200)(parts!.workspace) ?? "",
         team: line(200)(parts!.team) ?? "",
         since: line(40)(parts!.since) ?? "",
+        ...only({
+          direction: oneOf("both", "in")(parts!.direction),
+          goals: oneOf("milestones", "parents", "none")(parts!.goals),
+        }),
         ...(left.length ? { left: left.sort() } : {}),
       });
     }

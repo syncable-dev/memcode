@@ -207,6 +207,8 @@ async function run(seed: number, steps: number, withWorkers = false, withTrash =
       if (said === undefined) continue;
       // What is in a cycle shows as planned; its status there stays Backlog.
       if (field === "status" && there.status === linear.states.backlog.id && there.cycle && here.status === w.lane("planned")) continue;
+      // A stopped worker had Linear say In Progress. Connected anew, its card lies where it lay.
+      if (field === "status" && anew && there.status === linear.states.progress.id && here.status === w.lane("review")) continue;
       const agree = field === "description" ? rewritten(String(said)) === there.description : same(said, there[field]);
       if (!agree) apart.push(`${linear.key(issue)} ${field}: here ${JSON.stringify(here[field])}, there ${JSON.stringify(there[field])}`);
     }

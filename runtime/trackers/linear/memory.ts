@@ -30,7 +30,11 @@ export interface Memory {
   /** When everything was last compared, also what is gone there. */
   comparedAt?: string;
   /** Kept while the project is disconnected, for connecting again. */
-  rested?: { at: string; teamId: string; direction: "both" | "in"; goals: string };
+  rested?: { teamId: string; direction: "both" | "in"; goals: string };
+  /** What a goal was for the MemCode that kept the project in step before this one. */
+  formerGoals?: string;
+  /** The stage of every lane that has been here: a lane that is deleted has no other record. */
+  lanes?: Record<string, string>;
 }
 export const emptyMemory = (): Memory => ({
   version: 1,

@@ -644,3 +644,239 @@ test("a branch that was brought here and shipped from here is nobody's on the bo
   assert.equal(of(b).branch, undefined);
   assert.equal(of(a).branch, undefined, "its next task does not start on a branch that merged");
 });
+
+/** B keeps it from now on, and has looked. */
+async function handOver(
+  { linear, agree }: Awaited<ReturnType<typeof team>>,
+  to: Awaited<ReturnType<typeof team>>["a"],
+  changes: Partial<TrackerChoices> = {},
+) {
+  if (!to.at.state.trackers?.length) await to.connect();
+  await to.service.takeOver(to.connection.id);
+  await agree();
+  linear.tick(60_000);
+  linear.calls.length = 0;
+  if (!to.connection.importedAt) await to.import(changes);
+  await to.sync();
+  await agree();
+  return linear.calls.filter((call) => call.operation === "UpdateIssue").map((call) => call.variables.input);
+}
+
+test("taking over again leaves what a colleague changed in Linear meanwhile", async (context) => {
+  const t = await team(context);
+  const { linear, a, b, agree } = t;
+  const issue = linear.issue({ title: "v0", description: "text" });
+  await a.import();
+  await agree();
+  await handOver(t, b);
+  linear.edit(issue, { title: "vB" });
+  linear.tick(40_000);
+  await b.sync();
+  await agree();
+  linear.tick(3_600_000);
+  linear.edit(issue, { title: "v1" });
+  linear.tick(3_600_000);
+  await a.edit(a.task(issue), { startDate: "2026-11-22" });
+  await agree();
+  assert.deepEqual(await handOver(t, a), []);
+  assert.equal(linear.issues.get(issue.id)!.title, "v1");
+  assert.equal(a.task(issue).title, "v1");
+});
+
+test("connecting again and taking over sends what was done on the board since", async (context) => {
+  const t = await team(context);
+  const { linear, a, b, agree } = t;
+  const issue = linear.issue({ title: "v0", description: "text" });
+  await b.import();
+  await agree();
+  await b.service.disconnect(b.connection.id);
+  await agree();
+  await a.import();
+  await agree();
+  linear.tick(3_600_000);
+  await a.edit(a.task(issue), { title: "v1" });
+  await a.sync();
+  await agree();
+  linear.tick(3_600_000);
+  await b.edit(b.task(issue), { title: "v2" });
+  await agree();
+  assert.deepEqual(await handOver(t, b), [{ title: "v2" }]);
+  assert.equal(a.task(issue).title, "v2");
+});
+
+test("what was held back from Linear is not put back by the next one", async (context) => {
+  const t = await team(context);
+  const { linear, a, b, agree } = t;
+  const [p, q] = ["Export", "Billing"].map((name) => linear.project(name));
+  const issue = linear.issue({ title: "x", project: p.id });
+  linear.issue({ title: "y", project: q.id });
+  await a.import();
+  await agree();
+  const task = a.task(issue);
+  await a.at.edit(() => {
+    Object.assign(task.run, { state: "finished", startedAt: "2026-11-21T09:30:00.000Z", branch: "feat/x" });
+    Object.assign(task, { stage: "review", statusId: a.at.projectId + ":review" });
+  });
+  await a.sync();
+  await agree();
+  linear.edit(issue, { project: q.id });
+  linear.tick(40_000);
+  await a.sync();
+  assert.match(a.task(issue).tracker?.note ?? "", /stays in its goal/);
+  await a.edit(a.task(issue), { title: "x, renamed" });
+  await a.sync();
+  await agree();
+  linear.tick(3_600_000);
+  await handOver(t, b);
+  assert.equal(linear.issues.get(issue.id)!.project, q.id);
+  assert.equal(linear.issues.get(issue.id)!.title, "x, renamed");
+});
+
+test("a hand-over moves no issue that nobody moved", async (context) => {
+  const t = await team(context);
+  const { linear, a, b, agree } = t;
+  const ready = [1, 2, 3].map((n) => linear.issue({ title: "R" + n, state: linear.states.ready.id }));
+  const failed = linear.issue({ title: "x" });
+  const words = linear.issue({ title: "words", description: "old" });
+  const { connection, choices } = await a.connect();
+  await a.service.import(connection.id, { ...choices, lanes: { ...choices.lanes, [linear.states.ready.id]: a.at.projectId + ":working" } });
+  await agree();
+  await a.at.edit(() => {
+    const task = a.task(failed);
+    Object.assign(task.run, { state: "failed", startedAt: "2026-11-21T09:30:00.000Z", branch: "feat/x" });
+    Object.assign(task, { stage: "review", statusId: a.at.projectId + ":review", updatedAt: linear.tick() });
+  });
+  await a.edit(a.task(words), { description: "- one\n- two" });
+  await a.sync();
+  await a.sync();
+  await agree();
+  assert.equal(linear.issues.get(failed.id)!.state, linear.states.progress.id);
+  linear.tick(3_600_000);
+  assert.deepEqual(await handOver(t, b), []);
+  for (const issue of ready) assert.equal(linear.issues.get(issue.id)!.state, linear.states.ready.id);
+  assert.equal(linear.issues.get(failed.id)!.state, linear.states.progress.id);
+});
+
+test("where only Linear was followed, what was done here meanwhile is nobody's to send", async (context) => {
+  const t = await team(context);
+  const { linear, a, b, agree } = t;
+  const issue = linear.issue({ title: "A", description: "text" });
+  await a.import({ direction: "in" });
+  await agree();
+  await b.edit(b.task(issue), { title: "note to self" });
+  await a.sync();
+  await agree();
+  assert.deepEqual(await handOver(t, b), []);
+  assert.equal(linear.issues.get(issue.id)!.title, "A");
+  await b.edit(b.task(issue), { priority: "high" });
+  await b.sync();
+  assert.equal(linear.issues.get(issue.id)!.priority, 2);
+  assert.equal(linear.issues.get(issue.id)!.title, "A");
+});
+
+test("whatever was in step, a hand-over sends what was changed on the board since, and nothing else", async (context) => {
+  const runs = Number(process.env.LINEAR_SHARED_RUNS ?? 4);
+  for (let seed = 1; seed <= runs; seed++) {
+    const t = await team(context);
+    const { linear, a, b, agree } = t;
+    let turn = seed * 104_729;
+    const roll = (sides: number) => {
+      turn = (Math.imul(turn ^ (turn >>> 15), 1 | turn) + 0x6d2b79f5) | 0;
+      const mixed = Math.imul(turn ^ (turn >>> 7), 61 | turn) ^ turn;
+      return ((mixed ^ (mixed >>> 14)) >>> 0) % sides;
+    };
+    const pick = <T>(list: readonly T[]): T => list[roll(list.length)];
+    const labels = ["red", "green", "blue"].map((name) => linear.label(name));
+    const states = [linear.states.backlog, linear.states.todo, linear.states.ready, linear.states.progress, linear.states.review, linear.states.done];
+    const issues = Array.from({ length: 5 }, (_, n) => linear.issue({ title: "Issue " + n, description: "Start " + n, state: pick(states.slice(0, 5)).id, priority: roll(5) }));
+    await a.import();
+    await agree();
+    let words = 0;
+    const steps: string[] = [];
+    const there = (issue: FakeIssue, field: string) =>
+      linear.edit(issue, ({
+        title: { title: "there " + ++words },
+        description: { description: "there " + ++words },
+        priority: { priority: (issue.priority + 1 + roll(4)) % 5 },
+        dueDate: { dueDate: "2026-12-" + String(10 + (++words % 20)) },
+        labels: { labels: labels.filter(() => roll(2)).map((label) => label.id) },
+        status: { state: pick(states.filter((state) => state.id !== issue.state)).id },
+        assignee: { assignee: issue.assignee === linear.users.dana.id ? linear.users.alex.id : linear.users.dana.id },
+      } as Record<string, Partial<FakeIssue>>)[field]);
+    const here = async (who: typeof a, issue: FakeIssue, field: string) => {
+      const task = who.task(issue);
+      const lanes = ["working", "done"].filter((lane) => task.statusId !== who.at.projectId + ":" + lane && task.stage !== lane);
+      await who.edit(task, ({
+        title: { title: "here " + ++words },
+        description: { description: "here " + ++words + "\n- a\n- b" },
+        priority: { priority: pick((["urgent", "high", "medium", "low", "none"] as const).filter((value) => value !== task.priority)) },
+        dueDate: { dueDate: "2027-01-" + String(10 + (++words % 20)) },
+        labels: { labels: [...(task.labels ?? []).filter((label) => !label.startsWith("new")), "new " + ++words] },
+        status: { statusId: who.at.projectId + ":" + pick(lanes) },
+        assignee: { assignee: task.assignee?.id === linear.users.dana.id ? null : { id: linear.users.dana.id, name: "Dana Ito" } },
+      } as Record<string, Parameters<typeof applyTaskPatch>[2]>)[field]);
+    };
+    const fields = ["title", "description", "priority", "dueDate", "labels", "status", "assignee"];
+    for (let n = 0; n < 25; n++) {
+      const issue = pick(issues), field = pick(fields);
+      linear.tick(5000);
+      if (roll(2)) there(issue, field);
+      else {
+        await here(roll(2) ? a : b, issue, field);
+        await agree();
+      }
+      if (roll(2)) {
+        linear.tick(40_000);
+        await a.sync();
+        await agree();
+      }
+      if (roll(8) === 0)
+        await a.at.edit(() => {
+          const task = a.task(issue);
+          Object.assign(task.run, { state: pick(["failed", "stopped", "finished"]), startedAt: "2026-11-21T09:30:00.000Z", branch: "feat/x" });
+          Object.assign(task, { stage: "review", statusId: a.at.projectId + ":review", updatedAt: linear.tick() });
+        });
+    }
+    linear.tick(400_000);
+    await a.sync();
+    linear.tick(400_000);
+    await a.sync();
+    await agree();
+    // It is away, and both sides go on, each with fields of its own.
+    const mine = new Set<string>(), theirs = new Set<string>();
+    for (let n = 0; n < roll(8); n++) {
+      const issue = pick(issues), field = pick(fields), key = issue.id + field;
+      if (mine.has(key) || theirs.has(key)) continue;
+      linear.tick(60_000);
+      steps.push(linear.key(issue) + " " + field);
+      if (roll(2)) {
+        theirs.add(key);
+        there(issue, field);
+      } else {
+        mine.add(key);
+        await here(b, issue, field);
+        await agree();
+      }
+    }
+    const before = new Map(issues.map((issue) => [issue.id, structuredClone(linear.issues.get(issue.id)!)]));
+    linear.tick(3_600_000);
+    await handOver(t, b);
+    linear.tick(400_000);
+    await b.sync();
+    const told = `run ${seed}: ${steps.join(", ")}`;
+    const names: Record<string, keyof FakeIssue> = { title: "title", description: "description", priority: "priority", dueDate: "dueDate", labels: "labels", status: "state", assignee: "assignee" };
+    for (const issue of issues) {
+      const now = linear.issues.get(issue.id)!, was = before.get(issue.id)!;
+      for (const field of fields) {
+        const key = issue.id + field, of = `${told}: ${linear.key(issue)} ${field}`;
+        if (!mine.has(key)) assert.deepEqual(now[names[field]], was[names[field]], of + " was nobody's to change");
+        // A stopped worker's card had Linear say In Progress already.
+        else if (field === "status")
+          assert.equal(now.state, b.task(issue).stage === "done" ? linear.states.done.id : linear.states.progress.id, of);
+        else assert.notDeepEqual(now[names[field]], was[names[field]], of + " was changed on the board");
+      }
+      assert.equal(b.task(issue).tracker?.kept, undefined, told);
+      assert.equal(b.task(issue).title, now.title, told);
+    }
+  }
+});
