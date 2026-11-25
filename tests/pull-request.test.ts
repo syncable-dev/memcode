@@ -49,24 +49,32 @@ test("the GitHub compare page opens prefilled, without a description that is too
   assert.equal(long.descriptionOmitted, true);
 });
 
-test("an epic is ready when every story is in review or done and none is running", () => {
+test("a goal is ready when every story on its branch is in review or done and none is running", () => {
+  const goal = { id: "e1" };
   const story = (stage: WorkItem["stage"], state = "finished") =>
     ({ epicId: "e1", stage, run: { state } }) as WorkItem;
   assert.deepEqual(
-    epicReadiness([story("review"), story("done"), story("planned")], "e1"),
-    { total: 3, ready: 2, active: 0, isReady: false },
+    epicReadiness([story("review"), story("done"), story("planned", "idle")], goal),
+    { total: 2, ready: 2, active: 0, waiting: 1, unfinished: 0, isReady: true },
+    "a story nobody started does not count",
   );
-  assert.deepEqual(epicReadiness([story("review"), story("done")], "e1"), {
+  assert.equal(
+    epicReadiness([story("review"), story("working")], goal).isReady,
+    false,
+  );
+  assert.deepEqual(epicReadiness([story("review"), story("done")], goal), {
     total: 2,
     ready: 2,
     active: 0,
+    waiting: 0,
+    unfinished: 0,
     isReady: true,
   });
   assert.equal(
-    epicReadiness([story("review", "running")], "e1").isReady,
+    epicReadiness([story("review", "running")], goal).isReady,
     false,
   );
-  assert.equal(epicReadiness([], "e1").isReady, false);
+  assert.equal(epicReadiness([], goal).isReady, false);
 });
 
 interface Fixture {
@@ -614,8 +622,14 @@ test("when a goal merges, open goals that use the same files and the open Quick 
       goal("separate"),
       goal("batch", { sourceKey: "quick-changes", title: "Quick changes" }),
       goal("shipped", { closedAt: "2026-11-01T00:00:00.000Z" }),
+      goal("untouched"),
+      goal("new batch", { sourceKey: "quick-changes", title: "Quick changes" }),
     );
+    const planned = (id: string, epicId: string) =>
+      ({ ...task(id, epicId), stage: "planned", run: { state: "idle" } }) as WorkItem;
     f.state.tasks.push(
+      { ...planned("u1", "untouched"), scope: ["src/auth/session.ts"] },
+      planned("n1", "new batch"),
       task("o1", "overlapping"),
       task("s1", "separate"),
       task("b1", "batch"),
@@ -638,6 +652,8 @@ test("when a goal merges, open goals that use the same files and the open Quick 
     assert.equal(epic("separate").updateNeeded, undefined);
     assert.match(epic("batch").updateNeeded?.reason ?? "", /main changed/);
     assert.equal(epic("shipped").updateNeeded, undefined, "closed goals are left alone");
+    assert.equal(epic("untouched").updateNeeded, undefined, "it starts from what merged");
+    assert.equal(epic("new batch").updateNeeded, undefined, "it starts from what merged");
   } finally {
     await rm(f.root, { recursive: true, force: true });
   }

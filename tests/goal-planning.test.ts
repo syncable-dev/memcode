@@ -1,3 +1,4 @@
+import { waitsFor } from "../src/goal-plan";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { GoalPlacement } from "../runtime/goal-placement.ts";
@@ -96,6 +97,38 @@ test("a harness answer becomes a goal plan, fenced or not", () => {
   });
 });
 
+test("a large goal's tasks can wait for earlier ones, and only for those", () => {
+  const plan = readGoalPlan(
+    JSON.stringify({
+      goals: [
+        {
+          title: "Work stays in sync with Linear",
+          tasks: [
+            { title: "Connect a workspace" },
+            { title: "Import issues", after: [1, 1, 2, 9, 0, 1.5] },
+            { title: "Show the state on cards", after: [] },
+            { title: "Settle conflicts", after: [2, 3] },
+            { title: "Map people", after: "1" },
+          ],
+        },
+      ],
+    }),
+    "Integrate with Linear",
+  );
+  const { tasks } = plan.goals[0];
+  assert.deepEqual(
+    tasks.map((task) => waitsFor(task, tasks).map((other) => tasks.indexOf(other) + 1)),
+    [[], [1], [], [2, 3], []],
+    "a task never waits for itself, a later one or one that is not there",
+  );
+  const left = tasks.filter((task) => task.title !== "Import issues");
+  assert.deepEqual(
+    waitsFor(left.at(-2)!, left).map((other) => other.title),
+    ["Show the state on cards"],
+    "a removed task is waited for no longer",
+  );
+});
+
 test("a big request can come back as several goals, and a single-goal answer still reads", () => {
   const several = readGoalPlan(
     JSON.stringify({
@@ -190,11 +223,11 @@ test("the planner asks the chosen harness read-only, with the request and the re
   const policy = asked[0].policy ?? "";
   assert.match(policy, /read-only/);
   assert.match(policy, /One task is the default/, "a clear change stays one task");
-  assert.match(policy, /don't need each other's result/, "tasks split on separate outcomes");
+  assert.match(policy, /built, tested and reviewed on their own/, "tasks split on separate outcomes");
   assert.match(policy, /Two tasks may change the same file/, "sharing a file is no reason to merge tasks");
   assert.match(policy, /one task for each listed part/, "a request that lists its parts keeps them");
   assert.match(policy, /No standalone tasks for tests/, "no padding tasks");
-  assert.match(policy, /its own pull request/, "separate goals only for separate outcomes");
+  assert.match(policy, /One outcome is one goal, however large/, "separate goals only for separate outcomes");
   assert.match(policy, /Add nothing that wasn't asked for/);
   assert.match(policy, /"goals"/);
   assert.match(policy, /steps: the task's runbook/, "the planner writes each task's runbook");

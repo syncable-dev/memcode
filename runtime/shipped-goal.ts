@@ -50,7 +50,12 @@ export async function retireShippedGoal(
   mergedInto: string,
   deps: ShippedGoalDeps,
 ): Promise<CheckoutOutcome> {
-  const tasks = state.tasks.filter((task) => task.epicId === goal.id);
+  // The goal may be on a new branch already, with workers of its own.
+  const tasks = state.tasks.filter(
+    (task) =>
+      task.epicId === goal.id &&
+      (!task.run.branch || task.run.branch === goal.branch),
+  );
   const project = state.projects.find((item) => item.id === goal.projectId);
   const checkout = tasks.find((task) => task.run.workspace)?.run.workspace;
   if (!project?.path || !checkout || !goal.branch) return kept("This goal has no checkout of its own.");

@@ -1,7 +1,8 @@
 export interface StoryAuthor {
   id: string;
   name: string;
-  source: "memtrace" | "local";
+  /** "linear" is someone who wrote there, with or without a place on the project here. */
+  source: "memtrace" | "local" | "linear";
 }
 export interface StoryComment {
   /** Portable selection for a review explicitly shared with the team. */
@@ -14,4 +15,6 @@ export interface StoryComment {
   createdAt: string;
   updatedAt: string;
   deletedAt?: string;
+  /** The comment this is in the connected tracker. */
+  tracker?: import("./tracker").TrackedItem;
 }

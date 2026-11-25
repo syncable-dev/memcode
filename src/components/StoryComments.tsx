@@ -72,6 +72,7 @@ export function StoryComments({
           {comment.author.name.slice(0, 1).toUpperCase()}
         </span>
         <strong>{comment.author.name}</strong>
+        {comment.author.source === "linear" && <small>from Linear</small>}
         <Time at={comment.createdAt} />
         {comment.updatedAt !== comment.createdAt && !comment.deletedAt && (
           <small>edited</small>

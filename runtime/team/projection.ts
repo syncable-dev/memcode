@@ -1,3 +1,4 @@
+import { plainPriority } from "../../src/planning/priority";
 import type { AppState, WorkItem } from "../../src/shared";
 import type { TeamCommand, TeamComment, TeamCycle, TeamEpic, TeamSnapshot, TeamStory } from "../../src/team";
 import { relative, isAbsolute } from "node:path";
@@ -38,7 +39,7 @@ export function projectSharedState(state: AppState, projectId: string): SharedPr
   return {
     stories: sorted(tasks.map((task): TeamStory => ({
       id: task.id, identifier: task.identifier, title: task.title,
-      description: task.description, stage: task.stage, priority: task.priority,
+      description: task.description, stage: task.stage, priority: plainPriority(task.priority),
       kind: task.kind ?? "feature", epicId: task.epicId ?? null,
       cycleId: task.cycleId ?? null, parentId: task.parentId ?? null,
       estimate: task.estimate ?? null, startDate: task.startDate ?? null,
@@ -172,7 +173,10 @@ export function applySharedSnapshot(state: AppState, projectId: string, snapshot
       state.tasks.push(local);
     }
     const { revision: _revision, assignedMemberId: _owner, ...fields } = shared;
-    Object.assign(local, fields, { projectId });
+    // A team knows three priorities: what it has of this one may be all it can have.
+    const priority =
+      plainPriority(local.priority) === shared.priority ? local.priority : shared.priority;
+    Object.assign(local, fields, { projectId, priority });
     // A relative shared scope is useful; local absolute workspace bindings remain local.
     local.scope = (shared.scope ?? []).filter(relativeScope);
   }

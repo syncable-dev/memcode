@@ -16,7 +16,9 @@ import {
   type PullRequestStatus,
   type PullRequestPlan,
   type PullRequestResult,
+  type UnfinishedTask,
 } from "../pull-request";
+import { isOnBranch, pullRequestOf } from "../goal-work";
 import { Modal } from "./Dialogs";
 import MessageMarkdown from "./MessageMarkdown";
 import { Spinner } from "./UI";
@@ -49,7 +51,7 @@ export function PullRequestSheet({ epic, close, notify }: Props) {
             : heading
       }
       kicker={`${epic.identifier} · ${epic.title}`}
-      description="One goal is one branch, so every task in it ships together in this pull request."
+      description="The tasks worked on in this branch ship together in this pull request."
       close={close}
       wide
     >
@@ -105,6 +107,7 @@ function PullRequestForm({
 }) {
   const [drafts, setDrafts] = useState<Drafts>(() => draftsFrom(plan));
   const [busy, setBusy] = useState(false);
+  const [shipUnfinished, setShipUnfinished] = useState(false);
   useEffect(() => setDrafts(draftsFrom(plan)), [plan]);
   const create = async () => {
     setBusy(true);
@@ -113,6 +116,7 @@ function PullRequestForm({
         await window.memcode.createPullRequest({
           epicId: plan.epicId,
           ...drafts,
+          ...(plan.unfinished.length ? { shipUnfinished } : {}),
         }),
       );
     } catch (failure) {
@@ -120,6 +124,21 @@ function PullRequestForm({
       setBusy(false);
       reload();
     }
+  };
+  const bringBase = async () => {
+    setBusy(true);
+    try {
+      const result = await window.memcode.resolveGoalUpdate(plan.epicId);
+      notify(
+        result.asked
+          ? `${result.asked} is resolving the conflicts with ${plan.base}. Push the update when it is done.`
+          : `${plan.base} is in. Push the update to the pull request.`,
+      );
+    } catch (failure) {
+      notify((failure as Error).message);
+    }
+    setBusy(false);
+    reload();
   };
   const merge = async () => {
     setBusy(true);
@@ -165,12 +184,41 @@ function PullRequestForm({
         {plan.blocker && !plan.existing ? (
           <p className="pr-blocker">{plan.blocker}</p>
         ) : (
-          readiness.ready < readiness.total && (
+          readiness.ready + readiness.unfinished < readiness.total && (
             <p className="pr-notice">
               {readiness.ready} of {readiness.total} tasks are in review.
               You can open the pull request now and push the rest later.
             </p>
           )
+        )}
+        {plan.unfinished.length > 0 && (
+          <label className="pr-unfinished checkbox-label">
+            <input
+              id="pr-ship-unfinished"
+              type="checkbox"
+              checked={shipUnfinished}
+              onChange={(event) => setShipUnfinished(event.target.checked)}
+            />
+            <span>
+              Ship what{" "}
+              {plan.unfinished.length === 1
+                ? "this task"
+                : `these ${plan.unfinished.length} tasks`}{" "}
+              left unfinished
+              {plan.unfinished.map((task) => (
+                <small key={task.identifier}>
+                  {task.identifier} · {task.title}. {unfinishedBecause[task.state]}
+                </small>
+              ))}
+            </span>
+          </label>
+        )}
+        {readiness.waiting > 0 && (
+          <p className="pr-waiting">
+            {readiness.waiting === 1
+              ? "The goal's other task stays in the goal."
+              : `The goal's other ${readiness.waiting} tasks stay in the goal.`}
+          </p>
         )}
         {plan.notice && <p className="pr-notice">{plan.notice}</p>}
         <label className="field">
@@ -235,11 +283,21 @@ function PullRequestForm({
           {(!plan.existing || pendingChanges) && (
             <button
               className={"button " + (open ? "secondary" : "primary")}
-              disabled={!!plan.blocker || busy || !drafts.title.trim()}
+              disabled={
+                !!plan.blocker ||
+                busy ||
+                !drafts.title.trim() ||
+                (plan.unfinished.length > 0 && !shipUnfinished)
+              }
               onClick={() => void create()}
             >
               {busy && !open && <Spinner size={12} />}
               {plan.existing ? "Push updates" : "Create pull request"}
+            </button>
+          )}
+          {open && plan.status?.needsBase && (
+            <button className="button secondary" disabled={busy} onClick={() => void bringBase()}>
+              Update from {plan.base}
             </button>
           )}
           {open && (
@@ -520,7 +578,13 @@ function openedText(result: PullRequestResult): string {
     : "Add a remote to open pull requests from MemCode";
 }
 
-/** Shown on a story once its whole epic can ship, where the person already is. */
+const unfinishedBecause: Record<UnfinishedTask["state"], string> = {
+  failed: "Its worker failed.",
+  stopped: "Its worker was stopped.",
+  waiting: "It waits for a decision.",
+};
+
+/** Shown on a story once its branch can ship, where the person already is. */
 export function StoryPullRequestBanner({
   task,
   state,
@@ -533,9 +597,9 @@ export function StoryPullRequestBanner({
   if (task.stage !== "review" && task.stage !== "done") return null;
   const epic = state.epics.find((item) => item.id === task.epicId);
   if (!epic) return null;
-  const record = state.pullRequests?.find((item) => item.epicId === epic.id);
-  const readiness = epicReadiness(state.tasks, epic.id);
-  if (!record && !readiness.isReady) return null;
+  const record = pullRequestOf(state.pullRequests, epic, task);
+  const readiness = epicReadiness(state.tasks, epic);
+  if (!record && (!readiness.isReady || !isOnBranch(task, epic))) return null;
   const quick = isQuickChanges(epic);
   return (
     <div className="story-pr-banner">
@@ -550,15 +614,25 @@ export function StoryPullRequestBanner({
         </strong>
         <small>
           {record
-            ? "Tasks in a goal share its branch, so this work ships in that pull request."
+            ? "Tasks worked on together share a branch, so this work ships in that pull request."
             : quick
               ? `${readiness.total === 1 ? "This change ships" : `${readiness.total} small changes ship`} together in one pull request.`
               : readiness.total === 1
-                ? "This task is in review. Open a pull request for its goal."
-                : `All ${readiness.total} tasks are in review. They share the goal's branch, so they ship together.`}
+                ? "This task is in review. Open a pull request for it."
+                : `${readiness.total} tasks are in review. They share a branch, so they ship together.`}
         </small>
       </span>
-      <button className="button primary" onClick={() => onOpen(epic.id)}>
+      <button
+        className="button primary"
+        onClick={() =>
+          // A merged branch's checkout may be gone, so its pull request opens where it is.
+          record?.state === "merged" && record.url
+            ? void window.memcode
+                .openPullRequest(epic.id, record.url)
+                .catch(() => {})
+            : onOpen(epic.id)
+        }
+      >
         {record ? "View pull request" : quick ? "Ship quick changes" : "Create pull request"}
       </button>
     </div>

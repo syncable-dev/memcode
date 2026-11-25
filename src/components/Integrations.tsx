@@ -3,6 +3,7 @@ import { ArrowLeft, ChevronRight, Search } from "lucide-react";
 import type { AppState, Project } from "../shared";
 import type { ProjectInbox } from "../inbox";
 import { IntegrationMark } from "./IntegrationMark";
+import { LinearPage } from "./LinearPage";
 import { isSharedHere } from "./ShareProject";
 import { Spinner } from "./UI";
 import "../styles-integrations.css";
@@ -20,6 +21,7 @@ interface IntegrationContext {
   reload: () => Promise<ProjectInbox | null>;
   setInbox: (inbox: ProjectInbox) => void;
   notify: (message: string) => void;
+  state: AppState;
 }
 
 /**
@@ -47,6 +49,20 @@ const integrations: Integration[] = [
     mark: <IntegrationMark id="slack" size={18} />,
     connected: ({ inbox }) => !!inbox?.workspaces.length,
     Page: SlackPage,
+  },
+  {
+    id: "linear",
+    name: "Linear",
+    summary: "Keep a team’s issues, goals and cycles in step with the board, both ways.",
+    keywords: ["issues", "tracker", "tickets", "cycles", "sprints", "projects", "sync"],
+    mark: <IntegrationMark id="linear" size={18} />,
+    connected: ({ project, state }) =>
+      !!project &&
+      (!!state.trackers?.some((item) => item.projectId === project.id) ||
+        !!state.trackerKeepers?.some((item) => item.projectId === project.id)),
+    Page: ({ context }) => (
+      <LinearPage project={context.project} state={context.state} notify={context.notify} />
+    ),
   },
 ];
 
@@ -87,7 +103,15 @@ export function Integrations({
     void reload();
   }, [reload]);
 
-  const context: IntegrationContext = { project, shared, inbox, reload, setInbox, notify };
+  const context: IntegrationContext = {
+    project,
+    shared,
+    inbox,
+    reload,
+    setInbox,
+    notify,
+    state,
+  };
   const open = integrations.find((integration) => integration.id === openId);
   if (open)
     return (

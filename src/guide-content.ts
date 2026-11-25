@@ -19,7 +19,10 @@ export type GuideDestination =
   | "integrations"
   | "inbox";
 /** The tools the Integrations group has pages about, each under its own name and logo. */
-export const guideIntegrations = [{ id: "slack", name: "Slack" }] as const;
+export const guideIntegrations = [
+  { id: "slack", name: "Slack" },
+  { id: "linear", name: "Linear" },
+] as const;
 export type GuideIntegration = (typeof guideIntegrations)[number]["id"];
 export interface GuideArticle {
   id: string;
@@ -118,7 +121,7 @@ export const guideArticles: GuideArticle[] = [
     steps: [
       "Choose New work, or press C anywhere outside a text field.",
       "Write what you want, as briefly or fully as you like: “Customers can export reports as CSV.” Your connected worker reads the code and plans it. Nothing changes yet.",
-      "Check the plan. A small fix becomes a quick change. Bigger work becomes a goal with a few tasks. Separate outcomes become separate goals. If a goal is already changing the same code, the new work joins it. Each task comes with a short runbook of steps; open it to see them.",
+      "Check the plan. A small fix becomes a quick change. Bigger work becomes a goal with its tasks, and a task that needs another says which one it waits for. Separate outcomes become separate goals. If a goal is already changing the same code, the new work joins it. Each task comes with a short runbook of steps; open it to see them.",
       "Change the tasks or where they go if you like, and say when you want each new goal: Now, Next or Later. Then add them, or add them and start the Now work right away. Next and Later goals wait on the Roadmap.",
     ],
     note: "A goal is an outcome you want. A task is one piece of work for a worker. Quick changes are small tasks that ship together. No worker connected yet? Your request becomes one task you can edit.",
@@ -182,12 +185,12 @@ export const guideArticles: GuideArticle[] = [
     group: "Start here",
     title: "Ship a goal",
     summary:
-      "When every task in a goal is reviewed, ship the goal. Its tasks go out together.",
+      "When the tasks you worked on are reviewed, ship them together. The goal stays open until nothing is left.",
     image: "roadmap",
     caption:
       "MemCode lists every step before it runs. Nothing happens until you click.",
     steps: [
-      "Open Roadmap. When all of a goal’s tasks are reviewed, its card offers to ship it.",
+      "Open Roadmap. When every task you worked on in a goal is reviewed, its card offers to ship them. The others stay in the goal.",
       "Read the steps MemCode will take and the description it wrote for reviewers. Edit anything you like.",
       "Confirm. When your team approves the work, finish it from the same place.",
       "Quick changes ship the same way, all together.",
@@ -197,7 +200,11 @@ export const guideArticles: GuideArticle[] = [
       "Shipping a goal commits its work, pushes its branch and opens a pull request. The button reads Create pull request for a goal and Ship quick changes for quick changes.",
       "The description is written for reviewers: a summary, each task’s change in the worker’s own words, decisions a person made, and a test plan. Add a MemCode line adds a short credit.",
       "With the GitHub CLI installed, MemCode creates the pull request and shows its reviews and checks. Merge pull request appears when GitHub would allow the merge. Without the CLI, GitHub opens in your browser with the title and description filled in.",
-      "Merging closes the goal and moves its reviewed tasks to Done. On a goal marked Needs update, Update from dev saves its work, brings in the newer code and refreshes its code context.",
+      "A goal can ship as many pull requests as it needs. Its card lists the ones that merged and how many tasks are left.",
+      "Merge here or on GitHub. MemCode notices when you come back, and finishes the tasks that were in it. Newer work ships in the next one.",
+      "A task whose worker failed or was stopped holds the pull request. Finish it, or tick the box that ships what it left.",
+      "On a team, each person’s work on a goal ships in their own pull request.",
+      "Merging moves the reviewed tasks to Done and closes the goal when nothing is left. On a goal marked Needs update, Update from dev saves its work, brings in the newer code and refreshes its code context.",
     ],
     destination: "roadmap",
     related: ["roadmap", "review", "how-goals-work"],
@@ -232,7 +239,7 @@ export const guideArticles: GuideArticle[] = [
       "Open Roadmap. Each goal sits in Now (you’re working on it), Next (up once the goals you’re on now are done) or Later (it should get done, but you haven’t decided when).",
       "Expand a goal to see its tasks. Add more with New work, or from the goal itself.",
       "Tasks in a goal run side by side and stay coordinated, so they don’t step on each other.",
-      "When a goal’s tasks are reviewed, ship it from its card.",
+      "When the tasks you worked on are reviewed, ship them from the goal’s card. The goal stays open for the rest.",
     ],
     note: "Name a goal by its outcome, like “Customers can export reports” or “Sign-in feels instant”. Add a line on why it matters.",
     details: [
@@ -463,6 +470,113 @@ export const guideArticles: GuideArticle[] = [
     note: "A channel keeps its project. One that already sent reports stays with the project it has when you connect another.",
     destination: "integrations",
     related: ["slack", "slack-report", "projects"],
+  },
+  {
+    id: "linear",
+    group: "Integrations",
+    integration: "linear",
+    title: "Connect Linear",
+    summary:
+      "Your team plans in Linear and the work is done here. Connect a project to a team, and its issues are cards on your board, in step both ways.",
+    image: "linear",
+    caption: "Integrations belong to the project you have open.",
+    steps: [
+      "Open the project the team’s code is in.",
+      "Open Settings → Integrations and choose Linear.",
+      "Choose Connect Linear. In your browser, choose Authorize.",
+      "Or choose Use an API key instead: make one in Linear under Settings › Security & access, with Read and Write.",
+      "Choose what to bring in. Nothing changes until you choose Import.",
+    ],
+    note: "Nothing in Linear starts a worker. An issue is a card until you start it.",
+    details: [
+      "MemCode on this computer talks to Linear directly. Your sign-in is kept in this computer’s credential store, never in the workspace.",
+      "Linear is looked at every 30 seconds while MemCode is open. While it is closed nothing goes back and forth, and the next start catches up.",
+      "What MemCode does in Linear is done as you.",
+      "On a shared project one person connects, and everyone has the cards. Linear’s page says who it is. Somebody else who has connected can choose Do it from here.",
+      "Disconnect keeps the cards, leaves Linear as it is and ends the sign-in there too. Connecting again goes on from there and makes no doubles.",
+    ],
+    destination: "integrations",
+    related: ["linear-import", "linear-steps", "linear-apart"],
+  },
+  {
+    id: "linear-import",
+    group: "Integrations",
+    integration: "linear",
+    title: "Bring issues in",
+    summary:
+      "Pick a team and how much of it to bring. Each issue becomes one task, with its words, people, dates, labels and comments.",
+    image: "linear",
+    caption: "An issue keeps its Linear key on the card.",
+    steps: [
+      "Choose the team, and Open work, The current cycle or Everything.",
+      "Choose what becomes a goal: milestones, parent issues, or nothing.",
+      "Look through Check the statuses if your team has its own. MemCode has filled them in.",
+      "Choose Import. Your cards are on the board in a few seconds.",
+      "Start a worker on one when you want it built. It reads the issue as its brief.",
+    ],
+    note: "An import can be undone for seven days. Cards somebody worked on stay, and Linear is not changed.",
+    details: [
+      "A milestone is a goal. A project without milestones is one goal. A Linear cycle is a cycle here: Linear starts and ends it, and MemCode follows.",
+      "An issue without a project is a task without a goal until it starts.",
+      "Issues made in Linear later come in by themselves when they fit what you chose.",
+      "Open work leaves out what is done or canceled. Issues in triage are never brought in.",
+      "A description longer than a task can hold is shown in part, says so, and is never sent back.",
+    ],
+    destination: "integrations",
+    related: ["linear", "linear-steps", "epics"],
+  },
+  {
+    id: "linear-steps",
+    group: "Integrations",
+    integration: "linear",
+    title: "What Linear hears",
+    summary:
+      "Work as you always do. The people who only look at Linear see how far it is.",
+    image: "linear",
+    caption: "The statuses are your team’s own. You can choose others under Check the statuses.",
+    steps: [
+      "Start a worker: the issue moves to In Progress.",
+      "The worker finishes: the issue moves to In Review.",
+      "Open the pull request: it is linked on every issue that is in it.",
+      "Merge it: those issues are Done. Issues still open in the goal stay as they are.",
+      "Change a title, priority, person, label, date, cycle or goal on either side, and the other follows. Comments go both ways too.",
+    ],
+    note: "A new task here becomes an issue. Tick Keep in MemCode when you make it if it should not.",
+    details: [
+      "A change here is sent within a few seconds. A change there arrives within half a minute.",
+      "While a worker runs, a change in Linear that would move its card waits until the worker ends.",
+      "Cancel task and its issue, at the bottom of a task’s details, cancels both. Archive task hides the card here only.",
+      "To only follow Linear, turn off Send changes from here to Linear.",
+    ],
+    destination: "board",
+    related: ["linear-apart", "ship", "comments"],
+  },
+  {
+    id: "linear-apart",
+    group: "Integrations",
+    integration: "linear",
+    title: "When the two differ",
+    summary:
+      "Two people can change the same thing in both places at once. The newest change stays, and nothing is thrown away.",
+    image: "linear",
+    caption: "Only the field both sides changed is affected.",
+    steps: [
+      "Open the task. Its LINEAR section says how the two stand.",
+      "In step: both sides say the same. Sending and Waiting finish by themselves.",
+      "A value that gave way is listed there. Choose Put it back to use it after all.",
+      "Needs you: Linear refused something, and the reason is there. The rest of the card went through. Change it, or choose Try again.",
+      "Unlink lets a card and its issue go their own ways.",
+    ],
+    note: "Linear never cancels, takes away or moves to another goal what has not shipped. The card says what Linear wanted instead.",
+    details: [
+      "An issue canceled in Linear while its worker runs stays canceled there. Ship the work, move the card or cancel it here to settle it.",
+      "An issue deleted in Linear archives its card, unless there is work on it that has not shipped. Put back in Linear, the card is back too.",
+      "A card deleted here leaves its issue alone, and is not brought in again.",
+      "An issue moved to another team stops following, and the card says so.",
+      "Without a network, changes wait here and go out when it is back.",
+    ],
+    destination: "board",
+    related: ["linear-steps", "linear"],
   },
   {
     id: "prompts",

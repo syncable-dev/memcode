@@ -45,17 +45,18 @@ interface RawPullRequest {
 export class GitHubCli {
   constructor(private cli: Command) {}
 
+  /** The branch's open pull request. One that merged or was closed is not reused. */
   async existingUrl(cwd: string, branch: string): Promise<string | undefined> {
-    const url = await this.run(cwd, [
+    const view = await this.run(cwd, [
       "pr",
       "view",
       branch,
       "--json",
-      "url",
-      "--jq",
-      ".url",
+      "url,state",
     ]).catch(() => "");
-    return url || undefined;
+    if (!view) return undefined;
+    const found = JSON.parse(view) as Pick<RawPullRequest, "url" | "state">;
+    return found.state === "OPEN" ? found.url : undefined;
   }
 
   async create(cwd: string, pull: NewPullRequest): Promise<string | undefined> {
@@ -77,15 +78,16 @@ export class GitHubCli {
     return url?.startsWith("https://") ? url : undefined;
   }
 
+  /** By its number when known: a branch can have had several pull requests. */
   async status(
     cwd: string,
-    branch: string,
+    pull: { branch: string; number?: number },
     base: string,
   ): Promise<PullRequestStatus | undefined> {
     const view = await this.run(cwd, [
       "pr",
       "view",
-      branch,
+      pull.number ? String(pull.number) : pull.branch,
       "--json",
       statusFields,
     ]).catch(() => "");
@@ -153,7 +155,14 @@ export function readPullRequestStatus(
     ...(mergeMethod ? { mergeMethod } : {}),
   };
   const blocker = mergeBlocker(status, raw.mergeStateStatus, base);
-  return blocker ? { ...status, mergeBlocker: blocker } : status;
+  return {
+    ...status,
+    ...(blocker ? { mergeBlocker: blocker } : {}),
+    ...(status.state === "open" &&
+    ["DIRTY", "BEHIND"].includes(raw.mergeStateStatus ?? "")
+      ? { needsBase: true }
+      : {}),
+  };
 }
 
 function reviewOf(decision?: string): PullRequestStatus["review"] {
@@ -197,7 +206,7 @@ function mergeBlocker(
   if (mergeState === "DIRTY")
     return `The branch has merge conflicts with ${base}.`;
   if (mergeState === "BEHIND")
-    return `The branch is behind ${base}. Update it on GitHub first.`;
+    return `The branch is behind ${base}.`;
   if (mergeState === "BLOCKED")
     return "GitHub's branch rules are blocking the merge.";
   if (mergeState === "UNKNOWN")

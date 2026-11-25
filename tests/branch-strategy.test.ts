@@ -84,6 +84,17 @@ test("a goal branch reads like the team named it", () => {
     quickChangesBranchName(strategy, new Date("2026-11-20T10:00:00Z")),
     "feat/quick-changes-2026-11-20",
   );
+  assert.equal(
+    quickChangesBranchName(
+      strategy,
+      new Date("2026-11-20T10:00:00Z"),
+      "Fix a typo",
+    ),
+    "feat/quick-changes-2026-11-20-fix-a-typo",
+  );
+  const japanese = goalBranchName(strategy, "支払い");
+  assert.match(japanese, /^feat\/work-[0-9a-f]{8}$/, "a title without Latin letters");
+  assert.notEqual(japanese, goalBranchName(strategy, "返金"));
 });
 
 async function repository() {

@@ -150,7 +150,12 @@ async function startGoalFresh(
 
 /** A goal has started once a worker has run one of its tasks. */
 const hasStarted = (state: AppState, goal: Epic) =>
-  state.tasks.some((task) => task.epicId === goal.id && !!task.run.startedAt);
+  state.tasks.some(
+    (task) =>
+      task.epicId === goal.id &&
+      !!task.run.startedAt &&
+      (!task.run.branch || task.run.branch === goal.branch),
+  );
 
 async function requireBranch(project: Project, branch: string): Promise<void> {
   const folder = folderOf(project);

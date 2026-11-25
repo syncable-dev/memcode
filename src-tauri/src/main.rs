@@ -8,6 +8,7 @@ mod browser_capture;
 #[cfg(windows)]
 mod browser_port;
 mod install_location;
+mod integration_store;
 mod native;
 #[cfg(windows)]
 mod startup;

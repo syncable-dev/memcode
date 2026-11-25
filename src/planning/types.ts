@@ -44,6 +44,8 @@ export interface Cycle {
   completedAt?: string;
   baseline?: CycleSnapshot;
   snapshots: CycleSnapshot[];
+  /** The cycle this is in the connected tracker. */
+  tracker?: import("../tracker").TrackedItem;
 }
 export type ViewMode = "board" | "list" | "timeline" | "calendar";
 export type GroupBy =
@@ -51,6 +53,8 @@ export type GroupBy =
 export interface WorkFilters {
   query: string;
   priority: Priority | "all";
+  /** A person's id, "none" for nobody. Views saved before people have none. */
+  assignee?: string;
   epicId: string;
   cycleId: string;
   label: string;
