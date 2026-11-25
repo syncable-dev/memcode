@@ -40,6 +40,7 @@ import {
   type Artifact,
 } from "./shared";
 import { isActive, tasksForProject } from "./domain";
+import { NoticeMerges } from "./components/NoticeMerges";
 import {
   Empty,
   HarnessMark,
@@ -53,6 +54,7 @@ import { Conversations } from "./components/Conversations";
 import { ArtifactCollection } from "./components/ArtifactCollection";
 import { groupedArtifacts } from "./artifact-purpose";
 import { WorkDetail } from "./components/WorkDetail";
+import { issuesGoTo } from "./components/TrackedIssue";
 import { Roadmap } from "./components/Roadmap";
 import { BaseBranchPicker } from "./components/BaseBranchPicker";
 import { PullRequestSheet } from "./components/PullRequest";
@@ -441,6 +443,11 @@ export function App() {
   const guideProject = project;
   const tasks = tasksForProject(state, project.id);
   const epics = state.epics.filter((epic) => epic.projectId === project.id);
+  const hasOpenPullRequest = state.pullRequests?.some(
+    (item) =>
+      item.state !== "merged" &&
+      epics.some((epic) => epic.id === item.epicId && !epic.closedAt),
+  );
   const selected = state.tasks.find((task) => task.id === selectedId);
   const active = runtimeHealth.available
     ? tasks.filter((task) => isActive(task))
@@ -704,6 +711,7 @@ export function App() {
   );
   return (
     <div className={`app-shell ${collapsed ? "sidebar-collapsed" : ""}`}>
+      {hasOpenPullRequest && <NoticeMerges projectId={project.id} />}
       <InstallationGuide />
       <div className="desktop-titlebar" data-tauri-drag-region>
         <div className="titlebar-left">
@@ -1391,6 +1399,7 @@ export function App() {
           )}
           fixedEpicId={storyEpic}
           statusId={storyStatus}
+          issuesIn={issuesGoTo(state, project.id)}
           initialRequest={inboxItem ? requestFrom(inboxItem) : undefined}
           reportedBy={inboxItem?.reporter.name}
           initialFiles={
@@ -1443,6 +1452,7 @@ export function App() {
           )}
           initialDescription={detailedTask?.request}
           initialFiles={detailedTask?.files}
+          issuesIn={issuesGoTo(state, project.id)}
           onClose={() => {
             setDialog(null);
             setInboxItem(null);

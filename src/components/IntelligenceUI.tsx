@@ -21,6 +21,7 @@ import { Spinner } from "./UI";
 import { analysisErrorMessage } from "../errors";
 import { ResultPager } from "./ResultPager";
 import { ImpactPanel } from "./ImpactPanel";
+import { issuesGoTo } from "./TrackedIssue";
 export { scopedCheckpoints, useCapture } from "./quality-capture";
 
 export interface IntelligenceProps {
@@ -350,6 +351,8 @@ export function FindingList({
         harness: "codex",
         assignment: "auto",
         kind: investigate ? "research" : "refactor",
+        // One click, with file names in it: an issue only when the person says so on the card.
+        ...(issuesGoTo(state, project.id) ? { keepHere: true } : {}),
       });
       await window.memcode.updateTask(task.id, { scope: [finding.file] });
       open({ ...task, scope: [finding.file] });

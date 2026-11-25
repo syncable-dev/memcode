@@ -1,3 +1,4 @@
+import { priorities, priorityLabels } from "../planning/priority";
 import { RotateCcw, X } from "lucide-react";
 import type { Cycle, Epic, Harness, Priority, WorkItem } from "../shared";
 import { defaultFilters, type WorkFilters } from "../planning/types";
@@ -6,7 +7,8 @@ import { Select } from "./Select";
 export function filterCount(filters: WorkFilters) {
   return Object.entries(filters).filter(
     ([key, value]) =>
-      key !== "query" && value !== defaultFilters[key as keyof WorkFilters],
+      key !== "query" &&
+      value !== (defaultFilters[key as keyof WorkFilters] ?? "all"),
   ).length;
 }
 
@@ -25,6 +27,11 @@ export function WorkspaceFilters({
   change: (patch: Partial<WorkFilters>) => void;
   close: () => void;
 }) {
+  const people = [
+    ...new Map(
+      tasks.flatMap((task) => (task.assignee ? [[task.assignee.id, task.assignee] as const] : [])),
+    ).values(),
+  ].sort((a, b) => a.name.localeCompare(b.name));
   const labels = Array.from(
     new Set(tasks.flatMap((task) => task.labels ?? [])),
   ).sort();
@@ -57,11 +64,31 @@ export function WorkspaceFilters({
             }
           >
             <option value="all">Any priority</option>
-            <option value="high">High</option>
-            <option value="medium">Medium</option>
-            <option value="low">Low</option>
+            {priorities.map((priority) => (
+              <option key={priority} value={priority}>
+                {priorityLabels[priority].replace(" priority", "")}
+              </option>
+            ))}
           </Select>
         </label>
+        {people.length > 0 && (
+          <label>
+            <span>Assignee</span>
+            <Select
+              aria-label="Filter assignee"
+              value={filters.assignee ?? "all"}
+              onValueChange={(assignee) => change({ assignee })}
+            >
+              <option value="all">Anyone</option>
+              <option value="none">Nobody</option>
+              {people.map((person) => (
+                <option key={person.id} value={person.id}>
+                  {person.name}
+                </option>
+              ))}
+            </Select>
+          </label>
+        )}
         <label>
           <span>Goal</span>
           <Select

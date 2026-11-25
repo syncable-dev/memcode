@@ -20,6 +20,14 @@ const breaking: ReadonlySet<ChangeKind> = new Set(["signature", "move", "remove"
 /** A change that reshapes or removes what other code relies on: the kind that can truly conflict. */
 export const breaksCallers = (kind: ChangeKind) => breaking.has(kind);
 
+/**
+ * Whether the change breaks callers of this one symbol. A worker names every symbol of a
+ * group of edits with one kind: the function whose signature changes, and the file that
+ * exports it. A whole file has no signature to change.
+ */
+export const breaksAt = (kind: ChangeKind, symbol: string) =>
+  breaksCallers(kind) && (kind !== "signature" || symbol.includes("::"));
+
 const adding: ReadonlySet<ChangeKind> = new Set(["add", "docs", "test"]);
 /** A change that only adds; it never conflicts with another worker's edit. */
 export const onlyAdds = (kind: ChangeKind) => adding.has(kind);
@@ -133,7 +141,7 @@ export function verdictSummary(
 /** What a worker that paused for the person's decision is told when it is brought back. */
 export function decisionInstruction(
   decision: { scope: string[]; resolution?: string },
-  standing: "yours" | "both" | { other: string },
+  standing: "yours" | "both" | "free" | { other: string },
 ): string {
   const what = decision.scope.map((symbol) => symbol.split("::").pop()).join(", ");
   const outcome =
@@ -141,6 +149,14 @@ export function decisionInstruction(
       ? "Your change goes ahead. Carry on with this task."
       : standing === "both"
         ? "Both changes go ahead as they are. Carry on with this task."
+        : standing === "free"
+        ? "That code is free again. Re-read it and finish what you left for it."
         : `${standing.other}’s change stands. Re-read it and rebuild your task on that version. If your task can no longer be done as written, say so and stop.`;
   return `Decision on ${what}: ${decision.resolution ?? ""} ${outcome}`.replace(/\s+/g, " ");
+}
+
+/** What a worker hears when the code a peer's change held it on is free again. */
+export function freedInstruction(symbols: string[]): string {
+  const what = symbols.map((symbol) => symbol.split("::").pop()).join(", ");
+  return `${what} ${symbols.length > 1 ? "are" : "is"} free again: the change you waited for is in. Re-read ${symbols.length > 1 ? "them" : "it"} and finish what you left for ${symbols.length > 1 ? "them" : "it"}. If nothing is left, say so.`;
 }

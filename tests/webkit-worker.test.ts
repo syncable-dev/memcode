@@ -125,7 +125,13 @@ test(
     );
     try {
       await card.act({ action: "scroll", x: 400, y: 300, deltaY: 600 });
-      assert.match(await card.observe(), /At 600/);
+      // The page hears of it with its next frame.
+      let seen = await card.observe();
+      for (let n = 0; n < 60 && !/At 600/.test(seen); n++) {
+        await new Promise((done) => setTimeout(done, 50));
+        seen = await card.observe();
+      }
+      assert.match(seen, /At 600/);
       await card.act({ action: "scroll", x: 400, y: 300, deltaY: -600 });
       const hovered = await card.act({ action: "hover", x: 60, y: 30 });
       assert.equal(hovered.state.cursor, "text");

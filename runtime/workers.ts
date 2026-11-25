@@ -11,9 +11,10 @@ import type {
   Message,
   HarnessRuntime,
   ReasoningEffort,
+  FleetConflict,
 } from "../src/shared";
 import { isActive, pendingPrerequisites } from "../src/domain";
-import { decisionInstruction } from "../src/fleet";
+import { decisionInstruction, freedInstruction } from "../src/fleet";
 import { codexDefaultModel, cursorDefaultModel, harnessNames } from "../src/shared";
 import { childEnv, findCommand, git, now, exists, within } from "./local";
 import {
@@ -33,7 +34,7 @@ import { assertWorkerConnected, connectedRuntimes } from "./worker-connections";
 import { EpicWorkspace } from "./epic-workspace";
 import { epicAnalysisProject } from "./epic-checkout";
 import { assertEpicDependencies, assertPrerequisitesComplete } from "./epic-dependencies";
-import { FleetCoordinator, FleetBlocked } from "./fleet";
+import { FleetCoordinator, type Owed, FleetBlocked } from "./fleet";
 import { startContextSession, type ContextSession } from "./context/host";
 import type { RetrievalAssistant } from "./context/local-model";
 import type { TerminalManager } from "./terminals";
@@ -271,7 +272,26 @@ export class WorkerManager {
         );
     this.workspaces = new EpicWorkspace(state, dataDir);
     this.fleet = new FleetCoordinator(state, engine, changed);
+    this.fleet.onSettled = (decision) => this.carryOnAfter(decision);
+    this.fleet.onFreed = (from, symbols) => {
+      for (const task of this.state().tasks) {
+        const waited = task.run.waitingOnCode;
+        if (
+          !waited?.some((symbol) => symbols.includes(symbol)) ||
+          task.run.branch !== from.run.branch ||
+          task.projectId !== from.projectId
+        )
+          continue;
+        task.run.waitingOnCode = undefined;
+        if (!isActive(task)) this.carryOn(task, freedInstruction(waited));
+      }
+      this.dispatchQueued();
+    };
   }
+  /** Told before a worker enters its goal's branch, in case that branch has merged. */
+  beforeBranch?: (task: WorkItem) => Promise<void>;
+  /** Told when a worker's turn ended and what it changed is recorded. */
+  turnEnded?: (task: WorkItem) => Promise<void>;
   /** Fleet not answering must not stop a goal's workers: say so once and carry on. */
   private noteFleetSilence(task: WorkItem, error: Error) {
     if (this.fleetSilent.has(task.id)) return;
@@ -335,34 +355,59 @@ export class WorkerManager {
     }
     await retiring;
   }
-  /**
-   * The person settles a disagreement. Workers that paused for it are brought back with the
-   * decision as their next instruction; running workers hear it at their next call.
-   */
+  /** The person settles a disagreement. Running workers hear it at their next call. */
   async decide(id: string, resolution: string, winnerTaskId?: string): Promise<void> {
     await this.fleet.resolve(id, resolution, winnerTaskId);
-    const decision = this.state().fleetConflicts.find(
-      (item) => item.id === id || item.escalationId === id,
-    )!;
-    const winner = this.state().tasks.find((task) => task.id === winnerTaskId);
+    await this.changed();
+    this.dispatchQueued();
+  }
+  /**
+   * A disagreement is settled, by the person or by the workers themselves. Workers that
+   * paused for it are brought back with the outcome as their next instruction.
+   */
+  private carryOnAfter(decision: FleetConflict): void {
     for (const task of this.state().tasks) {
       if (task.run.waitingOnDecision !== decision.id) continue;
       task.run.waitingOnDecision = undefined;
-      if (isActive(task)) continue;
-      const messageId = randomUUID();
-      task.messages.push({
-        id: messageId,
-        role: "user",
-        text: decisionInstruction(
-          decision,
-          !winner ? "both" : winner.id === task.id ? "yours" : { other: winner.identifier },
-        ),
-        at: now(),
-      });
-      this.enqueue(task, messageId);
+      if (!isActive(task)) this.carryOn(task, this.outcomeFor(task, decision));
     }
-    await this.changed();
     this.dispatchQueued();
+  }
+  private outcomeFor(task: WorkItem, decision: FleetConflict): string {
+    const winner = this.state().tasks.find((item) => item.id === decision.winnerTaskId);
+    return decisionInstruction(
+      decision,
+      !decision.taskIds.includes(task.id)
+        ? "free"
+        : !winner
+          ? "both"
+          : winner.id === task.id
+            ? "yours"
+            : { other: winner.identifier },
+    );
+  }
+  /**
+   * A worker comes back for a settled disagreement. For code a peer's change held, only
+   * twice in a row: it may have found that it has nothing to do there.
+   */
+  private mayCarryOn(task: WorkItem, owed: Owed): boolean {
+    if (owed.settled && !owed.busy.length) return true;
+    const times =
+      owed.freed.length + owed.busy.length ? (this.broughtBack.get(task.id) ?? 0) + 1 : 0;
+    this.broughtBack.set(task.id, times);
+    return times > 0 && times <= 2;
+  }
+  private broughtBack = new Map<string, number>();
+  /** Brings a worker back with what it waited for, once nothing else holds it. */
+  private carryOn(task: WorkItem, text: string): void {
+    const heard = [task.run.decidedMeanwhile, text].filter(Boolean).join("\n");
+    const other = this.fleet.owed(task)().open;
+    task.run.decidedMeanwhile = other ? heard : undefined;
+    task.run.waitingOnDecision = other?.id;
+    if (other) return;
+    const messageId = randomUUID();
+    task.messages.push({ id: messageId, role: "user", text: heard, at: now() });
+    this.enqueue(task, messageId);
   }
   /** Called before the send endpoint atomically persists the message and authority. */
   enqueue(task: WorkItem, messageId: string): void {
@@ -635,6 +680,7 @@ export class WorkerManager {
       measurements: undefined,
       checks: undefined,
       finishedSourceBinding: undefined,
+      shipped: undefined,
       activity: {
         phase: "working",
         label: "Checking the task claim",
@@ -777,6 +823,7 @@ export class WorkerManager {
       await progress("Opening the goal checkout");
       if (!ownedCheckout && (project.analysis !== "ready" || !project.repoId))
         throw new Error("Connect Memtrace before starting a Fleet worker.");
+      await this.beforeBranch?.(task);
       const activation = await this.workspaces.activate(task, project, {
         ownedCheckout,
       });
@@ -1337,6 +1384,7 @@ export class WorkerManager {
       const settle = async (code: number | null, error?: Error) => {
         if (settled) return;
         settled = true;
+        let carriesOn: string | undefined;
         try {
           clearTimeout(eventSave);
           this.inputs.cancelTask(task.id);
@@ -1388,6 +1436,7 @@ export class WorkerManager {
               `Result collection needs attention: ${(e as Error).message}`,
             );
           }
+          const owedNow = this.fleet.owed(task);
           await this.fleet.release(project, task).catch((error) => {
             cleanupFailed = true;
             this.message(
@@ -1396,17 +1445,24 @@ export class WorkerManager {
               `Fleet release needs attention: ${error.message}`,
             );
           });
-          const undecided = this.state().fleetConflicts.find(
-            (item) => item.status === "open" && item.taskIds.includes(task.id),
-          );
+          const owed = owedNow();
+          const undecided = owed.open;
           // A worker that ran out of other work while a disagreement is open has not
-          // finished: it waits here and carries on when the decision is made.
-          const paused = !!undecided && task.run.state === "finished";
-          if (undecided) task.run.state = "blocked";
-          if (paused) {
-            task.run.waitingOnDecision = undecided!.id;
-            task.stage = "working";
-          }
+          // finished: it waits here and carries on when the decision is made. One that
+          // missed the outcome carries on at once.
+          const ended = task.run.state === "finished";
+          const paused = !!undecided && ended;
+          if (undecided && (ended || undecided.taskIds.includes(task.id)))
+            task.run.state = "blocked";
+          if (paused) task.run.waitingOnDecision = undecided.id;
+          const waits = !paused && ended && !!owed.busy.length && this.mayCarryOn(task, owed);
+          if (waits) task.run.waitingOnCode = owed.busy;
+          else if (!paused && ended && this.mayCarryOn(task, owed))
+            carriesOn = owed.settled
+              ? this.outcomeFor(task, owed.settled)
+              : freedInstruction(owed.freed);
+          if (waits || carriesOn) task.run.state = "blocked";
+          if (paused || waits || carriesOn) task.stage = "working";
           if (
             task.run.state === "failed" ||
             task.run.state === "blocked" ||
@@ -1419,10 +1475,17 @@ export class WorkerManager {
             stopped
               ? "Worker stopped. Shared goal changes and this worker’s output are preserved."
               : paused
-                ? `Paused until you decide. ${undecided!.summary} This worker carries on by itself once the decision is made.`
+                ? `Paused until you decide. ${undecided.summary} This worker carries on by itself once the decision is made.`
+              : waits
+                ? "Waiting for another worker to finish with the same code. This worker carries on by itself."
+              : carriesOn
+                ? "What this worker waited for is settled. It carries on."
               : task.run.state === "finished"
                 ? "Worker finished. Review the actual changes and checks before marking this work done."
                 : "Worker needs attention. Shared changes and worker logs have been preserved.",
+          );
+          await this.turnEnded?.(task).catch((error) =>
+            this.message(task, "system", `Bringing the goal up to date needs attention: ${error.message}`),
           );
           task.run.finishedSourceBinding = await checkSourceBinding(workspace);
           await this.changed();
@@ -1456,6 +1519,10 @@ export class WorkerManager {
               );
               await this.changed();
             }
+          }
+          if (carriesOn) {
+            this.carryOn(task, carriesOn);
+            await this.changed().catch(() => {});
           }
           await releaseIdleEpic().catch(() => {});
           await measurementAudit.flush();

@@ -1,3 +1,4 @@
+import { priorities } from "./priority";
 import type { AppState, TaskPatch, WorkItem } from "../shared";
 import type { WorkflowState, ViewConfig } from "./types";
 import { reviewWorkflowStates } from "../code-review-workflow";
@@ -62,21 +63,23 @@ export function filterWork(tasks: WorkItem[], config: ViewConfig): WorkItem[] {
     (task) =>
       !!task.archivedAt === f.archived &&
       (f.priority === "all" || task.priority === f.priority) &&
-      (f.epicId === "all" || task.epicId === f.epicId) &&
+      (f.epicId === "all" ||
+        (f.epicId === "none" ? !task.epicId : task.epicId === f.epicId)) &&
       (f.cycleId === "all" ||
         (f.cycleId === "none" ? !task.cycleId : task.cycleId === f.cycleId)) &&
       (f.label === "all" || task.labels?.includes(f.label)) &&
       (f.kind === "all" || task.kind === f.kind) &&
+      ((f.assignee ?? "all") === "all" ||
+        (f.assignee === "none" ? !task.assignee : task.assignee?.id === f.assignee)) &&
       (f.harness === "all" || task.harness === f.harness) &&
       (!q ||
-        `${task.identifier} ${task.title} ${task.description} ${(task.labels ?? []).join(" ")}`
+        `${task.identifier} ${task.tracker?.key ?? ""} ${task.title} ${task.description} ${(task.labels ?? []).join(" ")}`
           .toLowerCase()
           .includes(q)),
   );
   return filtered.sort((a, b) =>
     config.sortBy === "priority"
-      ? ["high", "medium", "low"].indexOf(a.priority) -
-        ["high", "medium", "low"].indexOf(b.priority)
+      ? priorities.indexOf(a.priority) - priorities.indexOf(b.priority)
       : config.sortBy === "estimate"
         ? (b.estimate ?? -1) - (a.estimate ?? -1)
         : config.sortBy === "due"

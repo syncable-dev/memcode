@@ -1,3 +1,4 @@
+import { priorities, priorityLabels } from "../planning/priority";
 import { harnessNames } from "../shared";
 import { Select } from "./Select";
 import {
@@ -6,6 +7,7 @@ import {
   WorkerPrerequisites,
 } from "./WorkerAssignment";
 import { PlanningProperties } from "./PlanningProperties";
+import { TrackedIssue, TrackedKey } from "./TrackedIssue";
 import { WorkerBrowser } from "./WorkerBrowser";
 import { ArtifactPreview } from "./ArtifactPreview";
 import { ArtifactCollection } from "./ArtifactCollection";
@@ -573,7 +575,9 @@ export function WorkDetail({
         stopped: "Worker stopped",
         blocked: task.run.waitingOnDecision
           ? "Paused until you decide"
-          : "Worker needs attention",
+          : task.run.waitingOnCode
+            ? "Waiting for another worker"
+            : "Worker needs attention",
         failed: "Worker needs attention",
         finished: "Worker finished",
         idle: undefined,
@@ -688,6 +692,7 @@ export function WorkDetail({
             </span>
             <span className="detail-heading-dot" />
             <span>{task.identifier}</span>
+            <TrackedKey task={task} />
           </div>
           <h2 id="detail-title">{task.title}</h2>
           <div className="detail-properties">
@@ -726,9 +731,11 @@ export function WorkDetail({
                   )
                 }
               >
-                <option value="high">High priority</option>
-                <option value="medium">Medium priority</option>
-                <option value="low">Low priority</option>
+                {priorities.map((priority) => (
+                  <option key={priority} value={priority}>
+                    {priorityLabels[priority]}
+                  </option>
+                ))}
               </Select>
             </label>
             <span className="property-divider" />
@@ -908,6 +915,10 @@ export function WorkDetail({
                       key={task.id}
                       messages={task.messages}
                       harness={task.harness}
+                      from={
+                        // An issue brought in keeps its own id: its words are Linear's.
+                        task.tracker?.id === task.id ? task.tracker.key : undefined
+                      }
                       onOpenLink={(href) => void openLink(href)}
                       comments={comments}
                       onOpenReference={(reference, id) => {
@@ -1577,6 +1588,7 @@ export function WorkDetail({
                 void act(() => window.memcode.updateTask(task.id, patch))
               }
             />
+            <TrackedIssue task={task} state={state} act={act} />
             <PlanningProperties
               state={state}
               task={task}

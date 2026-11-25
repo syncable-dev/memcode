@@ -33,8 +33,8 @@ engine binaries. Keep managed engines separate from a user's global CLI setup.
   dialogs and previews. Use the typed, validated stdio/Rust IPC boundary.
 - Isolate browser/artifact content from the app and its preload.
 - Never interpolate prompts into shell commands. Spawn with argument arrays.
-- An epic owns one Git branch. Story workers share the project checkout on that
-  branch, edit it at the same time and coordinate through Memtrace Fleet: declare,
+- A goal (epic) owns one Git branch at a time and gets a new one after each merge.
+  Story workers share the checkout on that branch, edit it at the same time and coordinate through Memtrace Fleet: declare,
   edit, record. Do not create per-worker branches or worktrees, and do not add
   locks or turn-taking between workers. Preserve shared changes on stop/failure.
   Only a disagreement the workers involved cannot settle goes to a human, and it

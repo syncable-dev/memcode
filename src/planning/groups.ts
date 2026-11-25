@@ -1,3 +1,4 @@
+import { priorities, priorityLabels } from "./priority";
 import type {
   Cycle,
   Epic,
@@ -56,9 +57,11 @@ const epicColors: Record<Epic["color"], string> = {
   amber: "#bca169",
 };
 const priorityColors: Record<Priority, string> = {
+  urgent: "#c4643f",
   high: "#bb8d69",
   medium: "#b5a468",
   low: "#8aa598",
+  none: "#b4bdb2",
 };
 const harnessNames: Record<Harness, string> = {
   codex: "Codex",
@@ -107,11 +110,15 @@ function cycleGroups({ tasks, cycles }: GroupSources): WorkGroup[] {
   );
 }
 function priorityGroups(tasks: WorkItem[]): WorkGroup[] {
-  const definitions = (["high", "medium", "low"] as const).map((priority) => ({
-    id: priority,
-    name: priority[0].toUpperCase() + priority.slice(1) + " priority",
-    color: priorityColors[priority],
-  }));
+  // Urgent and No priority are groups of their own only where they are used.
+  const used = new Set(tasks.map((task) => task.priority));
+  const definitions = priorities
+    .filter((priority) => !["urgent", "none"].includes(priority) || used.has(priority))
+    .map((priority) => ({
+      id: priority,
+      name: priorityLabels[priority],
+      color: priorityColors[priority],
+    }));
   return assignGroups(definitions, tasks, (task) => task.priority);
 }
 function harnessGroups(tasks: WorkItem[]): WorkGroup[] {

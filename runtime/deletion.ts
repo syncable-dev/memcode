@@ -1,3 +1,4 @@
+import { assertOwnCycle } from "./trackers/routes";
 import { randomUUID } from "node:crypto";
 import type { z } from "zod";
 import type { AppState, WorkItem } from "../src/shared";
@@ -317,6 +318,7 @@ export function registerDeletion(
     return result;
   });
   register("cycle:delete", deleteEntitySchema, async ({ id }) => {
+    assertOwnCycle(state(), id);
     const result = deleteCycle(state(), id);
     await changed();
     return result;

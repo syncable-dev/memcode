@@ -26,7 +26,7 @@ impl Paths {
         self.dir.join("access.jwt")
     }
 }
-fn namespace(profile: &Path) -> String {
+pub(crate) fn namespace(profile: &Path) -> String {
     let text = profile.to_string_lossy();
     #[cfg(windows)]
     let text = text.replace('/', "\\").to_lowercase();
@@ -239,7 +239,7 @@ impl Credentials for OsCredentials {
             // the same User/login Keychain, preserving the item's existing ACL.
             let keychain = SecKeychain::default_for_domain(SecPreferencesDomain::User)
                 .map_err(|_| "OS-protected beta credential storage is unavailable")?;
-            macos_update_password(&keychain, &self.0, value).map_err(|_| {
+            macos_update_password(&keychain, SERVICE, &self.0, value).map_err(|_| {
                 "The beta credential could not be saved in the OS credential store".into()
             })
         }
@@ -259,8 +259,9 @@ impl Credentials for OsCredentials {
 }
 
 #[cfg(target_os = "macos")]
-fn macos_update_password(
+pub(crate) fn macos_update_password(
     keychain: &security_framework::os::macos::keychain::SecKeychain,
+    service: &str,
     user: &str,
     value: &str,
 ) -> security_framework::base::Result<()> {
@@ -272,7 +273,7 @@ fn macos_update_password(
     query
         .keychains(std::slice::from_ref(keychain))
         .class(ItemClass::generic_password())
-        .service(SERVICE)
+        .service(service)
         .account(user);
     let mut replacement = ItemUpdateOptions::new();
     replacement.set_value(ItemUpdateValue::Data(CFData::from_buffer(value.as_bytes())));
@@ -281,7 +282,7 @@ fn macos_update_password(
         // Only a genuinely absent item may be created. Never delete/recreate
         // an existing credential, loosen its ACL, or fall back after denial.
         Err(error) if error.code() == -25300 => {
-            keychain.add_generic_password(SERVICE, user, value.as_bytes())
+            keychain.add_generic_password(service, user, value.as_bytes())
         }
         Err(error) => Err(error),
     }
@@ -696,7 +697,7 @@ mod tests {
                 "The test must reject the old decrypt-before-write behavior"
             );
             for pass in 1..=8 {
-                macos_update_password(&keychain, user, &format!("synthetic-rotation-{pass}"))
+                macos_update_password(&keychain, SERVICE, user, &format!("synthetic-rotation-{pass}"))
                     .unwrap();
             }
             assert!(
