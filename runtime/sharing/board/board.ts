@@ -1,4 +1,7 @@
 import type { AppState, Epic, WorkItem } from "../../../src/shared";
+import { plainPriority, type Priority } from "../../../src/planning/priority";
+import type { Person } from "../../../src/people";
+import type { TrackedItem, TrackerKeeper } from "../../../src/tracker";
 import type {
   Cycle,
   CustomField,
@@ -7,6 +10,7 @@ import type {
 } from "../../../src/planning/types";
 import type { StoryComment } from "../../../src/story-comments";
 import { isActive } from "../../../src/domain";
+import { isOnBranch } from "../../../src/goal-work";
 import { cycleSnapshot } from "../../../src/planning/history";
 import {
   emptyBoard,
@@ -76,6 +80,20 @@ const isPortablePath = (path: string) =>
   !/[\x00-\x1f]/.test(path) &&
   path.split("/").every((part) => part && part !== "." && part !== "..");
 
+/** MemCodes before 255 characters drop a task whose title is longer than this. */
+const titleOnBoard = (title: string) => title.slice(0, 240);
+/** What the entry is in a tracker, for everyone on the project to see. */
+const trackedOnBoard = (item: { tracker?: TrackedItem }): Json | undefined =>
+  item.tracker
+    ? ({
+        provider: item.tracker.provider,
+        id: item.tracker.id,
+        ...(item.tracker.key ? { key: item.tracker.key } : {}),
+        ...(item.tracker.url ? { url: item.tracker.url } : {}),
+        ...(item.tracker.kind ? { kind: item.tracker.kind } : {}),
+      } as Json)
+    : undefined;
+
 function taskOnBoard(task: WorkItem): Entry {
   const lane = task.statusId && laneOnBoard(task.projectId, task.statusId);
   const scope = (task.scope ?? [])
@@ -84,10 +102,19 @@ function taskOnBoard(task: WorkItem): Entry {
   return entry(
     {
       identifier: task.identifier,
-      title: task.title,
+      title: titleOnBoard(task.title),
       stage: task.stage,
       lane: lane || undefined,
-      priority: task.priority,
+      // What MemCodes from before Urgent, people and trackers do not know stands beside
+      // what they do: they neither read nor erase a field they have never heard of.
+      priority: plainPriority(task.priority),
+      urgency: task.priority === plainPriority(task.priority) ? undefined : task.priority,
+      assignee: task.assignee
+        ? { id: task.assignee.id, name: task.assignee.name }
+        : undefined,
+      closedAs: task.closedAs ?? undefined,
+      tracker: trackedOnBoard(task),
+      keepHere: task.keepHere || undefined,
       kind: task.kind ?? "feature",
       goal: task.epicId ?? null,
       cycle: task.cycleId ?? null,
@@ -128,6 +155,7 @@ const goalOnBoard = (goal: Epic): Entry =>
       baseRevision: goal.baseRevision,
       baseBranch: goal.baseBranch,
       closed: !!goal.closedAt,
+      tracker: trackedOnBoard(goal),
     },
     { description: goal.description },
   );
@@ -142,6 +170,7 @@ const cycleOnBoard = (cycle: Cycle): Entry =>
     state: cycle.state,
     capacity: cycle.capacity,
     calendar: cycle.calendar,
+    tracker: trackedOnBoard(cycle),
   });
 
 const commentOnBoard = (comment: StoryComment): Entry =>
@@ -150,6 +179,12 @@ const commentOnBoard = (comment: StoryComment): Entry =>
     parent: comment.parentId ?? null,
     text: comment.text,
     reference: comment.reference as Json | undefined,
+    // Written in the tracker: its author is not whoever's computer brought it here.
+    outside:
+      comment.author.source === "linear"
+        ? { source: comment.author.source, name: comment.author.name }
+        : undefined,
+    tracker: trackedOnBoard(comment),
   });
 
 /** The shared board of one project, as the workspace on this computer has it. */
@@ -193,6 +228,18 @@ export function boardOf(state: AppState, projectId: string): Board {
         groupBy: view.groupBy,
         sortBy: view.sortBy,
         filters: view.filters as unknown as Json,
+      });
+  for (const keeper of state.trackerKeepers ?? [])
+    if (keeper.projectId === projectId)
+      board.trackers[keeper.provider] = entry({
+        // One value: whoever takes over takes all of it.
+        keeper: {
+          connection: keeper.connection,
+          by: keeper.by,
+          workspace: keeper.workspace,
+          team: keeper.team,
+          since: keeper.since,
+        },
       });
   return board;
 }
@@ -252,6 +299,46 @@ const memberIds = (set: Record<string, Json> | undefined, most: number) =>
     .slice(0, most);
 
 const stageRead = oneOf("planned", "working", "review", "done");
+const partsOf = (value: Json | undefined): Record<string, Json> | undefined =>
+  value && typeof value === "object" && !Array.isArray(value) ? value : undefined;
+/** The priority, when what stands beside it still belongs to it. */
+function priorityFrom(fields: Record<string, Json>, kept: Priority): Priority {
+  const plain = oneOf("high", "medium", "low")(fields.priority);
+  const exact = oneOf("urgent", "none")(fields.urgency);
+  if (exact && plainPriority(exact) === plain) return exact;
+  return plain ?? kept;
+}
+/** An address people can open: the tracker's own site, never anything else. */
+const trackerUrl: Read<string> = (value) =>
+  typeof value === "string" && /^https:\/\/linear\.app\/[^\s]{1,500}$/.test(value)
+    ? value
+    : undefined;
+/** What the entry is in a tracker. How it stands is known only where it is kept in step. */
+function trackedFrom(
+  value: Json | undefined,
+  kept: TrackedItem | undefined,
+): TrackedItem | undefined {
+  const parts = partsOf(value);
+  const provider = oneOf("linear")(parts?.provider);
+  const id = line(100)(parts?.id);
+  if (!provider || !id) return value === undefined ? kept : undefined;
+  return {
+    ...(kept?.id === id ? kept : {}),
+    provider,
+    id,
+    key: line(60)(parts!.key) ?? kept?.key,
+    url: trackerUrl(parts!.url) ?? kept?.url,
+    kind:
+      oneOf("issue", "milestone", "project", "parent", "cycle", "comment")(parts!.kind) ??
+      kept?.kind,
+  };
+}
+function personFrom(value: Json | undefined): Person | null {
+  const parts = partsOf(value);
+  const id = line(200)(parts?.id),
+    name = line(200)(parts?.name);
+  return id && name ? { id, name } : null;
+}
 
 function stepsFrom(set: Record<string, Json> | undefined) {
   const steps: Array<{
@@ -337,7 +424,8 @@ function taskFromBoard(
 ): Partial<WorkItem> | undefined {
   const { fields, texts, sets } = shared;
   const identifier = or(line(240)(fields.identifier), kept?.identifier),
-    title = or(line(240)(fields.title), kept?.title),
+    read = line(240)(fields.title),
+    title = kept && read === titleOnBoard(kept.title) ? kept.title : or(read, kept?.title),
     stage = or(stageRead(fields.stage), kept?.stage);
   if (!identifier || !title || !stage) return undefined;
   const lane = line(250)(fields.lane);
@@ -347,10 +435,11 @@ function taskFromBoard(
     stage,
     statusId: lane ? laneHere(projectId, lane) : undefined,
     description: or(wording(20000)(texts.description), kept?.description ?? ""),
-    priority: or(
-      oneOf("high", "medium", "low")(fields.priority),
-      kept?.priority ?? "medium",
-    ),
+    priority: priorityFrom(fields, kept?.priority ?? "medium"),
+    assignee: personFrom(fields.assignee),
+    closedAs: oneOf("canceled", "duplicate")(fields.closedAs) ?? null,
+    tracker: trackedFrom(fields.tracker, kept?.tracker),
+    keepHere: flag(fields.keepHere) || undefined,
     kind: or(
       oneOf("feature", "fix", "refactor", "research", "test")(fields.kind),
       kept?.kind ?? "feature",
@@ -366,7 +455,7 @@ function taskFromBoard(
     dueDate: or(dayOrNone(fields.dueDate), kept?.dueDate ?? null),
     duplicateOf: or(idOrNone(fields.duplicateOf), kept?.duplicateOf ?? null),
     category: or(line(200)(fields.category), kept?.category ?? "Work"),
-    labels: memberIds(sets.label, 30).filter((label) => label.length <= 100),
+    labels: memberIds(sets.label, 50).filter((label) => label.length <= 100),
     scope: memberIds(sets.scope, 200).filter(isPortablePath),
     dependsOn: memberIds(sets.depends, 200),
     relatedIds: memberIds(sets.related, 200),
@@ -456,6 +545,13 @@ function applyGoals(
       title = or(line(240)(fields.title), kept?.title);
     if (!identifier || !title) continue;
     const closed = or(flag(fields.closed), !!kept?.closedAt);
+    // Each computer has its own branch of a goal. Someone else's does not replace one
+    // that is being worked on here.
+    const mine =
+      !!kept?.branch &&
+      state.tasks.some(
+        (task) => task.stage !== "done" && isOnBranch(task, kept) && !!task.run.branch,
+      );
     const read: Omit<Epic, "id" | "projectId"> = {
       identifier,
       title,
@@ -472,9 +568,10 @@ function applyGoals(
         kept?.color ?? "mint",
       ),
       order: or(numberWithin(-1e9, 1e9)(fields.order), kept?.order ?? 0),
-      branch: line(240)(fields.branch),
-      baseRevision: line(64)(fields.baseRevision),
-      baseBranch: line(240)(fields.baseBranch),
+      branch: mine ? kept.branch : line(240)(fields.branch),
+      baseRevision: mine ? kept.baseRevision : line(64)(fields.baseRevision),
+      baseBranch: mine ? kept.baseBranch : line(240)(fields.baseBranch),
+      tracker: trackedFrom(fields.tracker, kept?.tracker),
       closedAt: closed ? (kept?.closedAt ?? at) : undefined,
     };
     if (kept) Object.assign(kept, read);
@@ -525,6 +622,7 @@ function applyCycles(
       endDate,
       timeZone: or(line(100)(fields.timeZone), kept?.timeZone ?? "UTC"),
       state: state_,
+      tracker: trackedFrom(fields.tracker, kept?.tracker),
       capacity: or(
         orNone(numberWithin(0, 100000))(fields.capacity),
         kept?.capacity ?? null,
@@ -605,6 +703,7 @@ function applyComments(
       text,
       parentId: parentId ?? undefined,
       reference: referenceFrom(fields.reference),
+      ...(fields.tracker ? { tracker: trackedFrom(fields.tracker, kept?.tracker) } : {}),
       updatedAt: stamp?.changedAt ?? options.at,
       deletedAt: undefined,
     };
@@ -613,15 +712,20 @@ function applyComments(
       continue;
     }
     const account = stamp?.createdBy;
+    const outside = partsOf(fields.outside);
+    const writer = oneOf("linear")(outside?.source) && line(200)(outside?.name);
     comments.push({
       id,
       ...read,
-      // The log says who sent a comment. What the comment says about itself is not asked.
-      author: {
-        id: account ?? "unknown",
-        name: (account && options.nameOf?.(account)) || SOMEONE,
-        source: "memtrace",
-      },
+      // The log says who sent a comment. What the comment says about itself is not asked,
+      // except that it was brought here from the tracker, which is shown as just that.
+      author: writer
+        ? { id: "linear:" + (account ?? "unknown"), name: writer, source: "linear" }
+        : {
+            id: account ?? "unknown",
+            name: (account && options.nameOf?.(account)) || SOMEONE,
+            source: "memtrace",
+          },
       createdAt: stamp?.createdAt ?? options.at,
     });
   }
@@ -634,7 +738,7 @@ function applyProjectLists(
   before: Board,
   after: Board,
 ) {
-  const changed = (collection: "lanes" | "fields" | "views") =>
+  const changed = (collection: "lanes" | "fields" | "views" | "trackers") =>
     JSON.stringify(before[collection]) !== JSON.stringify(after[collection]);
   if (changed("lanes") && Object.keys(after.lanes).length) {
     const lanes: WorkflowState[] = [];
@@ -719,6 +823,29 @@ function applyProjectLists(
     state.savedViews = [
       ...state.savedViews.filter((view) => view.projectId !== projectId),
       ...views,
+    ];
+  }
+  if (changed("trackers")) {
+    const keepers: TrackerKeeper[] = [];
+    for (const [id, { fields }] of Object.entries(after.trackers)) {
+      const provider = oneOf("linear")(id),
+        parts = partsOf(fields.keeper),
+        connection = line(100)(parts?.connection),
+        by = line(200)(parts?.by);
+      if (!provider || !connection || !by) continue;
+      keepers.push({
+        projectId,
+        provider,
+        connection,
+        by,
+        workspace: line(200)(parts!.workspace) ?? "",
+        team: line(200)(parts!.team) ?? "",
+        since: line(40)(parts!.since) ?? "",
+      });
+    }
+    state.trackerKeepers = [
+      ...(state.trackerKeepers ?? []).filter((item) => item.projectId !== projectId),
+      ...keepers,
     ];
   }
 }

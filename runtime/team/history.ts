@@ -1,3 +1,4 @@
+import type { WorkFilters } from "../../src/planning/types";
 import { z } from "zod";
 import { createHash } from "node:crypto";
 import type { AppState } from "../../src/shared";
@@ -102,8 +103,16 @@ export function projectPlanningMetadata(state: AppState, projectId: string): Tea
     planning: {
       workflowStates: state.workflowStates.filter((item) => item.projectId === projectId).map(({ projectId: _projectId, ...value }) => value),
       customFields: state.customFields.filter((item) => item.projectId === projectId).map(({ projectId: _projectId, ...value }) => value),
-      savedViews: state.savedViews.filter((item) => item.projectId === projectId).map(({ projectId: _projectId, ...value }) => value),
+      savedViews: state.savedViews.filter((item) => item.projectId === projectId).map(({ projectId: _projectId, ...value }) => ({ ...value, filters: knownFilters(value.filters) })),
     },
+  };
+}
+
+/** A team's other MemCodes know three priorities and no people. */
+function knownFilters({ assignee: _assignee, priority, ...filters }: WorkFilters) {
+  return {
+    ...filters,
+    priority: priority === "urgent" || priority === "none" ? ("all" as const) : priority,
   };
 }
 

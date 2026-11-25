@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, Flag, ListChecks, Plus, X, Zap } from "lucide-react";
+import { Check, Clock3, Flag, ListChecks, Plus, X, Zap } from "lucide-react";
 import {
   harnessNames,
   type Epic,
@@ -13,6 +13,7 @@ import {
   type PlannedGoal,
   type PlannedTask,
   type WorkDraft,
+  waitsFor,
 } from "../goal-plan";
 import {
   placementQuery,
@@ -38,6 +39,7 @@ import {
   type Attach,
 } from "./Attachments";
 import { Modal } from "./Dialogs";
+import { KeepHere } from "./TrackedIssue";
 import { Select } from "./Select";
 import { Spinner } from "./UI";
 import "../styles-new-work.css";
@@ -68,6 +70,8 @@ interface Props {
   /** Workers that can start right now, and the most that run at once (Settings). */
   freeSlots: number;
   workerLimit: number;
+  /** The team a new task becomes an issue in, if it does. */
+  issuesIn?: string;
   notify: (message: string) => void;
 }
 
@@ -80,6 +84,7 @@ const maximumScope = 20;
 /** One door for new work: say what you want, a worker plans it, the plan decides where it goes. */
 export function NewWork(props: Props) {
   const { project, goals, fixedEpicId } = props;
+  const [keepHere, setKeepHere] = useState(false);
   const [step, setStep] = useState<Step>("write");
   const [request, setRequest] = useState(props.initialRequest ?? "");
   const [files, setFiles] = useState<Attachment[]>([]);
@@ -230,7 +235,11 @@ export function NewWork(props: Props) {
     return epic.id;
   };
 
-  const createTask = (item: PlannedTask, epicId: string | null) =>
+  const createTask = (
+    item: PlannedTask,
+    epicId: string | null,
+    dependsOn: string[],
+  ) =>
     window.memcode.createTask({
       projectId: project.id,
       title: item.title.trim(),
@@ -242,6 +251,8 @@ export function NewWork(props: Props) {
       harness: props.defaultHarness,
       assignment: "auto",
       ...(files.length ? { attachments: files } : {}),
+      ...(props.issuesIn && keepHere ? { keepHere } : {}),
+      ...(dependsOn.length ? { dependsOn } : {}),
       ...(props.statusId ? { statusId: props.statusId } : {}),
     });
 
@@ -268,10 +279,17 @@ export function NewWork(props: Props) {
         const timing = timings[index] ?? "now";
         const epicId = await destination(goal, where, timing);
         madeSomething ||= where.kind === "new";
-        for (const item of goal.tasks.filter((task) => task.title.trim())) {
+        const tasks = goal.tasks.filter((task) => task.title.trim());
+        const made = new Map<PlannedTask, string>();
+        for (const item of tasks) {
+          const dependsOn = waitsFor(item, tasks).flatMap(
+            (other) => made.get(other) ?? [],
+          );
+          const task = await createTask(item, epicId, dependsOn);
+          made.set(item, task.id);
           created.push({
-            task: await createTask(item, epicId),
-            starts: startsNow(where, timing),
+            task,
+            starts: startsNow(where, timing) && !dependsOn.length,
           });
           madeSomething = true;
         }
@@ -365,6 +383,9 @@ export function NewWork(props: Props) {
           canStart={props.connected.length > 0}
           freeSlots={props.freeSlots}
           workerLimit={props.workerLimit}
+          issuesIn={props.issuesIn}
+          keepHere={keepHere}
+          onKeepHere={setKeepHere}
           busy={busy}
           onGoal={editGoal}
           onPlace={(index, where) =>
@@ -582,6 +603,9 @@ function ReviewStep(props: {
   canStart: boolean;
   freeSlots: number;
   workerLimit: number;
+  issuesIn?: string;
+  keepHere: boolean;
+  onKeepHere: (keep: boolean) => void;
   busy: boolean;
   onGoal: (index: number, goal: PlannedGoal) => void;
   onPlace: (index: number, place: Place) => void;
@@ -598,16 +622,19 @@ function ReviewStep(props: {
     .flatMap((goal) => goal.tasks)
     .filter((task) => task.title.trim()).length;
   const only = props.places[0] ?? { kind: "new" };
-  const startable = planned
+  const nowTasks = planned
     .filter((_, index) =>
       startsNow(
         props.places[index] ?? { kind: "new" },
         props.timings[index] ?? "now",
       ),
     )
-    .flatMap((goal) => goal.tasks)
-    .filter((task) => task.title.trim()).length;
-  const waiting = startable < count;
+    .map((goal) => goal.tasks.filter((task) => task.title.trim()));
+  const startable = nowTasks.flatMap((tasks) =>
+    tasks.filter((task) => !waitsFor(task, tasks).length),
+  ).length;
+  const waitingGoals = nowTasks.flat().length < count;
+  const waitingTasks = nowTasks.flat().length - startable;
   const starts = startsWithinLimit({ startable, freeSlots: props.freeSlots });
   const canStartNow = props.canStart && starts.now > 0;
   const limited = props.canStart && starts.waiting > 0;
@@ -665,6 +692,9 @@ function ReviewStep(props: {
             onRemove={several ? () => props.onRemove(index) : undefined}
           />
         ))}
+        {props.issuesIn && (
+          <KeepHere place={props.issuesIn} keep={props.keepHere} onChange={props.onKeepHere} />
+        )}
       </div>
       <footer className="modal-footer">
         <button className="nw-link" type="button" onClick={props.onEdit}>
@@ -682,10 +712,12 @@ function ReviewStep(props: {
             </span>
           ) : (
             props.canStart &&
-            waiting &&
+            (waitingGoals || waitingTasks > 0) &&
             startable > 0 && (
               <span className="nw-hint">
-                Next and Later goals wait on the Roadmap.
+                {waitingGoals
+                  ? "Next and Later goals wait on the Roadmap."
+                  : `${plural(waitingTasks, "task")} can start once the tasks before ${waitingTasks === 1 ? "it" : "them"} are done.`}
               </span>
             )
           )}
@@ -711,9 +743,11 @@ function ReviewStep(props: {
               {props.busy && <Spinner size={12} />}
               {limited
                 ? `Create and start ${starts.now} of ${startable} now`
-                : waiting
+                : waitingGoals
                   ? `Create and start ${plural(startable, "Now task")}`
-                  : startLabel(several ? { kind: "new" } : only, count)}
+                  : waitingTasks > 0
+                    ? `Create and start ${plural(startable, "task")}`
+                    : startLabel(several ? { kind: "new" } : only, count)}
               <kbd>⌘↵</kbd>
             </button>
           )}
@@ -882,7 +916,9 @@ function PlaceReason(props: {
   goals: Epic[];
 }) {
   const { place } = props;
-  const count = props.goal.tasks.filter((task) => task.title.trim()).length;
+  const tasks = props.goal.tasks.filter((task) => task.title.trim());
+  const count = tasks.length;
+  const startable = tasks.filter((task) => !waitsFor(task, tasks).length).length;
   if (place.kind === "quick")
     return (
       <span className="nw-why">
@@ -901,7 +937,9 @@ function PlaceReason(props: {
       <span className="nw-why">
         {timings.now.meaning}
         {count > 1
-          ? ` Its ${count} tasks run side by side and stay coordinated.`
+          ? startable < count
+            ? ` ${startable} of its ${count} tasks can start now. The others wait for the ones they build on.`
+            : ` Its ${count} tasks run side by side and stay coordinated.`
           : ""}
       </span>
     );
@@ -1016,8 +1054,19 @@ function TaskRail(props: {
                 {task.brief}
               </button>
             )}
-            {(task.steps.length > 0 || task.files.length > 0) && (
+            {(task.steps.length > 0 ||
+              task.files.length > 0 ||
+              waitsFor(task, goal.tasks).length > 0) && (
               <span className="nw-task-meta">
+                {waitsFor(task, goal.tasks).length > 0 && (
+                  <span className="nw-after">
+                    <Clock3 size={11} />
+                    after{" "}
+                    {waitsFor(task, goal.tasks)
+                      .map((other) => goal.tasks.indexOf(other) + 1)
+                      .join(", ")}
+                  </span>
+                )}
                 {task.steps.length > 0 && (
                   <button
                     type="button"

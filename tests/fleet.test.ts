@@ -215,6 +215,147 @@ test("a paused worker the person decided against is told whose change stands and
   }
 });
 
+/** Held, it takes a while over its last message, as a model does. */
+const slowToEnd = reshapingWorker.replace(
+  "{ say('Waiting for the decision.'); process.exit(0); }",
+  "{ await new Promise((r) => setTimeout(r, 1500)); say('Waiting for the decision.'); process.exit(0); }",
+);
+
+test("a decision made while the worker writes its last message still brings it back", async () => {
+  const f = await fixture(true, slowToEnd);
+  try {
+    const [first, second] = f.tasks;
+    await f.manager.start(first, f.project);
+    await until(() => first.run.state === "finished");
+    await f.manager.start(second, f.project);
+    await until(() => f.state.fleetConflicts[0]?.needs === "decide");
+    assert.equal(second.run.state, "running");
+    await f.manager.decide(f.state.fleetConflicts[0].id, "Use the second shape.", second.id);
+    await until(() => second.messages.some((message) => /^Worker finished/.test(message.text)));
+    assert.equal(await readFile(join(f.repo, "two.txt"), "utf8"), "Reshaped by two");
+    const told = second.messages.find((message) => message.role === "user")!;
+    assert.match(told.text, /^Decision on contract: Use the second shape\. Your change goes ahead/);
+    assert.equal(second.messages.filter((message) => message.role === "user").length, 1, "once");
+    assert.equal(second.stage, "review");
+  } finally {
+    await f.cleanup();
+  }
+});
+
+/** The third worker only wants to edit what the other two disagree about. */
+const bystander = slowToEnd.replace(
+  "kind:'signature'",
+  "kind: id === 'three' ? 'change' : 'signature'",
+);
+for (const when of ["while it waits", "while it writes its last message"])
+  test(`a worker that a disagreement only held off carries on when it is settled ${when}`, async () => {
+    const f = await fixture(true, bystander);
+    try {
+      const [first, second] = f.tasks;
+      const third = { ...structuredClone(second), id: "three", identifier: "MC-three" };
+      f.state.tasks.push(third);
+      await f.manager.start(first, f.project);
+      await until(() => first.run.state === "finished");
+      await f.manager.start(second, f.project);
+      await until(() => f.state.fleetConflicts[0]?.needs === "decide");
+      const [decision] = f.state.fleetConflicts;
+      await f.manager.start(third, f.project);
+      if (when === "while it waits") {
+        await until(() => third.run.state === "blocked");
+        assert.equal(third.run.waitingOnDecision, decision.id);
+        assert.equal(third.stage, "working", "it is not handed to review half done");
+      } else await until(() => third.messages.some((message) => /canEdit": false/.test(message.text)));
+      await f.manager.decide(decision.id, "Use the second shape.", second.id);
+      await until(() => second.stage === "review" && third.stage === "review");
+      assert.equal(await readFile(join(f.repo, "three.txt"), "utf8"), "Reshaped by three");
+      const told = third.messages.find((message) => message.role === "user")!;
+      assert.match(told.text, /Use the second shape\. That code is free again/);
+      assert.equal(decision.taskIds.includes("three"), false, "it has no say in it");
+    } finally {
+      await f.cleanup();
+    }
+  });
+
+test("a paused worker carries on when the others settle the disagreement themselves", async () => {
+  const f = await fixture(true, reshapingWorker);
+  try {
+    const [first, second] = f.tasks;
+    await f.manager.start(first, f.project);
+    await until(() => first.run.state === "finished");
+    await f.manager.start(second, f.project);
+    await until(() => second.run.state === "blocked");
+    (f.manager.fleet as any).settled(f.state.fleetConflicts[0], {
+      by: "agents",
+      winnerTaskId: second.id,
+      resolution: "Both fit.",
+    });
+    await until(() => second.run.state === "finished");
+    assert.equal(await readFile(join(f.repo, "two.txt"), "utf8"), "Reshaped by two");
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test("a worker in two disagreements carries on once both are settled, and hears both", async () => {
+  const f = await fixture(true, reshapingWorker);
+  try {
+    const [first, second] = f.tasks;
+    await f.manager.start(first, f.project);
+    await until(() => first.run.state === "finished");
+    await f.manager.start(second, f.project);
+    await until(() => second.run.state === "blocked");
+    const [decision] = f.state.fleetConflicts;
+    const other = {
+      ...structuredClone(decision),
+      id: "other",
+      escalationId: undefined,
+      scope: ["shared.ts::format"],
+    };
+    f.state.fleetConflicts.push(other);
+    await f.manager.decide(decision.id, "Use the second shape.", second.id);
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    assert.equal(second.run.state, "blocked");
+    assert.equal(second.run.waitingOnDecision, "other");
+    await f.manager.decide("other", "And the second format.", second.id);
+    await until(() => second.run.state === "finished");
+    const told = second.messages.filter((message) => message.role === "user");
+    assert.equal(told.length, 1);
+    assert.match(told[0].text, /Use the second shape\.[\s\S]*And the second format\./);
+    assert.equal(second.run.decidedMeanwhile, undefined);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+/** Told that a peer is reshaping its code right now, it gives up instead of waiting. */
+const impatient = reshapingWorker
+  .replace("kind:'signature'", "kind: id === 'one' ? 'signature' : 'change'")
+  .replace(
+    "await writeFile(id + '.txt'",
+    "if (id === 'one') await new Promise((r) => setTimeout(r, 2500));\nawait writeFile(id + '.txt'",
+  );
+test("a worker that ended while a peer was reshaping its code comes back when it is free", async () => {
+  const f = await fixture(true, impatient);
+  try {
+    const [first, second] = f.tasks;
+    await f.manager.start(first, f.project);
+    await until(() => f.state.fleetDeclarations?.some((item) => item.taskId === "one") ?? false);
+    await f.manager.start(second, f.project);
+    await until(() => !!second.run.waitingOnCode);
+    assert.equal(first.run.state, "running");
+    assert.equal(second.stage, "working", "it is not handed to review half done");
+    await until(() => first.stage === "review" && second.stage === "review");
+    assert.equal(await readFile(join(f.repo, "two.txt"), "utf8"), "Reshaped by two");
+    assert.equal(second.run.waitingOnCode, undefined);
+    assert.match(
+      second.messages.find((message) => message.role === "user")!.text,
+      /contract is free again: the change you waited for is in/,
+    );
+  } finally {
+    await f.cleanup();
+  }
+});
+
 test("two story processes collaborate on one epic branch and one checkout", async () => {
   const f = await fixture();
   try {

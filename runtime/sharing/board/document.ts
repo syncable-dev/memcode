@@ -15,6 +15,7 @@ export const collections = [
   "lanes",
   "fields",
   "views",
+  "trackers",
 ] as const;
 export type Collection = (typeof collections)[number];
 export type Json =

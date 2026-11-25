@@ -15,6 +15,7 @@ import {
   type BranchStrategy,
 } from "./branch-strategy";
 import { git, now } from "./local";
+import { openGoalFor, worksHere } from "./goal-branch";
 import { ensureLocalRuntimeIgnored } from "./project-repository";
 import { enterEpicCheckout } from "./epic-checkout";
 import { realpath } from "node:fs/promises";
@@ -111,15 +112,19 @@ export class EpicWorkspace {
       throw new Error(
         "A result from the earlier execution mode is preserved in its previous folder. Review it before starting a new shared-branch task.",
       );
-    const epic = ensureTaskEpic(this.state(), task);
-    await this.prepareBranch(epic, project);
+    const epic = openGoalFor(this.state(), task);
+    await this.prepareBranch(epic, project, task);
     const branch = epicBranch(epic);
     if (options.ownedCheckout && this.dataDir) {
+      const shippedBefore = !!this.state().pullRequests?.some(
+        (item) => item.epicId === epic.id && item.branch !== branch,
+      );
       const checkout = await enterEpicCheckout(
         this.dataDir,
         project,
         epic,
         branch,
+        shippedBefore,
       );
       const canonical = await realpath(project.path);
       epic.branch = branch;
@@ -132,7 +137,7 @@ export class EpicWorkspace {
       task.run.baseline = epic.baseRevision;
       // Even when the epic is already open in the primary folder, use a
       // separate current-source view. Its history import must not gate work.
-      const id = `${project.id}:epic:${epic.id}${checkout.workspace === canonical ? ":source" : ""}`;
+      const id = `${project.id}:epic:${epic.id}${shippedBefore ? `:${branch}` : ""}${checkout.workspace === canonical ? ":source" : ""}`;
       if (task.run.analysisProjectId !== id)
         task.run.analysisRepoId = undefined;
       task.run.analysisProjectId = id;
@@ -200,18 +205,40 @@ export class EpicWorkspace {
    * New work starts from the branch the goal or the project chose, or else the team's
    * integration branch, and is named the team's way.
    */
-  private async prepareBranch(epic: Epic, project: Project) {
-    if (epic.branch) return;
+  private async prepareBranch(epic: Epic, project: Project, task: WorkItem) {
     const path = project.path!;
+    if (epic.branch && (await worksHere(this.state(), epic, path))) return;
+    const elsewhere = epic.branch;
+    const shared = !!this.state().sharedProjectLinks?.some(
+      (link) => link.projectId === project.id,
+    );
+    // The goal's own name is taken by its first branch; what comes later is named by
+    // the task that begins it. On a shared project every branch is: two computers can
+    // start the same goal before either has heard of the other.
+    const byTask =
+      shared ||
+      !!elsewhere ||
+      !!this.state().pullRequests?.some((item) => item.epicId === epic.id);
+    delete epic.branch;
+    delete epic.baseRevision;
     const detected = await this.strategyFor(path);
     const base = epic.baseBranch ?? project.baseBranch ?? detected.base;
     const strategy = { ...detected, base };
     epic.branch = await availableBranch(
       path,
       isQuickChanges(epic)
-        ? quickChangesBranchName(strategy, new Date())
-        : goalBranchName(strategy, epic.title),
+        ? quickChangesBranchName(
+            strategy,
+            new Date(),
+            shared ? task.title : undefined,
+          )
+        : goalBranchName(strategy, byTask ? task.title : epic.title),
       strategy.remote,
+      new Set(
+        [elsewhere, ...this.state().epics.map((other) => other.branch)].filter(
+          (name): name is string => !!name,
+        ),
+      ),
     );
     epic.baseBranch = base;
     epic.baseRevision ??= await integrationCommit(path, strategy);

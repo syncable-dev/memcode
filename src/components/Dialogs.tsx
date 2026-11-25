@@ -1,3 +1,4 @@
+import { priorities, priorityLabels, type Priority } from "../planning/priority";
 import { Select } from "./Select";
 import { Integrations } from "./Integrations";
 import type { Attachment } from "../attachments";
@@ -48,6 +49,7 @@ import { AppUpdates } from "./AppUpdates";
 import { BetaAccess } from "./BetaAccess";
 import { TelemetrySettings } from "./TelemetrySettings";
 import { WorkerConnections } from "./WorkerConnections";
+import { KeepHere } from "./TrackedIssue";
 import type { AppState } from "../shared";
 import "../styles-setup-settings.css";
 
@@ -76,10 +78,23 @@ export function Modal({
   wide?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const closing = useRef(close);
+  closing.current = close;
   useEffect(() => {
     const before = document.activeElement as HTMLElement | null;
     ref.current?.querySelector<HTMLElement>("input,textarea,button")?.focus();
     const handle = (event: KeyboardEvent) => {
+      // A button that went away takes the focus with it, out of the dialog.
+      if (
+        event.key === "Escape" &&
+        !event.defaultPrevented &&
+        (!document.activeElement || document.activeElement === document.body) &&
+        ref.current === [...document.querySelectorAll(".modal[role=dialog]")].at(-1)
+      ) {
+        event.preventDefault();
+        closing.current();
+        return;
+      }
       if (event.key !== "Tab") return;
       const nodes = Array.from(
         ref.current?.querySelectorAll<HTMLElement>(
@@ -156,6 +171,7 @@ export function NewTaskDialog({
   parent,
   initialDescription = "",
   initialFiles = [],
+  issuesIn,
   onClose,
   onCreated,
   notify,
@@ -169,11 +185,14 @@ export function NewTaskDialog({
   parent?: WorkItem;
   initialDescription?: string;
   initialFiles?: Attachment[];
+  /** The team a new task becomes an issue in, if it does. */
+  issuesIn?: string;
   onClose: () => void;
   onCreated: (task: WorkItem) => void;
   notify: (s: string) => void;
 }) {
   const [title, setTitle] = useState("");
+  const [keepHere, setKeepHere] = useState(false);
   const [description, setDescription] = useState(initialDescription);
   const [files, setFiles] = useState<Attachment[]>(initialFiles);
   const attach = useAttach(files, setFiles, notify);
@@ -194,7 +213,7 @@ export function NewTaskDialog({
   const [dueDate, setDueDate] = useState("");
   const [labels, setLabels] = useState("");
   const [kind, setKind] = useState<NonNullable<WorkItem["kind"]>>("feature");
-  const [priority, setPriority] = useState<"high" | "medium" | "low">("medium");
+  const [priority, setPriority] = useState<Priority>("medium");
   const [busy, setBusy] = useState(false);
   const dictation = useDictation(
     (text) =>
@@ -217,6 +236,7 @@ export function NewTaskDialog({
             : {}),
           description: description.trim(),
           ...(files.length ? { attachments: files } : {}),
+          ...(issuesIn && keepHere ? { keepHere } : {}),
           harness,
           assignment: assignment === "auto" ? "auto" : "manual",
           epicId: epicId === "none" ? null : epicId,
@@ -356,9 +376,11 @@ export function NewTaskDialog({
                 value={priority}
                 onValueChange={(e) => setPriority(e as typeof priority)}
               >
-                <option value="high">High priority</option>
-                <option value="medium">Medium priority</option>
-                <option value="low">Low priority</option>
+                {priorities.map((item) => (
+                  <option key={item} value={item}>
+                    {priorityLabels[item]}
+                  </option>
+                ))}
               </Select>
             </label>
           </div>
@@ -465,6 +487,7 @@ export function NewTaskDialog({
               />
             </label>
           </details>
+          {issuesIn && <KeepHere place={issuesIn} keep={keepHere} onChange={setKeepHere} />}
           <div className="form-note">
             <GitBranch size={13} />
             <p>

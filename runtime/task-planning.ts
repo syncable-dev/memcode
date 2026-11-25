@@ -16,7 +16,17 @@ export const taskPlanningShape = {
   estimate: z.number().finite().min(0).max(1000).nullable().optional(),
   startDate: date.optional(),
   dueDate: date.optional(),
-  labels: z.array(z.string().trim().min(1).max(40)).max(20).optional(),
+  labels: z.array(z.string().trim().min(1).max(100)).max(50).optional(),
+  assignee: z
+    .object({
+      id: z.string().min(1).max(200),
+      name: z.string().min(1).max(200),
+      email: z.string().max(320).optional(),
+    })
+    .strict()
+    .nullable()
+    .optional(),
+  closedAs: z.enum(["canceled", "duplicate"]).nullable().optional(),
   parentId: id.nullable().optional(),
   relatedIds: z.array(id).max(100).optional(),
   duplicateOf: id.nullable().optional(),
@@ -29,6 +39,19 @@ export const taskPlanningShape = {
     )
     .optional(),
 };
+
+/** The first request of a task nobody has started: it says what the description says. */
+export function briefOf(item: WorkItem) {
+  const [brief, ...rest] = item.messages;
+  return brief?.role === "user" &&
+    !rest.length &&
+    !brief.promptedAt &&
+    item.run.state === "idle" &&
+    !item.run.startedAt &&
+    brief.text === (item.description || item.title)
+    ? brief
+    : undefined;
+}
 
 export function applyTaskPatch(
   state: AppState,
@@ -173,6 +196,10 @@ export function applyTaskPatch(
     patch.kind
   )
     item.route = undefined;
+  if (patch.archivedAt === null) patch.closedAs ??= null;
+  const isBrief = briefOf(item);
   Object.assign(item, patch, { updatedAt: at });
+  // What a worker starts from is what the task says when it starts.
+  if (isBrief) isBrief.text = item.description || item.title;
   item.statusId = storedTaskStatus(item, statuses, patch);
 }

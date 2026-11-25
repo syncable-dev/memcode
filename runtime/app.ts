@@ -20,9 +20,9 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { newRunbook } from "../src/runbook";
 import { repoRelativePath } from "./context/source";
-import type { AppState, DshSetupStatus, Project, WorkItem } from "../src/shared";
+import type { AppState, DshSetupStatus, Epic, Project, WorkItem } from "../src/shared";
 import { maxWorkerSlots } from "../src/worker-slots";
-import { isActive } from "../src/domain";
+import { isActive, pendingPrerequisites } from "../src/domain";
 import { LocalStore, exists, findCommand, git, now, within } from "./local";
 import { findDesktopApp, refreshWindowsUserPath } from "./commands";
 import { observePersistence } from "./persistence";
@@ -87,7 +87,7 @@ import {
   createPullRequestService,
   registerPullRequests,
 } from "./pull-request";
-import { GoalUpdates, registerGoalUpdates } from "./goal-updates";
+import { GoalUpdates, registerGoalUpdates, stillResolving } from "./goal-updates";
 import { GoalPlacement, registerGoalPlacement } from "./goal-placement";
 import { GoalPlanner, registerGoalPlanner } from "./goal-planner";
 import { readWorkerChanges as readGoalChanges } from "./changes";
@@ -98,6 +98,10 @@ import { registerLocalAnalysis } from "./local-analysis";
 import { AppUpdateGate, registerAppUpdates } from "./app-updates";
 import { createMemtraceIdentityProofProvider } from "./team-identity";
 import { discoverOfficialTeamService } from "./team/discovery";
+import { priorities } from "../src/planning/priority";
+import { LinearAuth, type LinearTokens, type TokenStore } from "./trackers/linear/auth";
+import { LinearService } from "./trackers/linear/service";
+import { registerTrackers } from "./trackers/routes";
 import { createBetaAuthorization } from "./beta-auth";
 import { MemCodeBeta, nativeBetaStorage } from "./beta";
 import { Sharing } from "./sharing/sharing";
@@ -137,10 +141,10 @@ const identifier = z.string().min(1).max(200),
   stage = z.enum(["planned", "working", "review", "done"]),
   harness = z.enum(["codex", "claude", "cursor", "copilot", "dsh"]),
   kind = z.enum(["feature", "fix", "refactor", "research", "test"]),
-  priority = z.enum(["high", "medium", "low"]);
+  priority = z.enum(priorities);
 const taskPatch = z
   .object({
-    title: nonempty.max(160).optional(),
+    title: nonempty.max(255).optional(),
     description: z.string().max(20000).optional(),
     stage: stage.optional(),
     priority: priority.optional(),
@@ -258,6 +262,7 @@ export async function createRuntime(
   let closed = false;
   let team: TeamSyncClient | undefined;
   let sharing: Sharing | undefined;
+  let linear: LinearService | undefined;
   let persistenceFailed = false;
   /** Tells the window once the workspace is written, and says so when it could not be. */
   const saved = (write: () => Promise<void>, then?: () => Promise<void>) => {
@@ -290,8 +295,12 @@ export async function createRuntime(
         await team?.capture();
         await store.save();
       },
-      // A board shared through the sharing service looks at what was just saved.
-      async () => sharing?.workspaceSaved(),
+      // A board shared through the sharing service looks at what was just saved, and so
+      // does a tracker the project is kept in step with.
+      async () => {
+        linear?.noticed();
+        await sharing?.workspaceSaved();
+      },
     );
   let reconcilingArtifacts: Promise<void> | undefined;
   let artifactsCheckedAt = 0;
@@ -882,6 +891,31 @@ export async function createRuntime(
     },
   });
   registerSharing(register, sharing);
+  const trackerTokens: TokenStore = {
+    read: async (id) =>
+      (await host.call<LinearTokens | null>("integration_store_read", { id })) ?? undefined,
+    write: async (id, tokens) => {
+      await host.call("integration_store_write", { id, tokens });
+    },
+    clear: async (id) => {
+      await host.call("integration_store_clear", { id });
+    },
+  };
+  const openLinear = (url: string) => host.call<void>("open_linear", { url });
+  linear = new LinearService({
+    state,
+    changed,
+    dataDir: store.dir,
+    tokens: trackerTokens,
+    auth: new LinearAuth({ store: trackerTokens, openExternal: openLinear }),
+    // A test profile may talk to a stand-in on this computer, and to nothing else.
+    ...(qaProfile && /^http:\/\/127\.0\.0\.1:\d+\//.test(process.env.MEMCODE_LINEAR_API ?? "")
+      ? { apiUrl: process.env.MEMCODE_LINEAR_API }
+      : {}),
+    timers: !process.env.NODE_TEST_CONTEXT,
+  });
+  registerTrackers(register, state, changed, linear, openLinear);
+  linear.start();
   register("beta:status", z.undefined(), () => beta!.status());
   register("beta:connect", z.undefined(), () => beta!.connect());
   register("beta:cancel", z.undefined(), () => beta!.cancel());
@@ -1390,6 +1424,11 @@ export async function createRuntime(
   register("task:qualify", identifier, (id) => assignStory(id));
   register("worker:start", identifier, async (id) => {
     const item = task(id);
+    const waitsIn = new Set(
+      pendingPrerequisites(item, state().tasks).map(({ story }) => story?.epicId),
+    );
+    // What it waits for may have merged on GitHub since the last look.
+    if (waitsIn.size) await noticeMerges((goal) => waitsIn.has(goal.id));
     await workers.start(item, project(item.projectId));
   });
   register("worker:stop", identifier, (id) => workers.stop(id));
@@ -1654,26 +1693,37 @@ export async function createRuntime(
   });
   registerSpeech(register, speech);
   registerHandoff(register, state, changed);
-  registerPullRequests(
-    register,
-    createPullRequestService({
-      state,
-      changed,
-      openUrl: (url) => host.call<void>("open_github_pull_request", { url }),
-      retireShippedGoal: (goal, mergedInto) =>
-        retireShippedGoal(state(), goal, mergedInto, {
-          dataDir: store.dir,
-          releaseGoalEngine: (_goal, task) =>
-            task.run.analysisProjectId
-              ? engine.releaseEpic(epicAnalysisProject(project(task.projectId), task))
-              : Promise.resolve(),
-          importHistory: async (request) => {
-            const result = await engine.call(project(goal.projectId), "import_goal_history", { ...request });
-            return result.imported;
-          },
-        }),
-    }),
-  );
+  const pullRequests = createPullRequestService({
+    state,
+    changed,
+    openUrl: (url) => host.call<void>("open_github_pull_request", { url }),
+    retireShippedGoal: (goal, mergedInto) =>
+      retireShippedGoal(state(), goal, mergedInto, {
+        dataDir: store.dir,
+        releaseGoalEngine: (_goal, task) =>
+          task.run.analysisProjectId
+            ? engine.releaseEpic(epicAnalysisProject(project(task.projectId), task))
+            : Promise.resolve(),
+        importHistory: async (request) => {
+          const result = await engine.call(project(goal.projectId), "import_goal_history", { ...request });
+          return result.imported;
+        },
+      }),
+  });
+  registerPullRequests(register, pullRequests);
+  /** Offline, a start does not wait for GitHub's answer. */
+  const noticeMerges = (isWanted: (goal: Epic) => boolean, starting?: string) =>
+    Promise.race([
+      pullRequests.noticeMerges(isWanted, starting).catch(() => {}),
+      new Promise<void>((resolve) => setTimeout(resolve, 8000).unref()),
+    ]);
+  // A pull request merged on GitHub ended its branch. A worker that started on it would
+  // work where nothing ships any more.
+  workers.beforeBranch = async (task) => {
+    await noticeMerges((goal) => goal.id === task.epicId, task.id);
+    const resolving = state().epics.find((goal) => goal.id === task.epicId)?.resolving;
+    if (resolving && resolving.taskId !== task.id) throw Error(stillResolving(resolving));
+  };
   /** Repo-relative files Memtrace associates with a request, for placement and planning. */
   const relatedFiles = async (projectId: string, request: string) => {
     const target = project(projectId);
@@ -1708,22 +1758,28 @@ export async function createRuntime(
       reviewOptions: { dshAdmission: () => dshGate.admit("plan") },
     }),
   );
-  registerGoalUpdates(
-    register,
-    new GoalUpdates({
-      state,
-      changed,
-      refreshGraph: async (epicId) => {
-        const task = state().tasks.find(
-          (item) => item.epicId === epicId && item.run.analysisProjectId,
-        );
-        if (!task) return;
-        const analysis = epicAnalysisProject(project(task.projectId), task);
-        await engine.activateEpic(analysis);
-        await engine.analyze(analysis, () => {});
-      },
-    }),
-  );
+  const goalUpdates = new GoalUpdates({
+    state,
+    changed,
+    readChanges: readGoalChanges,
+    askWorker: (item, text) => {
+      const id = randomUUID();
+      item.messages.push({ id, role: "user", text, at: now() });
+      workers.enqueue(item, id);
+      workers.dispatchQueued();
+    },
+    refreshGraph: async (epicId) => {
+      const task = state().tasks.find(
+        (item) => item.epicId === epicId && item.run.analysisProjectId,
+      );
+      if (!task) return;
+      const analysis = epicAnalysisProject(project(task.projectId), task);
+      await engine.activateEpic(analysis);
+      await engine.analyze(analysis, () => {});
+    },
+  });
+  registerGoalUpdates(register, goalUpdates);
+  workers.turnEnded = (task) => goalUpdates.workerEnded(task);
   register("retrieval:status", z.undefined(), () => retrieval.status());
   register("retrieval:setup", z.undefined(), () => retrieval.install());
   register(
@@ -1946,7 +2002,7 @@ export async function createRuntime(
     "task:create",
     z.object({
       projectId: identifier,
-      title: nonempty.max(160),
+      title: nonempty.max(255),
       description: z.string().max(20000),
       priority,
       harness,
@@ -1956,10 +2012,12 @@ export async function createRuntime(
       kind: kind.optional(),
       runbook: z.array(z.string().max(2000)).max(100).optional(),
       scope: z.array(z.string().max(1000)).max(20).optional(),
+      dependsOn: z.array(identifier).max(100).optional(),
       attachments: attachmentsSchema.optional(),
+      keepHere: z.boolean().optional(),
       ...taskPlanningShape,
     }),
-    async ({ attachments: files, ...input }) => {
+    async ({ attachments: files, keepHere, ...input }) => {
       const parent = project(input.projectId);
       await attachments.assertKept(files);
       if (
@@ -2007,6 +2065,7 @@ export async function createRuntime(
         createdAt: now(),
         updatedAt: now(),
         ...(parent.example ? { example: true } : {}),
+        ...(keepHere ? { keepHere: true } : {}),
       };
       const { projectId, runbook, ...fields } = input;
       applyTaskPatch(state(), item, taskPatch.parse(fields));
@@ -2284,6 +2343,7 @@ export async function createRuntime(
       await reconcilingArtifacts?.catch((error) =>
         console.error("Artifact catalog check failed:", error),
       );
+      await linear?.stop();
       await workers.close();
       await codeReviews.close();
       await telemetry.close();

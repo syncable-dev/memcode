@@ -24,6 +24,11 @@ import {
 } from "../branches";
 import { WORKED_OUT } from "./BaseBranchPicker";
 import { keptCheckoutNotes } from "../shipped-goals";
+import {
+  currentPullRequest,
+  isOnBranch,
+  mergedPullRequests,
+} from "../goal-work";
 import { Modal } from "./Dialogs";
 import { DeleteAction } from "./DeleteAction";
 
@@ -76,6 +81,7 @@ export function Roadmap({
   const [phase, setPhase] = useState("all");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [updating, setUpdating] = useState<string>();
+  const [conflicts, setConflicts] = useState<Record<string, string[]>>({});
   // A goal whose pull request merged has shipped; it leaves the active plan.
   const epics = allEpics.filter((epic) => !epic.closedAt);
   const shipped = allEpics.length - epics.length;
@@ -84,13 +90,25 @@ export function Roadmap({
     try {
       const result = await window.memcode.updateGoalFromBase(epic.id);
       const base = epic.baseBranch ?? "dev";
-      notify(
-        result.conflicts?.length
-          ? `Updating “${epic.title}” would conflict in ${result.conflicts.join(", ")}. Its work is safe. Resolve the conflict or ask an agent.`
-          : result.merged
+      setConflicts((known) => ({ ...known, [epic.id]: result.conflicts ?? [] }));
+      if (!result.conflicts?.length)
+        notify(
+          result.merged
             ? `Updated “${epic.title}” from ${base}. Its code context refreshes in about a minute.`
             : `“${epic.title}” already has the latest ${base}.`,
-      );
+        );
+    } catch (error) {
+      notify((error as Error).message);
+    } finally {
+      setUpdating(undefined);
+    }
+  };
+  const resolveConflicts = async (epic: Epic) => {
+    setUpdating(epic.id);
+    try {
+      const result = await window.memcode.resolveGoalUpdate(epic.id);
+      setConflicts((known) => ({ ...known, [epic.id]: [] }));
+      if (!result.asked) notify(`“${epic.title}” has the latest ${epic.baseBranch ?? "dev"}.`);
     } catch (error) {
       notify((error as Error).message);
     } finally {
@@ -236,10 +254,9 @@ export function Roadmap({
                     ).length;
                     const allDone =
                       stories.length > 0 && completed === stories.length;
-                    const readiness = epicReadiness(stories, epic.id);
-                    const pullRequest = pullRequests.find(
-                      (item) => item.epicId === epic.id,
-                    );
+                    const readiness = epicReadiness(stories, epic);
+                    const pullRequest = currentPullRequest(pullRequests, epic);
+                    const merged = mergedPullRequests(pullRequests, epic);
                     const unfolded = expanded.has(epic.id);
                     return (
                       <article
@@ -278,7 +295,7 @@ export function Roadmap({
                             updateNeeded={epic.updateNeeded?.reason}
                             pullRequest={!!pullRequest}
                             ready={readiness.isReady}
-                            working={working > 0}
+                            working={working > 0 || readiness.total > 0 || completed > 0}
                           />
                         </div>
                         <button
@@ -305,11 +322,41 @@ export function Roadmap({
                             <small>/ {stories.length} tasks</small>
                           </span>
                         </div>
+                        {merged.length > 0 && (
+                          <GoalProgress
+                            merged={merged}
+                            tasks={stories}
+                            onBranch={readiness.total}
+                            notStarted={readiness.waiting}
+                            unfolded={unfolded}
+                            open={(url) =>
+                              void window.memcode
+                                .openPullRequest(epic.id, url)
+                                .catch((error: Error) => notify(error.message))
+                            }
+                          />
+                        )}
+                        <GoalConflicts
+                          epic={epic}
+                          conflicts={conflicts[epic.id] ?? []}
+                          tasks={stories}
+                          busy={updating === epic.id}
+                          resolve={() => void resolveConflicts(epic)}
+                          undo={() =>
+                            void window.memcode
+                              .undoGoalUpdate(epic.id)
+                              .catch((error: Error) => notify(error.message))
+                          }
+                        />
                         {repository && (
                           <GoalBranchRow
                             standing={goalBranchStanding(
                               epic,
-                              stories.some((task) => !!task.run.startedAt),
+                              stories.some(
+                                (task) =>
+                                  isOnBranch(task, epic) ||
+                                  (!!task.run.startedAt && !task.run.branch),
+                              ),
                               base,
                             )}
                             base={base}
@@ -328,7 +375,7 @@ export function Roadmap({
                             <Plus size={12} />
                             Add task
                           </button>
-                          {epic.updateNeeded && (
+                          {epic.updateNeeded && !epic.resolving && (
                             <button
                               className="epic-update"
                               disabled={updating === epic.id || readiness.active > 0}
@@ -581,6 +628,124 @@ function EpicState({
   if (working) return <span className="epic-state working">In progress</span>;
   return <span className="epic-state">Planned</span>;
 }
+
+/** The base and the goal changed the same lines: a worker of the goal can resolve it. */
+function GoalConflicts({
+  epic,
+  conflicts,
+  tasks,
+  busy,
+  resolve,
+  undo,
+}: {
+  epic: Epic;
+  conflicts: string[];
+  tasks: WorkItem[];
+  busy: boolean;
+  resolve: () => void;
+  undo: () => void;
+}) {
+  const { resolving } = epic;
+  const base = resolving?.base ?? epic.baseBranch ?? "dev";
+  const files = resolving?.files ?? conflicts;
+  if (!files.length) return null;
+  const worker = tasks.find((task) => task.id === resolving?.taskId);
+  const working = !!worker && isActive(worker);
+  const named = files.length > 3 ? `${files.length} files` : files.join(", ");
+  return (
+    <div className="epic-conflicts">
+      <p>
+        {working
+          ? `${worker.identifier} is resolving ${named} with ${base}.`
+          : resolving
+            ? `${base} still conflicts in ${named}.`
+            : `${base} conflicts in ${named}. The goal’s work is safe.`}
+      </p>
+      {!working && (
+        <div>
+          <button
+            disabled={busy || tasks.some(isActive)}
+            title="Merges the base here, has a worker resolve the files, and commits the merge when no conflict is left."
+            onClick={resolve}
+          >
+            {busy && <Spinner size={11} />}
+            {resolving ? "Ask again" : "Have a worker resolve it"}
+          </button>
+          {resolving && (
+            <button disabled={busy || tasks.some(isActive)} onClick={undo}>
+              Undo
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** A goal that has shipped before: its merged pull requests, and what is left. */
+function GoalProgress({
+  merged,
+  tasks,
+  onBranch,
+  notStarted,
+  unfolded,
+  open,
+}: {
+  merged: EpicPullRequest[];
+  tasks: WorkItem[];
+  onBranch: number;
+  notStarted: number;
+  unfolded: boolean;
+  open: (url: string) => void;
+}) {
+  const shown = unfolded ? merged : merged.slice(-2);
+  const earlier = merged.length - shown.length;
+  return (
+    <ul className="epic-shipped">
+      {earlier > 0 && (
+        <li>
+          <Check size={11} aria-hidden="true" />
+          <span>{counted(earlier, "earlier pull request")} merged</span>
+        </li>
+      )}
+      {shown.map((item) => (
+        <li key={item.url ?? item.branch}>
+          <Check size={11} aria-hidden="true" />
+          <button
+            disabled={!item.url}
+            title={item.branch}
+            onClick={() => item.url && open(item.url)}
+          >
+            {item.number ? `Pull request #${item.number}` : item.branch}
+          </button>
+          <span>
+            merged,{" "}
+            {counted(
+              item.tasks ??
+                tasks.filter((task) => task.run.branch === item.branch).length,
+              "task",
+            )}
+          </span>
+        </li>
+      ))}
+      {onBranch > 0 && (
+        <li>
+          <i className="now" aria-hidden="true" />
+          <span>{counted(onBranch, "task")} in progress</span>
+        </li>
+      )}
+      {notStarted > 0 && (
+        <li>
+          <i aria-hidden="true" />
+          <span>{counted(notStarted, "task")} left</span>
+        </li>
+      )}
+    </ul>
+  );
+}
+
+const counted = (count: number, what: string) =>
+  `${count} ${what}${count === 1 ? "" : "s"}`;
 
 /**
  * Where a goal's work goes, on its card: the branch its workers use; or, before its

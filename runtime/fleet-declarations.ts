@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { AppState, WorkItem } from "../src/shared";
 import {
-  breaksCallers,
+  breaksAt,
   type ChangeKind,
   type ConflictClass,
   type FleetDeclaration,
@@ -18,6 +18,14 @@ const recentMs = 600_000;
 
 export const sharedSymbols = (left: string[], right: string[]) =>
   left.filter((symbol) => right.includes(symbol));
+/** The symbols two edits share that at least one of them reshapes or removes. */
+export const brokenBetween = (
+  left: Pick<FleetDeclaration, "symbols" | "kind">,
+  right: Pick<FleetDeclaration, "symbols" | "kind">,
+) =>
+  sharedSymbols(left.symbols, right.symbols).filter(
+    (symbol) => breaksAt(left.kind, symbol) || breaksAt(right.kind, symbol),
+  );
 const sharedFiles = (left: string[], right: string[]) =>
   sharedSymbols([...new Set(left.map(fileOf))], right.map(fileOf));
 
@@ -130,7 +138,9 @@ export class FleetDeclarations {
   breakingInFlight(task: WorkItem, symbols: string[]) {
     return this.editingNow(task, symbols).find(
       (declaration) =>
-        breaksCallers(declaration.kind) &&
+        sharedSymbols(declaration.symbols, symbols).some((symbol) =>
+          breaksAt(declaration.kind, symbol),
+        ) &&
         Date.now() - Date.parse(declaration.declaredAt) < breakingHoldMs,
     );
   }
@@ -143,9 +153,10 @@ export class FleetDeclarations {
     for (const declaration of this.beside(task))
       if (
         !!declaration.recordedAt &&
-        breaksCallers(declaration.kind) &&
         this.unaccepted(declaration.taskId) &&
-        sharedSymbols(declaration.symbols, symbols).length > 0
+        sharedSymbols(declaration.symbols, symbols).some((symbol) =>
+          breaksAt(declaration.kind, symbol),
+        )
       )
         latest.set(declaration.taskId, declaration);
     return [...latest.values()];

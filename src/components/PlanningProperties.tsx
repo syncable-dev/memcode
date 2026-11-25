@@ -1,3 +1,4 @@
+import { keptElsewhere } from "../tracker";
 import { useEffect, useState } from "react";
 import {
   Archive,
@@ -33,6 +34,10 @@ export function PlanningProperties({
     () => setLabels((task.labels ?? []).join(", ")),
     [task.id, task.labels?.join(",")],
   );
+  const connection = state.trackers?.find((item) => item.projectId === task.projectId),
+    people = connection?.people ?? [],
+    viewer = connection?.viewer.id,
+    inStep = !!task.tracker && (!!connection || !!keptElsewhere(state, task.projectId));
   const disabled = isActive(task),
     cycles = state.cycles.filter(
       (cycle) =>
@@ -55,6 +60,30 @@ export function PlanningProperties({
         PLANNING
         <CalendarDays size={12} />
       </div>
+      {(people.length > 0 || task.assignee) && (
+        <label className="metadata-field">
+          <span>Assignee</span>
+          <Select
+            aria-label="Task assignee"
+            value={task.assignee?.id ?? "none"}
+            onValueChange={(value) => {
+              const person = people.find((item) => item.id === value);
+              update({ assignee: person ? { id: person.id, name: person.name } : null });
+            }}
+          >
+            <option value="none">Nobody</option>
+            {people.map((person) => (
+              <option key={person.id} value={person.id}>
+                {person.name}
+                {person.id === viewer ? " (you)" : ""}
+              </option>
+            ))}
+            {task.assignee && !people.some((person) => person.id === task.assignee!.id) && (
+              <option value={task.assignee.id}>{task.assignee.name}</option>
+            )}
+          </Select>
+        </label>
+      )}
       <label className="metadata-field">
         <span>Cycle</span>
         <Select
@@ -327,8 +356,27 @@ export function PlanningProperties({
         }
       >
         <Archive size={12} />
-        {task.archivedAt ? "Restore task" : "Archive task"}
+        {task.archivedAt
+          ? `Restore task${task.closedAs ? ` (${task.closedAs})` : ""}`
+          : "Archive task"}
       </button>
+      {!task.archivedAt && task.stage !== "done" && (
+        <button
+          className="archive-story"
+          disabled={disabled}
+          title={
+            inStep
+              ? "Archives it here and cancels its issue in Linear."
+              : "Archives it as work that will not be done."
+          }
+          onClick={() =>
+            update({ archivedAt: new Date().toISOString(), closedAs: "canceled" })
+          }
+        >
+          <X size={12} />
+          Cancel task{inStep ? " and its issue" : ""}
+        </button>
+      )}
     </section>
   );
 }

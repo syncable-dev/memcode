@@ -189,7 +189,8 @@ export interface RouteDecision {
     impact?: RoutingImpactEvidence;
   };
 }
-export type Priority = "high" | "medium" | "low";
+export type { Priority } from "./planning/priority";
+import type { Priority } from "./planning/priority";
 export type RunState =
   | "idle"
   | "preparing"
@@ -288,6 +289,14 @@ export interface WorkItem extends TaskPlanningFields {
   description: string;
   stage: Stage;
   priority: Priority;
+  /** Whose task it is, where the project is connected to a tracker with people in it. */
+  assignee?: import("./people").Person | null;
+  /** Why it left the board without being delivered. */
+  closedAs?: "canceled" | "duplicate" | null;
+  /** The issue this task is, in the tracker the project is connected to. */
+  tracker?: import("./tracker").TrackedItem;
+  /** It stays in MemCode: no issue is made of it. */
+  keepHere?: boolean;
   category: string;
   harness: Harness;
   assignment?: "auto" | "manual";
@@ -313,6 +322,8 @@ export interface WorkItem extends TaskPlanningFields {
     workspace?: string;
     baseline?: string;
     branch?: string;
+    /** Its work went out with a pull request that merged, and nothing was done since. */
+    shipped?: true;
     /** Local graph binding for this epic checkout; never shared as planning. */
     analysisProjectId?: string;
     analysisRepoId?: string;
@@ -328,6 +339,10 @@ export interface WorkItem extends TaskPlanningFields {
     finishedSourceBinding?: string | null;
     /** The disagreement this worker stopped to wait on. It carries on when the person decides. */
     waitingOnDecision?: string;
+    /** Code another worker is reshaping, which this one stopped to wait for. */
+    waitingOnCode?: string[];
+    /** Decisions made while another one still holds this worker: it hears them together. */
+    decidedMeanwhile?: string;
     /** Where this task's worker records went when its goal shipped and its checkout was removed. */
     records?: string;
   };
@@ -376,12 +391,25 @@ export interface Epic {
   baseRevision?: string;
   /** The integration branch this work started from and will open its PR into. */
   baseBranch?: string;
-  /** Set when the goal's pull request merged; a closed goal takes no new tasks. */
+  /** Set when nothing of the goal is left to ship; a closed goal takes no new tasks. */
   closedAt?: string;
+  /** The milestone, project or parent issue this goal is, in the connected tracker. */
+  tracker?: import("./tracker").TrackedItem;
   /** Why this shipped goal's checkout is still on disk, when MemCode had to keep it. */
   checkoutKept?: string;
   /** Another goal merged code this goal uses, or dev moved under a Quick changes batch. */
   updateNeeded?: { reason: string; files: string[]; since: string };
+  /** The base is merged into the branch here, and these files still conflict with it. */
+  resolving?: {
+    base: string;
+    target: string;
+    files: string[];
+    since: string;
+    /** The task whose worker was asked to resolve them. */
+    taskId: string;
+  };
+  /** The commit of this goal's branch that merged, when newer work goes on from it. */
+  mergedRevision?: string;
   id: string;
   projectId: string;
   identifier: string;
@@ -433,6 +461,10 @@ export interface TeamInvite {
   expiresAt: string;
 }
 export interface AppState {
+  /** The trackers this computer keeps projects in step with. */
+  trackers?: import("./tracker").TrackerConnection[];
+  /** Which MemCode keeps each project in step, as its shared board says. */
+  trackerKeepers?: import("./tracker").TrackerKeeper[];
   /** Which shared project each local project's board belongs to, on this computer. */
   sharedProjectLinks?: import("./sharing").SharedProjectLink[];
   /** The Inboxes of projects that are not shared. */
@@ -521,8 +553,12 @@ export interface CreateTask extends TaskPlanningFields {
   runbook?: string[];
   /** Files the task plans to change. Its edits to them are recorded as its own. */
   scope?: string[];
+  /** Tasks that must be done before it can start. */
+  dependsOn?: string[];
   /** Files the request came with. */
   attachments?: import("./attachments").Attachment[];
+  /** It does not become an issue in the project's tracker. */
+  keepHere?: boolean;
 }
 export interface ProjectInput {
   mode: "existing" | "new";
@@ -563,6 +599,36 @@ export interface MemCodeAPI extends CodeReviewAPI {
   ): Promise<import("./local-analysis").LocalAnalysisDiagnostics>;
   /** The signed-in person's shared projects and invitations, or why they cannot be shown. */
   sharingOverview(): Promise<import("./sharing").SharingOverview>;
+  /** Connects a project to Linear: in the browser, or with a personal API key. */
+  connectTracker(
+    projectId: string,
+    key?: string,
+  ): Promise<import("./tracker").TrackerConnection>;
+  cancelTrackerConnecting(): Promise<void>;
+  disconnectTracker(id: string): Promise<{ told: boolean }>;
+  pauseTracker(id: string, paused: boolean): Promise<void>;
+  /** From now on this computer keeps the project in step, instead of another one. */
+  takeOverTracker(id: string): Promise<void>;
+  trackerTeams(id: string): Promise<import("./tracker").TrackerTeam[]>;
+  trackerPreview(
+    id: string,
+    teamId: string,
+  ): Promise<import("./tracker").TrackerPreview>;
+  importFromTracker(
+    id: string,
+    choices: import("./tracker").TrackerChoices,
+  ): Promise<{ tasks: number; goals: number; comments: number }>;
+  /** Takes back what the import brought and nobody has touched. Linear is not told. */
+  undoTrackerImport(id: string): Promise<{ removed: number; kept: number }>;
+  syncTracker(id: string): Promise<void>;
+  /** Puts back a value that gave way to a newer one. */
+  restoreTracked(taskId: string, field: import("./tracker").TrackedField): Promise<void>;
+  retryTracked(taskId: string): Promise<void>;
+  unlinkTracked(taskId: string): Promise<void>;
+  /** The task stays in MemCode: no issue is made of it. */
+  keepTaskHere(taskId: string, keep: boolean): Promise<void>;
+  /** Opens a task's issue, or a goal's project, in Linear. */
+  openTracked(id: string): Promise<void>;
   /** A shared project's Inbox of reports from Slack, and its linked channels. */
   projectInbox(projectId: string): Promise<import("./inbox").ProjectInbox>;
   /** Opens Slack's install page; approving it connects the workspace to the project. */
@@ -968,7 +1034,10 @@ export interface MemCodeAPI extends CodeReviewAPI {
   createPullRequest(
     input: import("./pull-request").CreatePullRequest,
   ): Promise<import("./pull-request").PullRequestResult>;
-  openPullRequest(epicId: string): Promise<void>;
+  /** Opens the goal's pull request, or the earlier one at this address. */
+  openPullRequest(epicId: string, url?: string): Promise<void>;
+  /** Asks GitHub about the project's open pull requests, and records those that merged. */
+  noticeMerges(projectId: string): Promise<void>;
   mergePullRequest(
     epicId: string,
   ): Promise<import("./pull-request").MergeResult>;
@@ -987,6 +1056,14 @@ export interface MemCodeAPI extends CodeReviewAPI {
     savedWork: boolean;
     conflicts?: string[];
   }>;
+  /** Brings the base in and has one of the goal's workers resolve what conflicts. */
+  resolveGoalUpdate(epicId: string): Promise<{
+    merged: boolean;
+    savedWork: boolean;
+    asked?: string;
+  }>;
+  /** Takes an update that still conflicts out again. */
+  undoGoalUpdate(epicId: string): Promise<void>;
   setHandoffAttribution(
     attribution: import("./handoff").HandoffAttribution,
   ): Promise<void>;
@@ -1027,6 +1104,8 @@ export type TaskPatch = Partial<
     | "dependsOn"
     | "scope"
     | "kind"
+    | "assignee"
+    | "closedAs"
   > &
     TaskPlanningFields
 >;

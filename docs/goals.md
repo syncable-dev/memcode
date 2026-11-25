@@ -11,8 +11,9 @@ Choose **New work** (or press **C**) and say what you want. Your connected worke
 reads the code and plans it. Nothing changes yet.
 
 - One small task becomes a quick change.
-- Bigger work becomes a goal with a few tasks.
-- Separate outcomes become separate goals.
+- Bigger work becomes a goal with as many tasks as it has parts, up to 20. A task can
+  wait for earlier ones; the rest start at once.
+- Separate outcomes become separate goals. One outcome is one goal, however large.
 - If an open goal is already changing the same code, the new work joins it.
   MemCode compares the files the plan touches with each open goal's files and
   names the shared file when it suggests joining.
@@ -20,6 +21,35 @@ reads the code and plans it. Nothing changes yet.
 Without a connected worker, the request becomes one task you can edit. The review
 screen shows the plan and where each part goes. Change either, then add it, or add
 it and start.
+
+## A goal ships as many pull requests as it needs
+
+The tasks started together on a computer share a branch and ship in one pull request
+(`src/goal-work.ts`, `runtime/goal-branch.ts`).
+
+- A task nobody has started holds nothing up. When every task on the branch is
+  finished, **Create pull request** appears.
+- A merge finishes the tasks that were in the pull request. MemCode notices one made on
+  GitHub when you come back to its window and before a worker starts in the goal.
+- Work that is newer than the pull request, such as a task started while it waited for
+  review, stays on the branch and ships in the next one.
+- The goal stays open while tasks are left, and the next task that starts gets a new
+  branch from the newest integration branch, named after that task. The goal closes when
+  nothing is left.
+- Someone else's branch of the goal is on their computer. A task started here gets a
+  branch of its own, so both can be pushed. Bring their branch here with Git and your
+  tasks join it instead.
+- Work on a task that already shipped opens its goal again, on a new branch.
+- A worker that failed, was stopped or waits for a decision holds its branch. Finish
+  the task, or tick the box on the pull request sheet that ships what it left.
+
+The goal's card lists its merged pull requests once there is one, what is in progress
+and how many tasks are left. Two open branches that change the same file meet when one
+merges: the other is marked **Needs update**. Fleet coordinates workers on one branch.
+
+On a shared project every branch is named after the task that begins it, so two computers
+that start the same goal before their boards have met can both push. Starting the same
+*task* on both is the case that is refused: the second push fails.
 
 ## Each goal works in its own space
 
@@ -58,9 +88,9 @@ The project switcher shows the GitHub repository (owner/name) under the project'
 name, or the folder's name when it has no GitHub remote. Nothing here deletes or
 switches a branch.
 
-### When a goal ships
+### When a branch ships
 
-After a goal's pull request merges, MemCode tidies up its checkout
+After a goal's pull request merges, MemCode tidies up that branch's checkout
 (`runtime/shipped-goal.ts`, ADR-0001):
 
 1. It keeps the checkout as it is if a worker is still running there or the checkout
@@ -113,7 +143,9 @@ decision at once.
 open. When it has nothing else left to do, it stops and its task shows **Paused
 until you decide**; it is not handed to review half done. When you decide, MemCode
 brings that worker back with your decision as its next instruction: go ahead, or
-rebuild on the change that stands. Take as long as you need.
+rebuild on the change that stands. Take as long as you need. A worker that was
+already writing its last message when you decided is brought back too, and so is one
+that only had to hold off until somebody else's change was recorded.
 
 **Two tasks, two shapes.** When one task has changed a symbol's signature, moved
 it or removed it, and a second task in the goal wants to reshape the same symbol
@@ -164,8 +196,8 @@ starts a fresh one.
 
 ## Shipping a goal
 
-A goal is one branch, so its tasks ship together in one pull request. When every
-task is in review, the goal's card shows **Create pull request** (or **Ship quick
+A goal's branch is one pull request, so the tasks worked on there ship together. When
+all of them are in review, the goal's card shows **Create pull request** (or **Ship quick
 changes** for the Quick changes batch). The sheet lists each step before it runs:
 commit the goal's files, push its branch, open the pull request. The GitHub CLI
 creates it when installed; otherwise GitHub opens in the browser with the title and
@@ -178,8 +210,8 @@ and a test plan. **Add a MemCode line** adds one line to it and an
 
 With the GitHub CLI, the sheet also shows the pull request's reviews and checks.
 **Merge pull request** is available when GitHub would merge it, using the
-repository's merge method; otherwise the sheet says why. Merging closes the goal and
-moves its reviewed tasks to Done.
+repository's merge method; otherwise the sheet says why. Merging moves the branch's
+reviewed tasks to Done, and closes the goal when nothing of it is left.
 
 ## Keeping goals current
 
@@ -188,8 +220,14 @@ files. Only goals that share files are marked **Needs update**; the open Quick
 changes batch always is, because its base moved. **Update from dev** (named after
 the goal's integration branch) saves the goal's work as a commit, merges the newer
 integration branch and refreshes that goal's code graph, which takes about a minute
-on a mid-size repository. A conflicting update is aborted in full and names the
-files. Stop affected workers before updating, then run the relevant checks.
+on a mid-size repository. Goals nobody has started are never marked: their branch
+starts from what was merged. Stop affected workers before updating, then run the
+relevant checks.
+
+A conflicting update is aborted in full and names the files. **Have a worker resolve
+it** starts the update again, keeps the conflict and gives it to the worker of a task
+in the goal. The pull request waits until no conflict is left. **Undo** puts the branch
+back to what it was before.
 
 ## Nothing happens without a click
 

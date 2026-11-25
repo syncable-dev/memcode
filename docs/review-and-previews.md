@@ -44,8 +44,9 @@ checks as passed. Findings and stale or failed reviews still require attention.
 
 ## Ship a goal
 
-A goal is one branch, so its tasks ship together in one pull request (see
-[How goals work](goals.md) for the full picture). When every task is in review, the goal card shows **Create pull request** (or **Ship quick
+The tasks worked on together in a goal share a branch and ship in one pull request, and
+the goal stays open for the rest (see [How goals work](goals.md) for the full picture).
+When every task on the branch is in review, the goal card shows **Create pull request** (or **Ship quick
 changes** for the Quick changes batch). The sheet lists each step before it runs:
 commit the goal's files, push its branch, open the PR. The GitHub CLI creates it
 when installed; otherwise GitHub opens with the title and description filled in.

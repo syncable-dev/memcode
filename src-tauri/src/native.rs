@@ -66,6 +66,9 @@ pub async fn host_call(app: AppHandle, method: &str, input: Value) -> Result<Val
     if method.starts_with("beta_store_") || method.starts_with("beta_access_") {
         return crate::beta_store::call(app, method, input).await;
     }
+    if method.starts_with("integration_store_") {
+        return crate::integration_store::call(app, method, input).await;
+    }
     if method.starts_with("terminal_") {
         return crate::terminal::call(app, method, input).await;
     }
@@ -128,6 +131,13 @@ pub async fn host_call(app: AppHandle, method: &str, input: Value) -> Result<Val
         }
         "open_slack_install" => {
             let url = slack_install_url(input["url"].as_str().ok_or("Missing Slack install URL")?)?;
+            tauri::async_runtime::spawn_blocking(move || open_claim(&url))
+                .await
+                .map_err(|e| e.to_string())??;
+            Ok(Value::Null)
+        }
+        "open_linear" => {
+            let url = linear_url(input["url"].as_str().ok_or("Missing Linear address")?)?;
             tauri::async_runtime::spawn_blocking(move || open_claim(&url))
                 .await
                 .map_err(|e| e.to_string())??;
@@ -457,6 +467,23 @@ fn slack_install_url(value: &str) -> Result<String, String> {
     Ok(url.to_string())
 }
 
+/// Linear itself: an issue, or the page where a person allows MemCode.
+fn linear_url(value: &str) -> Result<String, String> {
+    let invalid = || "Only Linear can open here".to_string();
+    let url = Url::parse(value).map_err(|_| invalid())?;
+    if value.len() > 4096 || url.scheme() != "https" || url.host_str() != Some("linear.app")
+        || !url.username().is_empty() || url.password().is_some()
+        || url.port_or_known_default() != Some(443) { return Err(invalid()); }
+    if url.path() == "/oauth/authorize" {
+        let redirect = url.query_pairs().filter(|(key, _)| key == "redirect_uri").map(|(_, value)| value.to_string()).collect::<Vec<_>>();
+        let [redirect] = redirect.as_slice() else { return Err(invalid()); };
+        let callback = Url::parse(redirect).map_err(|_| invalid())?;
+        if callback.scheme() != "http" || callback.host_str() != Some("localhost")
+            || callback.path() != "/linear/callback" || callback.query().is_some() { return Err(invalid()); }
+    }
+    Ok(url.to_string())
+}
+
 /// A web address someone put in a report. The runtime opens only those a report holds.
 fn inbox_link_url(value: &str) -> Result<String, String> {
     let invalid = || "Only a web link from a report can open here".to_string();
@@ -557,7 +584,28 @@ mod beta_url_tests {
 
 #[cfg(test)]
 mod claim_url_tests {
-    use super::{github_pull_request_url, memcode_identity_url, memtrace_claim_url, slack_install_url};
+    use super::{github_pull_request_url, linear_url, memcode_identity_url, memtrace_claim_url, slack_install_url};
+    #[test]
+    fn linear_opener_accepts_only_linear_and_a_sign_in_that_returns_here() {
+        for value in [
+            "https://linear.app/acme/issue/WEB-12/export",
+            "https://linear.app/oauth/authorize?client_id=x&redirect_uri=http%3A%2F%2Flocalhost%3A47215%2Flinear%2Fcallback&state=s",
+        ] {
+            assert!(linear_url(value).is_ok(), "{value}");
+        }
+        for value in [
+            "http://linear.app/acme/issue/WEB-12",
+            "https://linear.app.evil.example/acme",
+            "https://user@linear.app/acme",
+            "https://linear.app:8443/acme",
+            "javascript:alert(1)",
+            "https://linear.app/oauth/authorize?client_id=x&redirect_uri=https%3A%2F%2Fevil.example%2Flinear%2Fcallback",
+            "https://linear.app/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A1%2Flinear%2Fcallback&redirect_uri=https%3A%2F%2Fevil.example",
+            "https://linear.app/oauth/authorize?client_id=x",
+        ] {
+            assert!(linear_url(value).is_err(), "{value}");
+        }
+    }
     #[test]
     fn pull_request_opener_accepts_only_github_pull_and_compare_pages() {
         for value in [

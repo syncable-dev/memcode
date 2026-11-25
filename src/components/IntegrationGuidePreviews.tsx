@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import {
+  ArrowLeftRight,
   ArrowRight,
   Check,
   FileSpreadsheet,
@@ -362,7 +363,166 @@ function ProjectsPreview() {
   );
 }
 
+const Key = ({ children }: { children: ReactNode }) => (
+  <span className="tracked-key">
+    <IntegrationMark id="linear" size={10} />
+    {children}
+  </span>
+);
+
+function LinearConnectPreview() {
+  return (
+    <>
+      <Row className="guide-preview-section-heading">
+        <div>
+          <Label>Settings · Integrations</Label>
+          <h4>Bring in the tools your team works in.</h4>
+        </div>
+      </Row>
+      <div className="guide-integration-row">
+        <span className="guide-integration-mark">
+          <IntegrationMark id="linear" size={18} />
+        </span>
+        <div>
+          <strong>Linear</strong>
+          <p>Keep a team’s issues, goals and cycles in step with the board, both ways.</p>
+        </div>
+        <Action>Connect Linear</Action>
+      </div>
+      <Row className="guide-preview-cycle-flow">
+        <span>Connect Linear</span>
+        <ArrowRight size={13} />
+        <span>Choose Authorize in your browser</span>
+        <ArrowRight size={13} />
+        <span>Choose a team</span>
+      </Row>
+      <div className="guide-preview-callout">
+        <ShieldCheck size={18} />
+        <div>
+          <strong>From this computer, straight to Linear</strong>
+          <p>
+            Your sign-in stays in this computer’s credential store. Your code and your
+            conversations are never sent.
+          </p>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function LinearImportPreview() {
+  return (
+    <div className="guide-preview-project guide-linear-import">
+      <div className="guide-preview-panel">
+        <Label>Bring work in</Label>
+        {[
+          ["From", "Web (WEB)"],
+          ["Bring", "Open work, 24 issues"],
+          ["Goals are", "Milestones, and projects without any"],
+        ].map(([question, answer]) => (
+          <div key={question} className="guide-slack-field">
+            <Label>{question}</Label>
+            <span>{answer}</span>
+          </div>
+        ))}
+        <Row className="guide-slack-send">
+          <span className="guide-preview-spacer" />
+          <Action>Import 24 issues</Action>
+        </Row>
+      </div>
+      <ArrowRight className="guide-preview-connector" size={22} />
+      <div className="guide-linear-cards">
+        {[
+          ["WEB-41", "Keep an order’s status history", "Coupons · Checkout", "Planned"],
+          ["WEB-42", "Cancel an order", "Coupons · Checkout", "In progress"],
+          ["WEB-47", "Prices round wrong", "Checkout", "Planned"],
+        ].map(([key, name, goal, lane]) => (
+          <div key={key}>
+            <Row>
+              <Key>{key}</Key>
+              <span className="guide-preview-spacer" />
+              <Label>{lane}</Label>
+            </Row>
+            <strong>{name}</strong>
+            <Label>{goal}</Label>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function LinearStepsPreview() {
+  return (
+    <div className="guide-linear-steps">
+      <Row>
+        <strong>In MemCode</strong>
+        <span className="guide-preview-spacer" />
+        <Key>WEB-41</Key>
+        <span className="guide-preview-spacer" />
+        <strong>In Linear</strong>
+      </Row>
+      {[
+        ["A worker starts", "In Progress", false],
+        ["The worker finishes", "In Review", false],
+        ["The pull request opens", "Linked on the issue", false],
+        ["The pull request merges", "Done", false],
+        ["You raise the priority", "Urgent", false],
+        ["“Keep the dates in UTC.”", "Dana comments", true],
+      ].map(([here, there, back]) => (
+        <div key={String(here)} className={back ? "back" : ""}>
+          <span>{here}</span>
+          <ArrowRight size={13} />
+          <span>{there}</span>
+        </div>
+      ))}
+      <Row className="guide-preview-footnote">
+        <ArrowLeftRight size={12} />
+        <span>Title, text, priority, people, labels, dates, cycle and goal go both ways</span>
+      </Row>
+    </div>
+  );
+}
+
+function LinearApartPreview() {
+  return (
+    <>
+      <div className="guide-preview-message guide-linear-apart">
+        <Row>
+          <Label>LINEAR</Label>
+          <span className="guide-preview-spacer" />
+          <span className="tracked-standing synced">In step</span>
+        </Row>
+        <Row>
+          <Key>WEB-48</Key>
+          <span>In Progress</span>
+        </Row>
+        <p>
+          Title here was <q>Check addresses</q>
+        </p>
+        <Row>
+          <Action quiet>Put it back</Action>
+        </Row>
+      </div>
+      <div className="guide-preview-callout">
+        <Check size={18} />
+        <div>
+          <strong>You wrote one title, Dana wrote another a minute later</strong>
+          <p>
+            Dana’s is newer, so both sides show “Check email addresses”. Yours is kept on the
+            card.
+          </p>
+        </div>
+      </div>
+    </>
+  );
+}
+
 export const integrationScenes: Record<string, () => ReactNode> = {
+  linear: LinearConnectPreview,
+  "linear-import": LinearImportPreview,
+  "linear-steps": LinearStepsPreview,
+  "linear-apart": LinearApartPreview,
   slack: ConnectPreview,
   "slack-report": ReportPreview,
   "slack-form": FormPreview,

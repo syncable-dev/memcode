@@ -1,3 +1,4 @@
+import { plainPriority } from "../../src/planning/priority";
 import type { AppState, WorkItem } from "../../src/shared";
 import type { TeamCommand, TeamComment, TeamCycle, TeamEpic, TeamSnapshot, TeamStory } from "../../src/team";
 import { relative, isAbsolute } from "node:path";
@@ -38,7 +39,7 @@ export function projectSharedState(state: AppState, projectId: string): SharedPr
   return {
     stories: sorted(tasks.map((task): TeamStory => ({
       id: task.id, identifier: task.identifier, title: task.title,
-      description: task.description, stage: task.stage, priority: task.priority,
+      description: task.description, stage: task.stage, priority: plainPriority(task.priority),
       kind: task.kind ?? "feature", epicId: task.epicId ?? null,
       cycleId: task.cycleId ?? null, parentId: task.parentId ?? null,
       estimate: task.estimate ?? null, startDate: task.startDate ?? null,

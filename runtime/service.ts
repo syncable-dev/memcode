@@ -1,8 +1,8 @@
 import { createInterface } from "node:readline";
-import { open, readFile, unlink, mkdir } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { createRuntime } from "./app";
 import type { AppState } from "../src/shared";
+import { holdProfile } from "./profile-lock";
 import { LatestWorkspacePublisher } from "./workspace-publisher";
 
 const args = process.argv.slice(2),
@@ -84,49 +84,9 @@ const host = {
     });
   },
 };
-const lockPath = join(dataDir, "runtime.lock");
-let ownsLock = false;
-async function acquireLock() {
-  await mkdir(dataDir, { recursive: true });
-  for (let attempt = 0; attempt < 2; attempt++)
-    try {
-      const lock = await open(lockPath, "wx");
-      await lock.writeFile(
-        JSON.stringify({
-          owner: "memcode-runtime",
-          pid: process.pid,
-          createdAt: new Date().toISOString(),
-        }),
-      );
-      await lock.close();
-      ownsLock = true;
-      return;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      let prior: { pid: number };
-      try {
-        prior = JSON.parse(await readFile(lockPath, "utf8"));
-      } catch {
-        throw new Error(
-          "MemCode has an unreadable runtime lock. The workspace was preserved.",
-        );
-      }
-      try {
-        process.kill(prior.pid, 0);
-      } catch (probe) {
-        if ((probe as NodeJS.ErrnoException).code === "ESRCH") {
-          await unlink(lockPath);
-          continue;
-        }
-      }
-      throw new Error(
-        "This MemCode workspace is already open. Close its other window before starting another writer.",
-      );
-    }
-  throw new Error("Could not acquire the MemCode workspace lock.");
-}
+let letGo: (() => Promise<void>) | undefined;
 const ready = (async () => {
-  await acquireLock();
+  letGo = await holdProfile(dataDir);
   const runtime = await createRuntime(
     dataDir,
     appPath,
@@ -176,10 +136,8 @@ async function shutdown() {
     process.stderr.write(`Runtime shutdown: ${(error as Error).message}\n`);
   } finally {
     workspacePublisher.dispose();
-    if (ownsLock) {
-      await unlink(lockPath).catch(() => {});
-      ownsLock = false;
-    }
+    await letGo?.();
+    letGo = undefined;
   }
 }
 const input = createInterface({ input: process.stdin, crlfDelay: Infinity });
