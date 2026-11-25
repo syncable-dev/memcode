@@ -428,3 +428,119 @@ test("a team that knows three priorities does not change what they are here or i
     applySharedSnapshot(w.state, w.projectId, echoed("low"), mine);
     assert.deepEqual([w.task(none).priority, w.task(urgent).priority], ["none", "low"]);
   }));
+
+test("what is remembered is never saved ahead of the workspace", () =>
+  using(async (w) => {
+    const issue = w.linear.issue({ title: "Old title" });
+    await w.imported();
+    const service = w.service as unknown as { deps: { changed: () => Promise<void> } };
+    const changed = service.deps.changed;
+    w.linear.edit(issue, { title: "New title from Linear" });
+    service.deps.changed = async () => {
+      throw Object.assign(new Error("EBUSY"), { code: "EBUSY" });
+    };
+    await assert.rejects(w.sync());
+    // The card was changed elsewhere meanwhile, which notes when.
+    w.service.noticed();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    service.deps.changed = changed;
+    await w.sync();
+    await w.restart();
+    await w.sync();
+    assert.equal(linear(w, issue.id).title, "New title from Linear");
+    assert.equal(w.task(issue).title, "New title from Linear");
+    // And when it never could be saved before MemCode ended.
+    w.linear.edit(issue, { title: "Newer" });
+    (w.service as unknown as typeof service).deps.changed = service.deps.changed = async () => {
+      throw new Error("EBUSY");
+    };
+    await assert.rejects(w.sync());
+    await assert.rejects(w.sync());
+    await w.restart();
+    await w.sync();
+    assert.equal(linear(w, issue.id).title, "Newer");
+    assert.equal(w.task(issue).title, "Newer");
+  }));
+
+test("connected, closed, opened and brought in again, what was agreed on before still counts", () =>
+  using(async (w) => {
+    const a = w.linear.issue({ title: "A" }), b = w.linear.issue({ title: "B" });
+    const { connection, choices } = await w.imported();
+    await w.service.unlink(w.task(b).id);
+    w.edit(w.task(b), { title: "B is my own card" });
+    await w.service.disconnect(connection.id);
+    w.edit(w.task(a), { title: "A, edited while disconnected" });
+    const again = await w.service.connect(w.projectId, "key-good");
+    await w.restart();
+    await w.service.import(again.id, choices);
+    await w.sync();
+    assert.equal(linear(w, a.id).title, "A, edited while disconnected");
+    assert.equal(linear(w, b.id).title, "B");
+    assert.equal(w.task(b).title, "B is my own card");
+    assert.equal(w.task(b).tracker?.standing, "unlinked");
+    assert.equal((await readdir(join(w.dataDir, "trackers"))).length, 1);
+  }));
+
+test("a card moved after its lane was deleted is sent, also when both are seen at once", () =>
+  using(async (w) => {
+    w.state.workflowStates = [
+      ...defaultWorkflow(w.projectId),
+      { id: "custom-ready", projectId: w.projectId, name: "Ready", stage: "planned", color: "#fff", order: 2 },
+    ];
+    const moved = w.linear.issue({ title: "moved", state: w.linear.states.ready.id });
+    const left = w.linear.issue({ title: "left", state: w.linear.states.ready.id });
+    const { connection } = await w.imported();
+    await w.service.pause(connection.id, true);
+    w.state.workflowStates = w.state.workflowStates.filter((state) => state.id !== "custom-ready");
+    w.edit(w.task(moved), { statusId: w.lane("done") });
+    w.edit(w.task(left), { title: "left alone" });
+    await w.service.pause(connection.id, false);
+    await w.sync();
+    assert.equal(linear(w, moved.id).state, w.linear.states.done.id);
+    assert.equal(linear(w, left.id).state, w.linear.states.ready.id);
+    assert.equal(linear(w, left.id).title, "left alone");
+  }));
+
+test("memory that cannot be read is said on the page, and goes when it can", () =>
+  using(async (w) => {
+    w.linear.issue({ title: "A" });
+    const { connection } = await w.imported();
+    await w.service.stop();
+    const { readFile } = await import("node:fs/promises");
+    const path = join(w.dataDir, "trackers", connection.id + ".json");
+    const was = await readFile(path, "utf8");
+    await rm(path);
+    await mkdir(path);
+    await w.restart();
+    const look = () => (w.service as unknown as { lookAtAll(): Promise<void> }).lookAtAll();
+    await look();
+    assert.match(w.connection.problem ?? "", /could not be read/);
+    await rm(path, { recursive: true });
+    await writeFile(path, was);
+    await look();
+    assert.equal(w.connection.problem, undefined);
+  }));
+
+test("a goal that could not follow Linear yet is not taken for a change here", () =>
+  using(async (w) => {
+    const { linear: there } = w;
+    const projects = [there.project("One"), there.project("Two")];
+    const issue = there.issue({ title: "A", project: projects[0].id });
+    there.issue({ title: "B", project: projects[1].id });
+    const { connection, choices } = await w.imported();
+    const task = w.task(issue);
+    Object.assign(task.run, { state: "finished", startedAt: there.tick(), branch: "feat/a", sessionId: "s" });
+    task.stage = "review";
+    task.statusId = w.lane("review");
+    await w.sync();
+    await w.service.disconnect(connection.id);
+    await rm(join(w.dataDir, "trackers"), { recursive: true });
+    there.edit(issue, { project: projects[1].id });
+    w.edit(w.task(issue), { priority: "high" });
+    const again = await w.service.connect(w.projectId, "key-good");
+    await w.service.import(again.id, choices);
+    await w.sync();
+    await w.sync();
+    assert.equal(linear(w, issue.id).project, projects[1].id);
+    assert.equal(w.task(issue).tracker?.standing, "attention");
+  }));

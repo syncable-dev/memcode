@@ -80,6 +80,8 @@ const SOMEONE = "Someone on this project";
 const LEFT_OUT_KEPT = 200,
   ARRIVALS_HELD = 256;
 const WAITS = [1000, 2000, 5000, 15000, 30000, 60000];
+/** How long the service may take to say that nothing is new. */
+const NOW_MS = 10_000;
 /** A board that is first written out goes in this order, so what a task points at is there before it. */
 const WRITING_ORDER: Collection[] = [
   "lanes",
@@ -295,6 +297,31 @@ export class BoardSync {
       );
       if (this.stopped || !page.length) return;
       await this.inTurn(() => this.take(page));
+    }
+  }
+
+  /**
+   * Whether everything in the log is here, asked of the service. The stream alone cannot
+   * say: after a sleep, or on a dead line, it is silent for a while before it ends.
+   */
+  async isNow(): Promise<boolean> {
+    if (this.stopped || this.condition !== "live" || this.apart) return false;
+    let timer: NodeJS.Timeout | undefined;
+    const late = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => reject(new Error("No answer.")), NOW_MS);
+      timer.unref?.();
+    });
+    const asked = this.catchUp().then(() => this.inTurn(() => this.settle()));
+    try {
+      await Promise.race([asked, late]);
+      return !this.stopped && this.condition === "live";
+    } catch {
+      asked.catch(() => {});
+      // The stream is opened again, and says how it stands.
+      this.watching?.cancel();
+      return false;
+    } finally {
+      clearTimeout(timer);
     }
   }
 

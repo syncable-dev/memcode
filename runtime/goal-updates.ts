@@ -114,7 +114,7 @@ export class GoalUpdates {
         void this.deps.refreshGraph?.(epicId).catch(() => {});
         return { merged: true, savedWork };
       }
-      epic.resolving = { base, target, files, since: now(), taskId: "" };
+      epic.resolving = { base, target, files, since: now(), taskId: "", folder: worktree };
       const marked = await this.left(epic.resolving, worktree);
       const whole = files.filter((file) => !marked.includes(file));
       if (whole.length) {
@@ -149,9 +149,20 @@ export class GoalUpdates {
     } else if (isDone(task)) await this.commit(epic, task.run.workspace);
   }
   async undo(epicId: string): Promise<void> {
-    const { epic, worktree } = this.target(epicId);
-    if (!epic.resolving) return;
-    await git(worktree, ["merge", "--abort"]);
+    const epic = this.goal(epicId);
+    const { resolving } = epic;
+    if (!resolving) return;
+    this.assertIdle(epicId);
+    const folder = resolving.folder ?? this.target(epicId).worktree;
+    // Ended in the folder already, or gone with it: there is nothing to take out.
+    if (await isMerging(folder).catch(() => false))
+      await git(folder, ["merge", "--abort"]).catch(async (error: Error) => {
+        const changed = /Entry '([^']+)' not uptodate/.exec(error.message)?.[1];
+        if (!changed) throw error;
+        throw new Error(
+          `${changed} was changed as well while the conflict was resolved, and taking the update out would lose that. Ask again to have it finished.`,
+        );
+      });
     delete epic.resolving;
     await this.deps.changed();
   }
@@ -169,10 +180,7 @@ export class GoalUpdates {
   }
   private async commit(epic: Epic, worktree: string): Promise<void> {
     const { base, target } = epic.resolving!;
-    const merging = await access(await gitPath(worktree, "MERGE_HEAD")).then(
-      () => true,
-      () => false,
-    );
+    const merging = await isMerging(worktree);
     if (!merging && !(await contains(worktree, target))) {
       delete epic.resolving;
       await this.deps.changed();
@@ -209,23 +217,31 @@ export class GoalUpdates {
     )[0].task;
   }
 
-  private target(epicId: string): {
-    epic: Epic;
-    worktree: string;
-    tasks: WorkItem[];
-  } {
-    const state = this.deps.state();
-    const epic = state.epics.find((item) => item.id === epicId);
+  private goal(epicId: string): Epic {
+    const epic = this.deps.state().epics.find((item) => item.id === epicId);
     if (!epic) throw new Error("Goal not found.");
-    if (epic.closedAt) throw new Error("This goal already shipped.");
-    const tasks = state.tasks.filter((task) => task.epicId === epicId);
-    const running = tasks.filter(isActive).length;
+    return epic;
+  }
+  private assertIdle(epicId: string): void {
+    const running = this.deps
+      .state()
+      .tasks.filter((task) => task.epicId === epicId && isActive(task)).length;
     if (running)
       throw new Error(
         running === 1
           ? "Wait for 1 running task to finish, or stop it."
           : `Wait for ${running} running tasks to finish, or stop them.`,
       );
+  }
+  private target(epicId: string): {
+    epic: Epic;
+    worktree: string;
+    tasks: WorkItem[];
+  } {
+    const epic = this.goal(epicId);
+    if (epic.closedAt) throw new Error("This goal already shipped.");
+    this.assertIdle(epicId);
+    const tasks = this.deps.state().tasks.filter((task) => task.epicId === epicId);
     const worked = tasks.filter(
       (task) => isOnBranch(task, epic) && task.run.workspace,
     );
@@ -257,6 +273,13 @@ async function gitPath(cwd: string, name: string): Promise<string> {
   const path = await git(cwd, ["rev-parse", "--git-path", name]);
   return isAbsolute(path) ? path : join(cwd, path);
 }
+
+/** A merge is under way in the folder. */
+const isMerging = async (cwd: string): Promise<boolean> =>
+  access(await gitPath(cwd, "MERGE_HEAD")).then(
+    () => true,
+    () => false,
+  );
 
 async function contains(cwd: string, commit: string): Promise<boolean> {
   return git(cwd, ["merge-base", "--is-ancestor", commit, "HEAD"]).then(

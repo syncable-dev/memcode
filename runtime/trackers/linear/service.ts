@@ -103,6 +103,8 @@ export interface LinearDeps {
   changed: () => Promise<void>;
   /** How the board of a shared project stands in this run. */
   boardState?: (projectId: string) => string | undefined;
+  /** Asks whether everything that is on it is here: its stream can be silent for a while. */
+  boardIsNow?: (projectId: string) => Promise<boolean>;
   dataDir: string;
   auth: LinearAuth;
   tokens: TokenStore;
@@ -126,6 +128,8 @@ interface Live {
   /** Issues and comments that were not there when last asked. */
   missing: Set<string>;
   standingFrom: number;
+  /** Something here changed and is not saved yet: what is remembered of it waits for that. */
+  unsaved?: boolean;
   /** Until then another computer may still be writing what Linear said. */
   handOver?: number;
   timer?: NodeJS.Timeout;
@@ -194,7 +198,9 @@ export class LinearService {
     return turn;
   }
   private async save(live: Live): Promise<void> {
+    live.unsaved = true;
     await this.deps.changed();
+    live.unsaved = false;
     await live.file.save(live.memory);
   }
   /** Everything here a look or a send can change. What is the same after it needs no saving. */
@@ -278,8 +284,9 @@ export class LinearService {
       const live = await this.memoryOf(id);
       live.failures = 0;
       live.notBefore = 0;
-      if (!known) live.memory = (await live.file.wake(this.placeOf(connection))) ?? live.memory;
-      await this.deps.changed();
+      if (!this.connection(id).importedAt && !Object.keys(live.memory.items).length)
+        live.memory = (await live.file.wake(this.placeOf(connection))) ?? live.memory;
+      await this.save(live);
       return this.connection(id);
     } catch (error) {
       if (before) await this.deps.tokens.write(id, before);
@@ -365,11 +372,16 @@ export class LinearService {
   /** This computer does it from now on. The one that did it hears so through the board. */
   async takeOver(id: string): Promise<void> {
     const connection = this.connection(id);
+    await this.assertBoard(connection);
     if (this.isKeeper(connection)) return;
-    this.assertBoard(connection);
     const live = await this.memoryOf(id);
-    live.memory.since = this.keeperOf(connection)?.since;
+    // What a person took out stays out, whoever keeps it in step.
+    for (const item of this.keeperOf(connection)?.left ?? [])
+      if (item.startsWith("goal:"))
+        live.memory.leftGoals = [...new Set([...(live.memory.leftGoals ?? []), item.slice(5)])];
+      else if (!live.memory.left.includes(item)) live.memory.left.push(item);
     this.becomeKeeper(connection);
+    this.tellLeft(connection, live);
     // Until the other has heard, and what it has already written has arrived here.
     live.notBefore = live.handOver = this.now() + handOverMs;
     await this.save(live);
@@ -388,8 +400,32 @@ export class LinearService {
     // Two boards that stay two, or one that is gone for this person, have no one else in them.
     return ["synced", "sending", "apart", "gone"].includes(board ?? "");
   }
-  private assertBoard(connection: TrackerConnection): void {
-    if (!this.boardIsHere(connection)) throw new Error(boardMissing);
+  /** Asked each time: a computer that slept, or a dead line, still says it is in step. */
+  private async boardIsNow(connection: TrackerConnection): Promise<boolean> {
+    if (!this.boardIsHere(connection)) return false;
+    const state = this.deps.state();
+    const { projectId } = connection;
+    if (!state.sharedProjectLinks?.some((link) => link.projectId === projectId)) return true;
+    const board = this.deps.boardState
+      ? this.deps.boardState(projectId)
+      : state.sharedBoards?.find((item) => item.projectId === projectId)?.state;
+    if (board === "apart" || board === "gone") return true;
+    return (await this.deps.boardIsNow?.(projectId)) ?? true;
+  }
+  private async assertBoard(connection: TrackerConnection): Promise<void> {
+    if (!(await this.boardIsNow(connection))) throw new Error(boardMissing);
+  }
+  /** The board says what was taken out, for whoever keeps it in step next. */
+  private tellLeft(connection: TrackerConnection, live: Live): void {
+    const keeper = this.keeperOf(connection);
+    if (!keeper || keeper.connection !== connection.id) return;
+    const left = [
+      ...live.memory.left,
+      ...(live.memory.leftGoals ?? []).map((ref) => "goal:" + ref),
+    ].sort();
+    if (same(left, keeper.left ?? [])) return;
+    if (left.length) keeper.left = left;
+    else delete keeper.left;
   }
   /** Says what is waited for, once it takes longer than a board takes to come up. */
   private waitForBoard(connection: TrackerConnection): void {
@@ -560,7 +596,7 @@ export class LinearService {
     return this.inTurn(id, async () => {
       const connection = this.connection(id);
       const live = await this.memoryOf(id);
-      this.assertBoard(connection);
+      await this.assertBoard(connection);
       this.assertKeeper(connection);
       const handOver = (live.handOver ?? 0) - this.now();
       if (handOver > 0 && this.deps.timers !== false)
@@ -571,7 +607,8 @@ export class LinearService {
       const woken = this.wake(connection, live);
       this.noticeDeleted(connection, live);
       delete live.memory.undone;
-      delete live.memory.leftGoals;
+      // The same person brings work in once more, and wants its goals too.
+      if (connection.importedAt) delete live.memory.leftGoals;
       await this.loadLists(connection, live);
       const startedAt = this.at();
       this.chosenAnew(connection, live, formerly, startedAt);
@@ -601,6 +638,8 @@ export class LinearService {
         else this.bringIn(connection, live, issue, history);
         if (index % 25 === 0) onProgress?.(index);
       }
+      for (const task of this.tasksOf(connection))
+        if (task.tracker?.unlinked) this.stand(task, "unlinked", unlinkedHere);
       this.linkParents(connection, live, tasks);
       observePlanning(this.deps.state(), startedAt);
       if (!live.memory.issuesUntil) {
@@ -614,9 +653,9 @@ export class LinearService {
       // Cards that were in step before may not be in what was brought in now.
       if (woken) delete live.memory.comparedAt;
       else live.memory.comparedAt = startedAt;
-      delete live.memory.since;
       connection.importedAt ??= startedAt;
       this.becomeKeeper(connection);
+      this.tellLeft(connection, live);
       connection.undoUntil = new Date(this.now() + undoDays * 86_400_000).toISOString();
       connection.lastCheckedAt = this.at();
       await this.save(live);
@@ -650,11 +689,12 @@ export class LinearService {
     // Connecting again brings back what was deleted here. An unlinked card stays unlinked.
     const here = new Set(tasks.flatMap((task) => [task.id, task.tracker?.id ?? task.id]));
     live.memory.left = live.memory.left.filter((id) => here.has(id));
+    delete live.memory.leftGoals;
     for (const id of Object.keys(live.memory.items))
       if (!here.has(id)) delete live.memory.items[id];
     for (const task of tasks) {
       const base = live.memory.items[task.id];
-      if (!base || !task.tracker) continue;
+      if (!base || !task.tracker || task.tracker.unlinked) continue;
       // Nobody was looking when it was changed here: at the earliest, after that.
       asOld(task, base, frame, rested.at);
       if (task.tracker.note === disconnected) this.stand(task, "synced");
@@ -751,7 +791,7 @@ export class LinearService {
       const connection = this.connection(id);
       if (!connection.undoUntil || connection.undoUntil < this.at())
         throw new Error("An import can be taken back for seven days.");
-      this.assertBoard(connection);
+      await this.assertBoard(connection);
       this.assertKeeper(connection);
       const live = await this.memoryOf(id);
       const state = this.deps.state();
@@ -804,13 +844,18 @@ export class LinearService {
       // It was here before: connected again, brought in by another computer, or made
       // from here with an answer that got lost.
       if (live.memory.items[known.id]) return known;
-      const since = known.tracker ? this.agreedSince(connection, live) : issue.createdAt;
+      if (known.tracker?.unlinked) {
+        this.stand(known, "unlinked", unlinkedHere);
+        return known;
+      }
+      const since = this.agreedSince(known, issue);
       this.track(known, issue, frame);
       const there = thereOf(issue, frame);
       if (there.goal && !goalOf(frame, there.goal)) this.goalFor(connection, live, there.goal);
       const base = reunited(known, issue, frame, history, since);
       live.memory.items[known.id] = base;
-      mergeIssue(known, issue, base, frame, this.at());
+      if (mergeIssue(known, issue, base, frame, this.at()).heard || !known.tracker!.seen)
+        this.taken(known, issue);
       this.stand(known, observe(known, base, frame, this.at()).differs ? "sending" : "synced");
       return known;
     }
@@ -852,12 +897,18 @@ export class LinearService {
       brought: true,
       made: besides(task),
     };
+    if (!notes[0]) this.taken(task, issue);
     this.stand(task, notes[0] ? "attention" : "synced", notes[0]);
     return task;
   }
-  /** When the cards here were known to be as Linear had them, where nothing more is remembered. */
-  private agreedSince = (connection: TrackerConnection, live: Live) =>
-    live.memory.since ?? connection.importedAt;
+  /** Until when the card here holds everything its issue had, where nothing more is remembered. */
+  private agreedSince = (task: WorkItem, issue: Issue): string | undefined =>
+    task.tracker ? task.tracker.seen : issue.createdAt;
+  /** The card holds the issue as it is now, or the issue what was changed on the card. */
+  private taken(task: WorkItem, issue: Issue): void {
+    if (task.tracker && (task.tracker.seen ?? "") < issue.updatedAt)
+      task.tracker.seen = issue.updatedAt;
+  }
 
   /** The task here an issue was made of, when Linear's answer never came. */
   private madeHere(
@@ -1191,7 +1242,10 @@ export class LinearService {
           if (live.notBefore <= this.now()) await this.sync(connection.id);
         } else if (this.isOn(connection)) this.waitForBoard(connection);
       } catch {
-        // The connection says why, and the next look tries again.
+        // What went wrong with Linear is said already. The next look tries again.
+        if (connection.problem) continue;
+        connection.problem = notRead;
+        void this.deps.changed().catch(() => {});
       }
   }
   private isOn = (connection: TrackerConnection) =>
@@ -1214,7 +1268,7 @@ export class LinearService {
         if (!this.isLive(connection)) return;
         const { found, marked } = this.differs(connection, live);
         // When it was changed is kept at once: it decides which value is newer.
-        if (marked) void live.file.save(live.memory).catch(() => {});
+        if (marked && !live.unsaved) void live.file.save(live.memory).catch(() => {});
         if (!found || live.timer || this.deps.timers === false) return;
         const wait = Math.max(settleMs, live.notBefore - this.now());
         live.timer = setTimeout(() => {
@@ -1270,7 +1324,7 @@ export class LinearService {
   /** A person wants to see it now: goals, cycles, people and labels too. */
   async look(id: string): Promise<void> {
     const connection = this.connection(id);
-    if (this.isKeeper(connection)) this.assertBoard(connection);
+    if (this.isKeeper(connection)) await this.assertBoard(connection);
     (await this.memoryOf(connection.id)).listsAt = 0;
     await this.sync(id);
     await this.deps.changed();
@@ -1281,6 +1335,7 @@ export class LinearService {
     return this.inTurn(id, async () => {
       const connection = this.connection(id);
       if (!this.isLive(connection)) return;
+      if (!(await this.boardIsNow(connection)) || !this.isLive(connection)) return;
       const live = await this.memoryOf(id);
       const before = this.print(connection);
       if (!this.keeperOf(connection)) this.becomeKeeper(connection);
@@ -1312,7 +1367,12 @@ export class LinearService {
         this.failed(connection, live, error as Error);
         if (!(error instanceof TrackerUnavailable) && !(error instanceof SignInEnded)) throw error;
       } finally {
-        if (this.print(connection) !== before) await this.deps.changed();
+        this.tellLeft(connection, live);
+        // Never the other way round: what is remembered of a value that is not saved here
+        // would make the old one look like a person's change.
+        live.unsaved ||= this.print(connection) !== before;
+        if (live.unsaved) await this.deps.changed();
+        live.unsaved = false;
         await live.file.save(live.memory);
       }
     });
@@ -1404,6 +1464,7 @@ export class LinearService {
     const all = this.tasksOf(connection).filter(
       (task) =>
         task.tracker &&
+        !task.tracker.unlinked &&
         (away.has(task.tracker.note ?? "")
           ? !live.memory.left.includes(task.tracker.id)
           : // What is done or put away here has nothing to hear, but for what was said on it.
@@ -1538,8 +1599,8 @@ export class LinearService {
     task: WorkItem,
     issue: Issue,
   ): boolean {
-    const since = task.tracker ? this.agreedSince(connection, live) : issue.createdAt;
-    if (!since || issue.updatedAt <= since) return false;
+    const since = this.agreedSince(task, issue);
+    if (!since || issue.updatedAt <= since || task.tracker?.unlinked) return false;
     const frame = this.frame(connection, live);
     return !same(reunited(task, issue, frame, undefined, since), baseFor(task, issue, frame));
   }
@@ -1584,6 +1645,7 @@ export class LinearService {
     observe(task, base, frame, this.at());
     const merge = mergeIssue(task, issue, base, frame, this.at(), history.at);
     this.track(task, issue, frame);
+    if (merge.heard) this.taken(task, issue);
     const refused = Object.values(merge.refused)[0];
     // What Linear refused already is not on its way.
     const open = (Object.keys(merge.push) as TrackedField[]).some(
@@ -1684,6 +1746,7 @@ export class LinearService {
     const frame = this.frame(connection, live);
     const merge = mergeIssue(task, issue, base, frame, this.at(), history.at);
     this.track(task, issue, frame);
+    if (merge.heard) this.taken(task, issue);
     if (!Object.keys(merge.push).length) {
       delete base.stuck;
       const refused = Object.values(merge.refused)[0];
@@ -1716,6 +1779,7 @@ export class LinearService {
         throw new TrackerRefused("Linear did not take the change.");
       agreed(task, push, now, sent, base, this.frame(connection, live));
       this.track(task, now, frame);
+      this.taken(task, now);
     };
     const open = fields.filter((field) => !stuck[field]);
     try {
@@ -1862,6 +1926,7 @@ export class LinearService {
     }
     if (!issue) throw new TrackerUnavailable("Linear is having trouble right now.");
     this.track(task, issue, frame);
+    this.taken(task, issue);
     this.stand(task, "synced");
     const now = this.frame(connection, live);
     const base = { ...baseFor(task, issue, now), here };
@@ -2005,6 +2070,7 @@ export class LinearService {
     return this.tasksOf(connection).filter(
       (task) =>
         task.tracker &&
+        !task.tracker.unlinked &&
         task.tracker.standing !== "unlinked" &&
         !live.memory.items[task.id] &&
         !live.memory.left.includes(task.tracker.id),
@@ -2128,7 +2194,9 @@ export class LinearService {
       const live = await this.memoryOf(connection.id);
       delete live.memory.items[task.id];
       live.memory.left = [...new Set([...live.memory.left, task.id, task.tracker!.id])];
-      this.stand(task, "unlinked", "Unlinked. It no longer follows the issue in Linear.");
+      task.tracker!.unlinked = true;
+      this.stand(task, "unlinked", unlinkedHere);
+      this.tellLeft(connection, live);
       await this.save(live);
     });
   }
@@ -2144,6 +2212,9 @@ export class LinearService {
   }
 }
 
+const unlinkedHere = "Unlinked. It no longer follows the issue in Linear.";
+const notRead =
+  "What MemCode remembers of this project's issues could not be read. Nothing goes to or from Linear until it can. It is tried again every half minute.";
 const disconnected = "Linear was disconnected.";
 const boardMissing =
   "The shared board is not connected right now. Nothing goes to or from Linear until it is.";

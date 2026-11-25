@@ -25,6 +25,11 @@ export const clipped = (full: string): string =>
   full.length > longestDescription
     ? full.slice(0, longestDescription - clipNote.length) + clipNote
     : full;
+/** As much of a longer title as a shared board carries. */
+export function isCut(here: string, there: string): boolean {
+  const part = here.trimEnd().replace(/[\ud800-\udbff\ufffd]$/, "").trimEnd();
+  return part.length >= 235 && there.length > here.length && there.startsWith(part);
+}
 /** A part of what is in Linear. It is never sent back, whatever else is known of the card. */
 const isClipped = (task: WorkItem, text: string) =>
   !!task.tracker?.clipped || text.endsWith(clipNote);
@@ -181,6 +186,8 @@ export function toThere(
   task: WorkItem,
 ): There[TrackedField] | undefined {
   switch (field) {
+    case "title":
+      return isCut(String(value), now.title) ? now.title : value;
     case "priority":
       return priorityThere[value as Priority];
     case "estimate": {

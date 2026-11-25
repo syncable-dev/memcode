@@ -83,7 +83,9 @@ const isPortablePath = (path: string) =>
   path.split("/").every((part) => part && part !== "." && part !== "..");
 
 /** MemCodes before 255 characters drop a task whose title is longer than this. */
-const titleOnBoard = (title: string) => title.slice(0, 240);
+const titleOnBoard = (title: string) =>
+  // Never half of a character: the document would hold another one in its place.
+  title.slice(0, 240).replace(/[\ud800-\udbff]$/, title.length > 240 ? "" : "$&");
 /** What the entry is in a tracker, for everyone on the project to see. */
 const trackedOnBoard = (item: { tracker?: TrackedItem }): Json | undefined =>
   item.tracker
@@ -95,6 +97,8 @@ const trackedOnBoard = (item: { tracker?: TrackedItem }): Json | undefined =>
         ...(item.tracker.kind ? { kind: item.tracker.kind } : {}),
         ...(item.tracker.within ? { within: item.tracker.within } : {}),
         ...(item.tracker.clipped ? { clipped: true } : {}),
+        ...(item.tracker.unlinked ? { unlinked: true } : {}),
+        ...(item.tracker.seen ? { seen: item.tracker.seen } : {}),
       } as Json)
     : undefined;
 
@@ -236,16 +240,20 @@ export function boardOf(state: AppState, projectId: string): Board {
       });
   for (const keeper of state.trackerKeepers ?? [])
     if (keeper.projectId === projectId)
-      board.trackers[keeper.provider] = entry({
-        // One value: whoever takes over takes all of it.
-        keeper: {
-          connection: keeper.connection,
-          by: keeper.by,
-          workspace: keeper.workspace,
-          team: keeper.team,
-          since: keeper.since,
+      board.trackers[keeper.provider] = entry(
+        {
+          // One value: whoever takes over takes all of it.
+          keeper: {
+            connection: keeper.connection,
+            by: keeper.by,
+            workspace: keeper.workspace,
+            team: keeper.team,
+            since: keeper.since,
+          },
         },
-      });
+        {},
+        { left: Object.fromEntries((keeper.left ?? []).map((id) => [id, true])) },
+      );
   return board;
 }
 
@@ -327,8 +335,10 @@ function trackedFrom(
   const provider = oneOf("linear")(parts?.provider);
   const id = line(100)(parts?.id);
   if (!provider || !id) return value === undefined ? kept : undefined;
-  const { clipped: _clipped, ...mine } = kept?.id === id ? kept : ({} as Partial<TrackedItem>);
-  const within = line(100)(parts!.within) ?? mine.within;
+  const { clipped: _clipped, unlinked: _unlinked, ...mine } =
+    kept?.id === id ? kept : ({} as Partial<TrackedItem>);
+  const within = line(100)(parts!.within) ?? mine.within,
+    seen = line(40)(parts!.seen) ?? mine.seen;
   return {
     ...mine,
     provider,
@@ -340,6 +350,8 @@ function trackedFrom(
       kept?.kind,
     ...(within ? { within } : {}),
     ...(flag(parts!.clipped) ? { clipped: true } : {}),
+    ...(flag(parts!.unlinked) ? { unlinked: true as const } : {}),
+    ...(seen ? { seen } : {}),
   };
 }
 function personFrom(value: Json | undefined): Person | null {
@@ -846,7 +858,8 @@ function applyProjectLists(
   }
   if (changed("trackers")) {
     const keepers: TrackerKeeper[] = [];
-    for (const [id, { fields }] of Object.entries(after.trackers)) {
+    for (const [id, { fields, sets }] of Object.entries(after.trackers)) {
+      const left = memberIds(sets.left, 5000).filter((item) => item.length <= 200);
       const provider = oneOf("linear")(id),
         parts = partsOf(fields.keeper),
         connection = line(100)(parts?.connection),
@@ -860,6 +873,7 @@ function applyProjectLists(
         workspace: line(200)(parts!.workspace) ?? "",
         team: line(200)(parts!.team) ?? "",
         since: line(40)(parts!.since) ?? "",
+        ...(left.length ? { left: left.sort() } : {}),
       });
     }
     state.trackerKeepers = [

@@ -407,6 +407,8 @@ export interface Epic {
     since: string;
     /** The task whose worker was asked to resolve them. */
     taskId: string;
+    /** Where it is being brought in. */
+    folder?: string;
   };
   /** The commit of this goal's branch that merged, when newer work goes on from it. */
   mergedRevision?: string;
