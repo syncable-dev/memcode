@@ -8,6 +8,7 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import {
   createServer as createHttp2Server,
@@ -19,6 +20,10 @@ import { initialState } from "../src/seed";
 import type { AppState, Project } from "../src/shared";
 import type { SharingOverview, SharingSettings } from "../src/sharing";
 import { refusalSentences } from "../src/sharing-refusals";
+import { INBOX_CARD } from "../src/inbox";
+import { MemsyncCards } from "../runtime/sharing/memsync/cards-api";
+import { grpcChannel } from "../runtime/sharing/memsync/grpc";
+import { SignedCalls } from "../runtime/sharing/memsync/signed-calls";
 import { Sharing, type CardHost } from "../runtime/sharing/sharing";
 import { shareableFile } from "../runtime/sharing/cards/files";
 import type { WorkerChanges } from "../src/changes";
@@ -105,8 +110,18 @@ async function fixture(beside?: {
     filesFolder: (taskId) => join(dataDir, "captures", taskId),
   };
   const gone: string[] = [];
+  /** The Slack pages opened in the person's browser. */
+  const slackPages: string[] = [];
+  /** The files and links of reports opened outside MemCode. */
+  const opened: string[] = [];
   const sharing = new Sharing({
     state: () => state,
+    openSlackInstall: async (url) => slackPages.push(url),
+    inboxFiles: {
+      folder: join(dataDir, "inbox-files"),
+      openFile: async (path) => opened.push(path),
+      openLink: async (url) => opened.push(url),
+    },
     changed: async () => {
       world.saves++;
       await sharing.workspaceSaved();
@@ -149,6 +164,8 @@ async function fixture(beside?: {
     world,
     sharing,
     gone,
+    slackPages,
+    opened,
     as,
     boardsFolder,
     dataDir,
@@ -1444,5 +1461,239 @@ test("a guest who leaves keeps the board on this computer, no longer shared; the
   } finally {
     await guest.close();
     await owner.close();
+  }
+});
+
+// ── The Inbox of a project that is not shared ───────────────────────────────
+
+/** A report as MemSync writes one from Slack. */
+const slackReport = (item: string) =>
+  new TextEncoder().encode(
+    JSON.stringify({
+      format: "memcode-inbox/1",
+      kind: "report",
+      item,
+      title: "The login button does nothing",
+      text: "The login button does nothing on my phone",
+      reporter: { name: "Dana", slack_user: "U1" },
+      source: { team: "T1", channel: "C1", message_ts: "1.1", permalink: "https://acme.slack.com/x" },
+      files: [],
+      links: [],
+      reported_at: at,
+    }),
+  );
+/** Writes a report into an Inbox, as MemSync does when someone mentions @MemCode. */
+async function reportInto(f: Awaited<ReturnType<typeof fixture>>, sharedProjectId: string) {
+  const token = f.service.tokenFor(f.people.alex);
+  const channel = grpcChannel(f.service.address);
+  const calls = new SignedCalls(channel, {
+    current: async () => ({ token, accountId: f.people.alex.accountId }),
+    forget: () => {},
+  });
+  const item = randomUUID();
+  await new MemsyncCards(calls).append(sharedProjectId, INBOX_CARD, [
+    { id: randomUUID(), payload: slackReport(item) },
+  ]);
+  channel.close();
+  return item;
+}
+
+test("Add to Slack on a project that is not shared gives it an Inbox, and its board stays here", async () => {
+  const f = await fixture();
+  try {
+    giveWork(f.state, "local-web");
+    await f.sharing.addToSlack("local-web");
+
+    const [inbox] = f.state.inboxLinks!;
+    assert.equal(inbox.projectId, "local-web");
+    assert.deepEqual(f.slackPages, [
+      `https://slack.com/oauth/v2/authorize?state=${inbox.sharedProjectId}`,
+    ]);
+    assert.deepEqual(f.state.sharedProjectLinks ?? [], [], "it is not shared");
+    assert.equal(f.service.boards.log(inbox.sharedProjectId).length, 0, "no board is sent");
+    assert.deepEqual(ready(await f.sharing.overview()).projects, [], "it is not listed as shared");
+
+    f.service.slack.connect(inbox.sharedProjectId, "T1", "Syncable", f.people.alex);
+    const item = await reportInto(f, inbox.sharedProjectId);
+    const read = await f.sharing.inbox("local-web");
+    assert.deepEqual(read.workspaces.map((one) => one.teamName), ["Syncable"]);
+    assert.deepEqual(read.items.map((one) => [one.id, one.state]), [[item, "new"]]);
+
+    const decided = await f.sharing.decideInboxItem({
+      projectId: "local-web",
+      itemId: item,
+      decision: { kind: "declined", reason: "Already fixed" },
+    });
+    assert.equal(decided.items[0].state, "declined");
+  } finally {
+    await f.close();
+  }
+});
+
+test("a project uses one Inbox, however often Add to Slack is pressed", async () => {
+  const f = await fixture();
+  try {
+    await Promise.all([f.sharing.addToSlack("local-web"), f.sharing.addToSlack("local-web")]);
+    await f.sharing.addToSlack("local-web");
+    assert.equal(asked(f, "StartProject"), 1);
+    assert.equal(f.state.inboxLinks!.length, 1);
+  } finally {
+    await f.close();
+  }
+});
+
+test("a project nobody connected to Slack has an empty Inbox, and nobody is asked", async () => {
+  const f = await fixture();
+  try {
+    assert.deepEqual(await f.sharing.inbox("local-web"), {
+      items: [],
+      channels: [],
+      workspaces: [],
+      channelsUnavailable: false,
+    });
+    assert.equal(f.service.calls.length, 0);
+  } finally {
+    await f.close();
+  }
+});
+
+test("a Team project can have an Inbox, and the example project cannot", async () => {
+  const f = await fixture();
+  try {
+    f.state.team = [{ projectId: "local-app" } as NonNullable<AppState["team"]>[number]];
+    await f.sharing.addToSlack("local-app");
+    assert.equal(f.state.inboxLinks!.length, 1);
+    const exampleId = f.state.projects.find((one) => one.example)!.id;
+    await assert.rejects(f.sharing.addToSlack(exampleId), /example project cannot get reports/);
+    assert.equal(asked(f, "StartProject"), 1);
+  } finally {
+    await f.close();
+  }
+});
+
+test("sharing a project later keeps its Inbox, its reports and its Slack workspace", async () => {
+  const f = await fixture();
+  try {
+    giveWork(f.state, "local-web");
+    await f.sharing.addToSlack("local-web");
+    const { sharedProjectId } = f.state.inboxLinks![0];
+    f.service.slack.connect(sharedProjectId, "T1", "Syncable", f.people.alex);
+    const item = await reportInto(f, sharedProjectId);
+
+    const link = await f.sharing.shareProject("local-web");
+    assert.equal(link.sharedProjectId, sharedProjectId);
+    assert.deepEqual(f.state.inboxLinks, []);
+    assert.equal(asked(f, "StartProject"), 1);
+    assert.equal(ready(await f.sharing.overview()).projects.length, 1);
+    await boardsSynced(f, 1);
+    const read = await f.sharing.inbox("local-web");
+    assert.deepEqual(read.items.map((one) => one.id), [item]);
+    assert.equal(read.workspaces.length, 1);
+  } finally {
+    await f.close();
+  }
+});
+
+test("an Inbox deleted from another computer is forgotten, and Add to Slack starts a new one", async () => {
+  const f = await fixture();
+  try {
+    await f.sharing.addToSlack("local-web");
+    const { sharedProjectId } = f.state.inboxLinks![0];
+    await f.as(f.people.alex).deleteProject(sharedProjectId);
+    assert.deepEqual((await f.sharing.inbox("local-web")).items, []);
+    assert.equal(f.state.inboxLinks!.length, 0);
+    await f.sharing.addToSlack("local-web");
+    const [fresh] = (f.state as AppState).inboxLinks!;
+    assert.notEqual(fresh.sharedProjectId, sharedProjectId);
+  } finally {
+    await f.close();
+  }
+});
+
+test("an Inbox is only for the account that started it", async () => {
+  const f = await fixture();
+  try {
+    await f.sharing.addToSlack("local-web");
+    const { sharedProjectId } = f.state.inboxLinks![0];
+    f.service.slack.connect(sharedProjectId, "T1", "Syncable", f.people.alex);
+    signIn(f, f.people.dana);
+    assert.deepEqual((await f.sharing.inbox("local-web")).workspaces, []);
+  } finally {
+    await f.close();
+  }
+});
+
+test("deleting a project deletes its Inbox from the sharing service", async () => {
+  const f = await fixture();
+  try {
+    await f.sharing.addToSlack("local-web");
+    await f.sharing.removeForAccount("local-web");
+    assert.deepEqual(f.state.inboxLinks, []);
+    assert.equal(asked(f, "DeleteProject"), 1);
+    assert.deepEqual(ready(await f.sharing.overview()).projects, []);
+  } finally {
+    await f.close();
+  }
+});
+
+test("a file a report brought opens on this computer, when it is of a kind that cannot run", async () => {
+  const f = await fixture();
+  try {
+    await f.sharing.addToSlack("local-web");
+    const { sharedProjectId } = f.state.inboxLinks![0];
+    const token = f.service.tokenFor(f.people.alex);
+    const channel = grpcChannel(f.service.address);
+    const cards = new MemsyncCards(
+      new SignedCalls(channel, {
+        current: async () => ({ token, accountId: f.people.alex.accountId }),
+        forget: () => {},
+      }),
+    );
+    const bytes = new TextEncoder().encode("%PDF-1.7 hello");
+    const { sha256 } = await cards.upload(sharedProjectId, bytes);
+    channel.close();
+    const open = (name: string) =>
+      f.sharing.openInboxFile({ projectId: "local-web", sha256, name });
+
+    // Its preview and its full view use one copy, fetched once.
+    const asks = () => asked(f, "DownloadFile");
+    const kept = { projectId: "local-web", sha256, name: "Plan.pdf" };
+    const [first, second] = await Promise.all([
+      f.sharing.keptInboxFile(kept),
+      f.sharing.keptInboxFile(kept),
+    ]);
+    assert.equal(first.path, second.path);
+    await f.sharing.keptInboxFile(kept);
+    assert.equal(asks(), 1);
+    await writeFile(first.path, "changed on this computer");
+    await f.sharing.keptInboxFile(kept);
+    assert.deepEqual(new Uint8Array(await readFile(first.path)), bytes);
+    assert.equal(f.opened.length, 0, "keeping it opens nothing");
+
+    await open("..\\..\\Plan: final?.pdf");
+    assert.equal(f.opened.length, 1);
+    assert.ok(f.opened[0].startsWith(join(f.dataDir, "inbox-files", sha256)), f.opened[0]);
+    assert.deepEqual(new Uint8Array(await readFile(f.opened[0])), bytes);
+
+    for (const name of ["run.exe", "page.html", "notes.pdf.lnk", "macro.docm", ".pdf", "archive.zip"])
+      await assert.rejects(open(name), /does not open this kind of file/, name);
+    assert.equal(f.opened.length, 1);
+  } finally {
+    await f.close();
+  }
+});
+
+test("only a link a report holds opens in the browser", async () => {
+  const f = await fixture();
+  try {
+    await f.sharing.addToSlack("local-web");
+    await reportInto(f, f.state.inboxLinks![0].sharedProjectId);
+    const open = (url: string) => f.sharing.openInboxLink({ projectId: "local-web", url });
+    await open("https://acme.slack.com/x");
+    assert.deepEqual(f.opened, ["https://acme.slack.com/x"]);
+    await assert.rejects(open("https://evil.test/"), /not in this project's Inbox/);
+    assert.equal(f.opened.length, 1);
+  } finally {
+    await f.close();
   }
 });

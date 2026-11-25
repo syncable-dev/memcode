@@ -30,6 +30,7 @@ import {
   Workflow,
   Users,
   X,
+  Inbox as InboxIcon,
 } from "lucide-react";
 import {
   harnessIds,
@@ -56,6 +57,10 @@ import { Roadmap } from "./components/Roadmap";
 import { BaseBranchPicker } from "./components/BaseBranchPicker";
 import { PullRequestSheet } from "./components/PullRequest";
 import { NewWork } from "./components/NewWork";
+import { Inbox } from "./components/Inbox";
+import { attachReport } from "./report-attachments";
+import type { Attachment } from "./attachments";
+import { requestFrom, type InboxItem } from "./inbox";
 import { FleetDecisions } from "./components/FleetDecisions";
 import { Cycles } from "./components/Cycles";
 import { InsightsPage } from "./components/InsightsPage";
@@ -114,6 +119,7 @@ import { hasTeamPage } from "./team-presentation";
 import { DeleteProject } from "./components/DeleteProject";
 
 type View =
+  | "inbox"
   | "board"
   | "roadmap"
   | "cycles"
@@ -127,6 +133,11 @@ type View =
   | "docs"
   | "team";
 const pageCopy: Record<View, [string, string, string]> = {
+  inbox: [
+    "FROM THE PEOPLE YOU WORK WITH",
+    "Reports, ready to pick up.",
+    "What your team sent from Slack, with the evidence. Pick one up and define the goal.",
+  ],
   team: [
     "BUILD WITH YOUR TEAM",
     "Better together. Still local.",
@@ -198,6 +209,8 @@ export function App() {
   );
   const [runtime, setRuntime] = useState<RuntimeInfo | null>(null);
   const [view, setView] = useState<View>("board");
+  /** The Inbox report a new goal is being defined from, if any. */
+  const [inboxItem, setInboxItem] = useState<InboxItem | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [guideReviewId, setGuideReviewId] = useState<string | null>(null);
   const [selectedArtifact, setSelectedArtifact] = useState<Artifact | null>(
@@ -205,7 +218,11 @@ export function App() {
   );
   const [storyEpic, setStoryEpic] = useState<string | undefined>();
   const [pullRequestEpic, setPullRequestEpic] = useState<string>();
-  const [detailedTask, setDetailedTask] = useState(false);
+  /** More options for a new task, with what was written and attached before. */
+  const [detailedTask, setDetailedTask] = useState<{
+    request: string;
+    files: Attachment[];
+  } | null>(null);
   const [storyStatus, setStoryStatus] = useState<string | undefined>();
   const [storyParent, setStoryParent] = useState<string | undefined>();
   const [dialog, setDialog] = useState<
@@ -381,6 +398,8 @@ export function App() {
         !event.altKey &&
         event.key.toLowerCase() === "c"
       ) {
+        setDetailedTask(null);
+        setInboxItem(null);
         setStoryEpic(undefined);
         setStoryParent(undefined);
         setStoryStatus(undefined);
@@ -435,7 +454,8 @@ export function App() {
     setDialog(null);
   };
   const create = (epicId?: string, parentId?: string, statusId?: string) => {
-    setDetailedTask(false);
+    setDetailedTask(null);
+    setInboxItem(null);
     setStoryStatus(statusId);
     setStoryEpic(epicId);
     setStoryParent(parentId);
@@ -576,6 +596,21 @@ export function App() {
       )}
     </div>
   );
+  /** The report a task was defined from is recorded as picked up. */
+  const pickedUp = (task: WorkItem) => {
+    if (!inboxItem) return;
+    const goal = task.epicId ?? task.id;
+    const goalTitle =
+      state?.epics.find((epic) => epic.id === task.epicId)?.title ?? task.title;
+    window.memcode
+      .decideInboxItem({
+        projectId: task.projectId,
+        itemId: inboxItem.id,
+        decision: { kind: "picked_up", goal, goalTitle },
+      })
+      .catch((error: Error) => notify(error.message));
+    setInboxItem(null);
+  };
   const guideGo = (destination: GuideDestination) => {
     if (destination === "project") {
       setDialog("project");
@@ -588,8 +623,8 @@ export function App() {
       setDialog("settings");
       return;
     }
-    if (destination === "account") {
-      setSettingsSection("account");
+    if (destination === "account" || destination === "integrations") {
+      setSettingsSection(destination);
       setDialog("settings");
       return;
     }
@@ -602,6 +637,7 @@ export function App() {
     count?: number;
   }> = [
     { id: "board", label: "Workspace", icon: LayoutGrid },
+    { id: "inbox", label: "Inbox", icon: InboxIcon },
     { id: "roadmap", label: "Roadmap", icon: Route, count: epics.length },
     {
       id: "cycles",
@@ -769,6 +805,9 @@ export function App() {
                       <DeleteProject
                         project={item}
                         sharing={projectSharingAsKnown(item, state, sharing.overview)}
+                        hasInbox={
+                          !!state.inboxLinks?.some((link) => link.projectId === item.id)
+                        }
                         onDeleted={() => {
                           setSelectedId(null);
                           setProjectMenu(false);
@@ -1004,6 +1043,24 @@ export function App() {
                 )}
               </div>
             )}
+          {view === "inbox" && (
+            <Inbox
+              project={project}
+              onConnectSlack={() => {
+                setSettingsSection("integrations");
+                setDialog("settings");
+              }}
+              onDefineGoal={(item) => {
+                setStoryEpic(undefined);
+                setStoryStatus(undefined);
+                setStoryParent(undefined);
+                setDetailedTask(null);
+                setInboxItem(item);
+                setDialog("task");
+              }}
+              notify={notify}
+            />
+          )}
           {view === "docs" && (
             <Suspense fallback={<Spinner />}>
               <Docs
@@ -1334,19 +1391,32 @@ export function App() {
           )}
           fixedEpicId={storyEpic}
           statusId={storyStatus}
+          initialRequest={inboxItem ? requestFrom(inboxItem) : undefined}
+          reportedBy={inboxItem?.reporter.name}
+          initialFiles={
+            inboxItem
+              ? (add, starting) =>
+                  attachReport(project.id, inboxItem, add, starting)
+              : undefined
+          }
           workerLimit={state.settings.maxWorkers}
           freeSlots={Math.max(
             0,
             state.settings.maxWorkers - state.tasks.filter(isActive).length,
           )}
-          onClose={() => setDialog(null)}
-          onAdvanced={() => setDetailedTask(true)}
+          onClose={() => {
+            setDialog(null);
+            setInboxItem(null);
+          }}
+          onAdvanced={(request, files) => setDetailedTask({ request, files })}
           onConnectWorkers={() => {
             setDialog(null);
+            setInboxItem(null);
             setView("workers");
           }}
           onCreated={(task) => {
             setDialog(null);
+            pickedUp(task);
             setSelectedId(task.id);
             if (guideProgress?.step === "story" && !guideProgress.dismissed)
               updateGuide({
@@ -1371,9 +1441,15 @@ export function App() {
           parent={state.tasks.find(
             (task) => task.id === storyParent && task.projectId === project.id,
           )}
-          onClose={() => setDialog(null)}
+          initialDescription={detailedTask?.request}
+          initialFiles={detailedTask?.files}
+          onClose={() => {
+            setDialog(null);
+            setInboxItem(null);
+          }}
           onCreated={(task) => {
             setDialog(null);
+            pickedUp(task);
             setSelectedId(task.id);
             if (guideProgress?.step === "story" && !guideProgress.dismissed)
               updateGuide({

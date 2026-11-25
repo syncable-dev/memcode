@@ -216,7 +216,7 @@ commit and provenance in the inventory.
 | cargo | foreign-types-macros | 0.2.4 | MIT/Apache-2.0 | [Source](https://crates.io/api/v1/crates/foreign-types-macros/0.2.4/download) |
 | cargo | foreign-types-shared | 0.3.1 | MIT/Apache-2.0 | [Source](https://crates.io/api/v1/crates/foreign-types-shared/0.3.1/download) |
 | cargo | foreign-types | 0.5.0 | MIT/Apache-2.0 | [Source](https://crates.io/api/v1/crates/foreign-types/0.5.0/download) |
-| cargo | form_urlencoded | 1.2.2 | MIT OR Apache-2.0 | [Source](https://crates.io/api/v1/crates/form_urlencoded/1.2.2/download) |
+| cargo | form_urlencoded | 1.2.3 | MIT OR Apache-2.0 | [Source](https://crates.io/api/v1/crates/form_urlencoded/1.2.3/download) |
 | cargo | futures-channel | 0.3.34 | MIT OR Apache-2.0 | [Source](https://crates.io/api/v1/crates/futures-channel/0.3.34/download) |
 | cargo | futures-core | 0.3.34 | MIT OR Apache-2.0 | [Source](https://crates.io/api/v1/crates/futures-core/0.3.34/download) |
 | cargo | futures-executor | 0.3.34 | MIT OR Apache-2.0 | [Source](https://crates.io/api/v1/crates/futures-executor/0.3.34/download) |
@@ -546,7 +546,7 @@ commit and provenance in the inventory.
 | cargo | unicode-ident | 1.0.27 | (MIT OR Apache-2.0) AND Unicode-3.0 | [Source](https://crates.io/api/v1/crates/unicode-ident/1.0.27/download) |
 | cargo | unicode-segmentation | 1.13.3 | MIT OR Apache-2.0 | [Source](https://crates.io/api/v1/crates/unicode-segmentation/1.13.3/download) |
 | cargo | untrusted | 0.9.0 | ISC | [Source](https://crates.io/api/v1/crates/untrusted/0.9.0/download) |
-| cargo | url | 2.5.8 | MIT OR Apache-2.0 | [Source](https://crates.io/api/v1/crates/url/2.5.8/download) |
+| cargo | url | 2.5.9 | MIT OR Apache-2.0 | [Source](https://crates.io/api/v1/crates/url/2.5.9/download) |
 | cargo | urlpattern | 0.6.0 | MIT | [Source](https://crates.io/api/v1/crates/urlpattern/0.6.0/download) |
 | cargo | utf_types | 1.0.0 | Apache-2.0 OR MIT | [Source](https://crates.io/api/v1/crates/utf_types/1.0.0/download) |
 | cargo | utf8_iter | 1.1.0 | Apache-2.0 OR MIT | [Source](https://crates.io/api/v1/crates/utf8_iter/1.1.0/download) |

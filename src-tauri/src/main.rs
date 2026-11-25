@@ -5,6 +5,8 @@ mod bridge;
 mod browser;
 #[cfg(windows)]
 mod browser_capture;
+#[cfg(windows)]
+mod browser_port;
 mod install_location;
 mod native;
 #[cfg(windows)]
@@ -81,7 +83,7 @@ fn workspace_ack(
 }
 
 fn main() {
-    let browser = browser::BrowserState::new();
+    let browser = browser::BrowserState::take();
     let runtime = RuntimeBridge::new();
     let result = tauri::Builder::default()
         .manage(runtime)
@@ -136,6 +138,9 @@ fn main() {
                 }
                 if verification {
                     window = window.title("MemCode — verification");
+                }
+                if let Some(arguments) = app.state::<browser::BrowserState>().app_arguments() {
+                    window = window.additional_browser_args(&arguments);
                 }
                 window
                     .data_directory(webview_data)

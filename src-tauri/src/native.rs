@@ -32,6 +32,14 @@ pub fn profile_dir<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<std::path::P
         .join("webview"))
 }
 
+/// Where workers' pages keep theirs, apart from MemCode's own views.
+#[cfg(windows)]
+pub fn worker_pages_dir<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+) -> Result<std::path::PathBuf, String> {
+    Ok(profile_dir(app)?.with_file_name("webview-workers"))
+}
+
 pub fn main_origin(url: &Url) -> bool {
     matches!(
         (url.scheme(), url.host_str()),
@@ -114,6 +122,29 @@ pub async fn host_call(app: AppHandle, method: &str, input: Value) -> Result<Val
         "open_memcode_beta" => {
             let url = memcode_beta_url(input["url"].as_str().ok_or("Missing beta sign-in URL")?)?;
             tauri::async_runtime::spawn_blocking(move || open_claim(&url))
+                .await
+                .map_err(|e| e.to_string())??;
+            Ok(Value::Null)
+        }
+        "open_slack_install" => {
+            let url = slack_install_url(input["url"].as_str().ok_or("Missing Slack install URL")?)?;
+            tauri::async_runtime::spawn_blocking(move || open_claim(&url))
+                .await
+                .map_err(|e| e.to_string())??;
+            Ok(Value::Null)
+        }
+        "open_inbox_link" => {
+            let url = inbox_link_url(input["url"].as_str().ok_or("Missing link")?)?;
+            tauri::async_runtime::spawn_blocking(move || open_claim(&url))
+                .await
+                .map_err(|e| e.to_string())??;
+            Ok(Value::Null)
+        }
+        "open_saved_file" => {
+            let profile = profile_dir(&app)?;
+            let data = profile.parent().ok_or("Missing profile folder")?;
+            let path = saved_file(input["path"].as_str().ok_or("Missing file")?, data)?;
+            tauri::async_runtime::spawn_blocking(move || open_folder(&path))
                 .await
                 .map_err(|e| e.to_string())??;
             Ok(Value::Null)
@@ -308,6 +339,10 @@ async fn show_preview(app: &AppHandle, input: Value) -> Result<(), String> {
             .on_download(|_,_|false)
             .on_document_title_changed(move |view,title|{let _=titles.emit_to(tauri::EventTarget::Webview {label:"main".into()},"preview:event",json!({"url":view.url().ok().map(|url|url.to_string()).unwrap_or_default(),"title":title}));})
             .on_page_load(move |view,payload|{let _=pages.emit_to(tauri::EventTarget::Webview {label:"main".into()},"preview:event",json!({"url":payload.url().to_string(),"title":"Local preview","event":format!("{:?}",payload.event()),"view":view.label()}));});
+        let builder = match app.state::<crate::browser::BrowserState>().app_arguments() {
+            Some(arguments) => builder.additional_browser_args(&arguments),
+            None => builder,
+        };
         window
             .add_child(
                 builder,
@@ -405,6 +440,84 @@ fn memcode_identity_url(value: &str) -> Result<String, String> {
     Ok(url.to_string())
 }
 
+/// Slack's page for adding MemCode to a workspace, as MemSync builds it.
+fn slack_install_url(value: &str) -> Result<String, String> {
+    let invalid = || "Only Slack's page for adding MemCode can open here".to_string();
+    let url = Url::parse(value).map_err(|_| invalid())?;
+    if value.len() > 4096 || url.scheme() != "https" || url.host_str() != Some("slack.com")
+        || url.path() != "/oauth/v2/authorize" || !url.username().is_empty() || url.password().is_some()
+        || url.port_or_known_default() != Some(443) || url.fragment().is_some() { return Err(invalid()); }
+    let pairs: Vec<_> = url.query_pairs().collect();
+    let names = ["client_id", "scope", "redirect_uri", "state"];
+    if pairs.len() != names.len() || names.iter().any(|name| pairs.iter().filter(|(key, _)| key == name).count() != 1) { return Err(invalid()); }
+    let get = |name: &str| pairs.iter().find(|(key, _)| key == name).map(|(_, value)| value.as_ref()).unwrap_or("");
+    let callback = Url::parse(get("redirect_uri")).map_err(|_| invalid())?;
+    if callback.scheme() != "https" || callback.path() != "/slack/oauth" || !callback.username().is_empty()
+        || callback.query().is_some() || callback.fragment().is_some() { return Err(invalid()); }
+    Ok(url.to_string())
+}
+
+/// A web address someone put in a report. The runtime opens only those a report holds.
+fn inbox_link_url(value: &str) -> Result<String, String> {
+    let invalid = || "Only a web link from a report can open here".to_string();
+    let url = Url::parse(value).map_err(|_| invalid())?;
+    if value.len() > 4096 || !matches!(url.scheme(), "https" | "http") || url.host_str().is_none()
+        || !url.username().is_empty() || url.password().is_some() { return Err(invalid()); }
+    Ok(url.to_string())
+}
+
+/// A file the runtime keeps in the profile, from a report or attached by the person, of a
+/// kind that holds no program.
+fn saved_file(value: &str, data: &std::path::Path) -> Result<String, String> {
+    const KINDS: [&str; 23] = ["pdf", "docx", "xlsx", "pptx", "odt", "ods", "odp", "txt", "log", "md", "csv",
+        "json", "png", "jpg", "jpeg", "gif", "webp", "heic", "mp4", "mov", "webm", "m4a", "mp3"];
+    let invalid = || "Only a file MemCode keeps can open here".to_string();
+    let path = std::path::Path::new(value).canonicalize().map_err(|_| invalid())?;
+    let kind = path.extension().and_then(|kind| kind.to_str()).unwrap_or_default().to_ascii_lowercase();
+    let known = KINDS.contains(&kind.as_str()) || kind == "wav";
+    let kept = ["inbox-files", "attachments"].iter()
+        .filter_map(|folder| data.join(folder).canonicalize().ok())
+        .any(|folder| path.starts_with(&folder));
+    if !kept || !path.is_file() || !known { return Err(invalid()); }
+    Ok(dunce::simplified(&path).to_string_lossy().into_owned())
+}
+
+#[cfg(test)]
+mod inbox_tests {
+    use super::{inbox_link_url, saved_file};
+    #[test]
+    fn a_report_opens_web_links_and_nothing_else() {
+        for value in ["https://acme.slack.com/archives/C1/p1", "https://sentry.io/issues/4f2?a=1#b", "http://localhost:3000/cart"] {
+            assert!(inbox_link_url(value).is_ok(), "rejected {value}");
+        }
+        for value in ["file:///C:/Windows/system32/calc.exe", "javascript:alert(1)", "ms-settings:", "slack://open",
+            "https://user:pass@acme.test/", "\\\\server\\share", "C:\\a.exe", ""] {
+            assert!(inbox_link_url(value).is_err(), "accepted {value}");
+        }
+    }
+    #[test]
+    fn only_a_harmless_file_memcode_keeps_opens() {
+        let data = std::env::temp_dir().join(format!("memcode-inbox-{}", std::process::id()));
+        let kept = data.join("inbox-files").join("ab");
+        std::fs::create_dir_all(&kept).unwrap();
+        for name in ["report.pdf", "Screen shot (2).PNG", "run.exe", "page.html", "macro.docm", "old.rtf"] {
+            std::fs::write(kept.join(name), b"x").unwrap();
+        }
+        std::fs::write(data.join("outside.pdf"), b"x").unwrap();
+        let path = |name: &str| kept.join(name).to_string_lossy().into_owned();
+        assert!(saved_file(&path("report.pdf"), &data).is_ok());
+        assert!(saved_file(&path("Screen shot (2).PNG"), &data).is_ok());
+        let attached = data.join("attachments").join("cd");
+        std::fs::create_dir_all(&attached).unwrap();
+        std::fs::write(attached.join("plan.pptx"), b"x").unwrap();
+        assert!(saved_file(&attached.join("plan.pptx").to_string_lossy(), &data).is_ok());
+        for name in ["run.exe", "page.html", "macro.docm", "missing.pdf", "../../outside.pdf"] {
+            assert!(saved_file(&path(name), &data).is_err(), "accepted {name}");
+        }
+        std::fs::remove_dir_all(&data).unwrap();
+    }
+}
+
 fn memcode_beta_url(value: &str) -> Result<String, String> {
     let invalid = || "Only the official Memtrace beta authorization can open here".to_string();
     let url = Url::parse(value).map_err(|_| invalid())?;
@@ -444,7 +557,7 @@ mod beta_url_tests {
 
 #[cfg(test)]
 mod claim_url_tests {
-    use super::{github_pull_request_url, memcode_identity_url, memtrace_claim_url};
+    use super::{github_pull_request_url, memcode_identity_url, memtrace_claim_url, slack_install_url};
     #[test]
     fn pull_request_opener_accepts_only_github_pull_and_compare_pages() {
         for value in [
@@ -472,6 +585,11 @@ mod claim_url_tests {
     #[test]
     fn claim_url_accepts_only_the_official_device_claim() {
         assert!(memtrace_claim_url("https://memtrace.io/claim?code=ABCD-1234").is_ok());
+        let slack = "https://slack.com/oauth/v2/authorize?client_id=123.456&scope=app_mentions%3Aread&redirect_uri=https%3A%2F%2Fsync.hosted.memtrace.io%2Fslack%2Foauth&state=1.2.v0%3Dab";
+        assert!(slack_install_url(slack).is_ok());
+        for bad in [slack.replace("slack.com", "slack.com.evil.test"), slack.replace("https:", "http:"), slack.replace("/oauth/v2/authorize", "/oauth/other"), format!("{slack}&extra=1"), format!("{slack}#x"), slack.replace("https%3A%2F%2Fsync", "http%3A%2F%2Fsync")] {
+            assert!(slack_install_url(&bad).is_err(), "{bad}");
+        }
         for value in [
             "http://memtrace.io/claim?code=ABCD-1234",
             "https://memtrace.io.evil.test/claim?code=ABCD-1234",

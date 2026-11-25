@@ -18,6 +18,7 @@ import {
   sameDisplayedMessage,
   toolMessageParts,
 } from "../conversation-performance";
+import { MessageFiles } from "./Attachments";
 import { HarnessMark, Time } from "./UI";
 
 const MessageMarkdown = lazy(() => import("./MessageMarkdown"));
@@ -133,6 +134,9 @@ const ConversationMessage = memo(
             </Suspense>
           ) : (
             message.text
+          )}
+          {!!message.attachments?.length && (
+            <MessageFiles files={message.attachments} />
           )}
         </div>
       </article>

@@ -731,7 +731,7 @@ function runCodexSession(options: AgentSessionOptions, inspect?: (result: CodexC
       emit({ type: "prompted" });
       const turn = await request("turn/start", {
         threadId,
-        input: [{ type: "text", text: options.prompt }],
+        input: codexInput(options),
         ...(selected ? { model: selected } : {}),
         ...(selectedEffort ? { effort: selectedEffort } : {}),
         approvalPolicy: policy,
@@ -768,4 +768,15 @@ function runCodexSession(options: AgentSessionOptions, inspect?: (result: CodexC
       finish({ exitCode: 130, error: "Codex worker stopped." });
     },
   };
+}
+
+/** The prompt, with the request's images by their path. A local model may have no sight. */
+export function codexInput(
+  options: Pick<AgentSessionOptions, "prompt" | "images" | "localModel">,
+) {
+  const images = options.localModel ? [] : (options.images ?? []);
+  return [
+    { type: "text" as const, text: options.prompt },
+    ...images.map((image) => ({ type: "localImage" as const, path: image.path })),
+  ];
 }

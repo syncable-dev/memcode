@@ -8,6 +8,7 @@ import { initialState } from "../src/seed";
 import { restartSafeState } from "../src/domain";
 import type { Harness, Message, Project, WorkItem } from "../src/shared";
 import { WorkerManager } from "../runtime/workers";
+import { AttachmentStore } from "../runtime/attachments";
 import { reviewContext } from "../runtime/review-context";
 import { registerReview } from "../runtime/review";
 import { git, within } from "../runtime/local";
@@ -183,6 +184,8 @@ process.exit(${options.fail ? 7 : 0});`,
     releaseSettlement = resolve;
   });
   const resumedSessions: (string | undefined)[] = [];
+  const attachments = new AttachmentStore(join(root, "profile"));
+  const shownImages: string[][] = [];
   const manager = new WorkerManager(
     () => state,
     async () => {
@@ -263,8 +266,19 @@ process.exit(${options.fail ? 7 : 0});`,
           session.onEvent({type: "message", role: "assistant", text, delta: true,
             messageId: "cursor:fixture-provider-session:1"});
       }
+      shownImages.push((session.images ?? []).map((image) => basename(image.path)));
       return startPrintFixtureSession(harness, session);
     },
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    attachments,
   );
   const runs = async (task: WorkItem) =>
     JSON.parse(
@@ -295,6 +309,8 @@ process.exit(${options.fail ? 7 : 0});`,
     tasks,
     manager,
     resumedSessions,
+    shownImages,
+    attachments,
     runs,
     release,
     enqueue,
@@ -450,6 +466,48 @@ test("all three adapters automatically coalesce busy follow-ups after Fleet clea
     } finally {
       await f.cleanup();
     }
+  }
+});
+
+test("a worker process gets the files attached to its request in its own folder, and later ones too", async () => {
+  const f = await fixture(["claude"]);
+  const task = f.tasks[0];
+  const keep = (name: string, mime: string, text: string) =>
+    f.attachments.add({ name, mime, base64: Buffer.from(text).toString("base64") });
+  try {
+    const picture = { ...(await keep("login.png", "image/png", "png")), note: "The dead button" };
+    const first = note("Fix the login button");
+    first.attachments = [picture];
+    task.messages.push(first);
+    f.manager.enqueue(task, first.id);
+    f.manager.dispatchQueued();
+    await until(async () => (await f.runs(task)).length === 1, "first pass", () => workerDiagnostics(task));
+    await f.release(task, 1);
+    await until(() => task.run.state === "finished", "first pass complete", () => workerDiagnostics(task));
+    const [{ prompt }] = await f.runs(task);
+    const listed = prompt.match(/- (\.memcode\/workers\/\S+-login\.png) \(Image, 1 KB\)/)?.[1];
+    assert.ok(listed, prompt.slice(-800));
+    assert.match(prompt, /What the person says it shows: The dead button/);
+    assert.ok(prompt.indexOf("Fix the login button", prompt.indexOf("CURRENT REQUESTS")) < prompt.indexOf(listed));
+    assert.equal(await readFile(join(task.run.workspace ?? f.repo, listed), "utf8"), "png");
+    assert.deepEqual(f.shownImages[0], [basename(listed)]);
+
+    const second = note("Also see this log");
+    second.attachments = [await keep("server.log", "text/plain", "boom")];
+    task.messages.push(second);
+    f.manager.enqueue(task, second.id);
+    f.manager.dispatchQueued();
+    await until(async () => (await f.runs(task)).length === 2, "second pass", () => workerDiagnostics(task));
+    const later = (await f.runs(task))[1].prompt;
+    await f.release(task, 2);
+    const current = later.indexOf("CURRENT REQUESTS", later.indexOf("FROM EARLIER"));
+    assert.ok(later.indexOf("-login.png") > later.indexOf("FROM EARLIER IN THE CONVERSATION"));
+    assert.ok(later.indexOf("-login.png") < current, "the earlier file is named before the current request");
+    assert.ok(later.indexOf("-server.log") > current);
+    assert.deepEqual(f.shownImages[1], [], "only the current request's images are shown again");
+    await until(() => task.run.state === "finished", "second pass complete", () => workerDiagnostics(task));
+  } finally {
+    await f.cleanup();
   }
 });
 

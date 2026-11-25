@@ -1,8 +1,8 @@
 {
   "scope": "Resolved production npm dependencies and Cargo lockfile dependencies, including target-specific entries. Some Cargo entries are build-only, not shipped executable code.",
   "inputs": {
-    "packageLockSha256": "0abaa618cf92994618bfb72b18a76e0c0ca9ad74cbc7e68268589f326c27dbe6",
-    "cargoLockSha256": "6b3406f70d6c66bfbd678dd677836545f0f9d2b8ae03e38ee7a9296b6345ba9b"
+    "packageLockSha256": "82c7722a38792a561364d068d67d2718c9a4abf9f1a35de7b20a85f0b9c34b33",
+    "cargoLockSha256": "d5e70510fdbd78571e4af9fabfd8627d82a5a1a66559a027d07f6ebe29ea17f3"
   },
   "packages": [
     {
@@ -2086,16 +2086,16 @@
     {
       "ecosystem": "cargo",
       "name": "form_urlencoded",
-      "version": "1.2.2",
+      "version": "1.2.3",
       "license": "MIT OR Apache-2.0",
-      "source": "https://crates.io/api/v1/crates/form_urlencoded/1.2.2/download",
+      "source": "https://crates.io/api/v1/crates/form_urlencoded/1.2.3/download",
       "notices": [
         {
-          "file": "licenses/cargo/form_urlencoded-1.2.2/LICENSE-APACHE",
+          "file": "licenses/cargo/form_urlencoded-1.2.3/LICENSE-APACHE",
           "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
         },
         {
-          "file": "licenses/cargo/form_urlencoded-1.2.2/LICENSE-MIT",
+          "file": "licenses/cargo/form_urlencoded-1.2.3/LICENSE-MIT",
           "sha256": "20c7855c364d57ea4c97889a5e8d98470a9952dade37bd9248b9a54431670e5e"
         }
       ]
@@ -7430,16 +7430,16 @@
     {
       "ecosystem": "cargo",
       "name": "url",
-      "version": "2.5.8",
+      "version": "2.5.9",
       "license": "MIT OR Apache-2.0",
-      "source": "https://crates.io/api/v1/crates/url/2.5.8/download",
+      "source": "https://crates.io/api/v1/crates/url/2.5.9/download",
       "notices": [
         {
-          "file": "licenses/cargo/url-2.5.8/LICENSE-APACHE",
+          "file": "licenses/cargo/url-2.5.9/LICENSE-APACHE",
           "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
         },
         {
-          "file": "licenses/cargo/url-2.5.8/LICENSE-MIT",
+          "file": "licenses/cargo/url-2.5.9/LICENSE-MIT",
           "sha256": "b38f11f6096706e6de553dabe2a7ed142d59b6fa8c97e290c67496154745cdd5"
         }
       ]

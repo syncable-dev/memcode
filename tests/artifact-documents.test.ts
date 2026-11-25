@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile, realpath } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { initialState } from "../src/seed";
@@ -85,6 +85,60 @@ test("document preview switches keep their asset capabilities valid and the late
     );
   } finally {
     await previews.close();
+  }
+});
+test("a file that belongs to no task is shown in the isolated viewer and cannot be commented on", async () => {
+  const folder = await mkdtemp(join(tmpdir(), "memcode-file-preview-"));
+  const path = join(folder, "Plan.pdf");
+  await writeFile(path, "%PDF-1.7 hello");
+  await writeFile(join(folder, "secret.txt"), "not asked for");
+  const shown: string[] = [];
+  const events: unknown[] = [];
+  const previews = new PreviewManager(
+    {
+      call: async (method: string, input: any) => {
+        if (method === "preview_show") shown.push(input.url);
+        return undefined;
+      },
+    } as NativeHost,
+    initialState,
+    folder,
+    async () => {},
+    (...event) => void events.push(event),
+    resolve("."),
+  );
+  const bounds = { x: 0, y: 0, width: 800, height: 600 };
+  const file = { path, name: "Plan.pdf", revision: "ab", bounds };
+  try {
+    await previews.showFile(file);
+    await previews.showFile({ ...file, bounds: { ...bounds, width: 700 } });
+    assert.equal(shown.length, 2);
+    assert.equal(shown[0], shown[1], "moving it does not load it again");
+    const meta = await fetch(new URL("__meta", shown[0])).then((r) => r.json());
+    assert.deepEqual(
+      [meta.format, meta.name, meta.readOnly],
+      ["pdf", "Plan.pdf", true],
+    );
+    const document = await fetch(new URL("__document", shown[0]));
+    assert.equal(await document.text(), "%PDF-1.7 hello");
+    assert.equal((await fetch(new URL("__asset/secret.txt", shown[0]))).status, 400);
+    const review = await fetch(new URL("__review", shown[0]), {
+      method: "POST",
+      headers: { origin: new URL(shown[0]).origin },
+      body: JSON.stringify({ action: "link", href: "https://evil.test" }),
+    });
+    assert.equal(review.status, 400);
+    assert.ok(
+      events.every((event) => (event as string[])[0] !== "review:event"),
+      "no comment or link reaches the app",
+    );
+    await assert.rejects(
+      previews.showFile({ ...file, name: "page.html" }),
+      /does not show this kind of file/,
+    );
+  } finally {
+    await previews.close();
+    await rm(folder, { recursive: true, force: true });
   }
 });
 test("Office previews reject oversized or encrypted archive metadata before inflating it", () => {

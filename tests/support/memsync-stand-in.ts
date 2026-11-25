@@ -12,6 +12,8 @@ import { ownerCalls, ownerContract } from "./memsync-owner";
 import { standInBoardLogs } from "./memsync-stand-in-boards";
 import { cardsCalls } from "../../runtime/sharing/memsync/cards-contract";
 import { standInCards } from "./memsync-stand-in-cards";
+import { standInSlack } from "./memsync-stand-in-slack";
+import { slackCalls } from "../../runtime/sharing/memsync/slack-contract";
 
 /** Someone a token signs in. `email` is their verified address, if they have one. */
 export interface StandInPerson {
@@ -150,6 +152,15 @@ export async function startStandInMemsync() {
   });
 
   const cards = standInCards({
+    isOnProject: (id, person) => {
+      const project = projects.get(id);
+      return !!project && isOn(project, person);
+    },
+    now: () => now,
+    refuse,
+  });
+
+  const slack = standInSlack({
     isOnProject: (id, person) => {
       const project = projects.get(id);
       return !!project && isOn(project, person);
@@ -320,6 +331,13 @@ export async function startStandInMemsync() {
           caller,
           body,
         );
+      if (method in slackCalls)
+        return slack.answer(
+          stream,
+          method as keyof typeof slackCalls,
+          caller,
+          body,
+        );
       if (method in boardsCalls)
         return boards.answer(
           stream,
@@ -415,6 +433,8 @@ export async function startStandInMemsync() {
     boards,
     /** The card logs and files, with what a test may do to them. */
     cards,
+    /** The Slack workspaces connected to projects, with what a test may do to them. */
+    slack,
     async close() {
       sessions.forEach((session) => session.destroy());
       await new Promise<void>((resolve) => server.close(() => resolve()));

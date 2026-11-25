@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { chromium, expect } from "@playwright/test";
 import { nativeEnv, nativeBinary } from "./tauri-env.mjs";
+import { connectWorkerPages } from "./worker-pages.mjs";
 
 const profile = await mkdtemp(join(tmpdir(), "memcode-native-browser-"));
 const reservation = createServer();
@@ -128,7 +129,22 @@ try {
   assert.equal(opened.state.nativeSurface, true);
   await expect(main.locator(".native-browser-surface")).toBeVisible();
   assert.equal(await main.locator(".worker-browser-viewport img").count(), 0);
-  const guest = browser
+  const workers = await connectWorkerPages(profile);
+  const urlsIn = (one) =>
+    one
+      .contexts()
+      .flatMap((c) => c.pages())
+      .map((p) => p.url());
+  assert.ok(
+    urlsIn(workers).every((page) => !/tauri\.localhost|127\.0\.0\.1:5197/.test(page)),
+    "Workers' browser shows MemCode's window: " + urlsIn(workers).join(", "),
+  );
+  assert.ok(
+    urlsIn(browser).every((page) => !page.startsWith(url)),
+    "MemCode's browser shows a worker's page: " + urlsIn(browser).join(", "),
+  );
+  console.log("Workers' pages and MemCode's window are in separate browsers.");
+  const guest = workers
     .contexts()
     .flatMap((c) => c.pages())
     .find((p) => p.url() === url + "/one");
@@ -191,9 +207,7 @@ try {
     )
     .toBe(true);
   // Independently inspect the committed WebView2 replacement target.
-  const fresh = await chromium.connectOverCDP("http://127.0.0.1:" + port, {
-    timeout: 10000,
-  });
+  const fresh = await connectWorkerPages(profile);
   const popup = fresh
     .contexts()
     .flatMap((context) => context.pages())
@@ -202,7 +216,7 @@ try {
     popup,
     "Live popup missing. Actual targets: " +
       JSON.stringify(
-        browser
+        workers
           .contexts()
           .flatMap((c) => c.pages())
           .map((p) => p.url()),
@@ -245,7 +259,7 @@ try {
     Buffer.from(background.image.data, "base64"),
   );
   console.log("Offscreen native capture passed.");
-  const isolated = browser
+  const isolated = workers
     .contexts()
     .flatMap((c) => c.pages())
     .find((p) => p.url() === url + "/other-card");
@@ -290,6 +304,7 @@ try {
     concurrentNativeStartup: true,
     rpcDuringNativeWork: true,
     noAppBridge: true,
+    separateBrowsers: true,
     bitmapPreview: false,
   };
 } catch (error) {

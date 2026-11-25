@@ -371,3 +371,18 @@ test("a logged update travels with its bytes, its number and its time intact", (
     logged,
   );
 });
+
+test("what MemCode reads and writes of a project's Slack channels is what the contract says", async () => {
+  const { slackCalls, slackContract, slackService } = await import(
+    "../runtime/sharing/memsync/slack-contract"
+  );
+  const contract = await contractIn("slack.proto");
+  assert.equal(`${contract.package}.${contract.service}`, slackService);
+  assert.deepEqual(
+    Object.keys(contract.calls).sort(),
+    Object.keys(slackCalls).sort(),
+  );
+  for (const [name, call] of Object.entries(slackCalls))
+    assert.deepEqual(contract.calls[name], call, `call ${name}`);
+  assert.deepEqual(written(slackContract), contract.messages);
+});

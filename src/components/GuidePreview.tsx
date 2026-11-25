@@ -25,33 +25,10 @@ import {
 } from "lucide-react";
 import { HarnessMark, StageIcon } from "./UI";
 import { CodeReviewGuidePreview } from "./CodeReviewGuidePreview";
+import { Action, Label, Row } from "./GuideParts";
+import { integrationScenes } from "./IntegrationGuidePreviews";
 import "../styles-guide-preview.css";
 
-function Row({
-  children,
-  className = "",
-}: {
-  children: ReactNode;
-  className?: string;
-}) {
-  return <div className={`guide-preview-row ${className}`}>{children}</div>;
-}
-function Label({ children }: { children: ReactNode }) {
-  return <span className="guide-preview-label">{children}</span>;
-}
-function Action({
-  children,
-  quiet = false,
-}: {
-  children: ReactNode;
-  quiet?: boolean;
-}) {
-  return (
-    <span className={`guide-preview-action ${quiet ? "quiet" : ""}`}>
-      {children}
-    </span>
-  );
-}
 function Tabs({ active, items }: { active: string; items: string[] }) {
   return (
     <div className="guide-preview-tabs">
@@ -959,7 +936,9 @@ export const GuidePreview = memo(function GuidePreview({
 }) {
   if (topic === "review") return <CodeReviewGuidePreview />;
   let scene: ReactNode;
-  if (topic === "projects") scene = <ProjectPreview />;
+  const Integration = integrationScenes[topic];
+  if (Integration) scene = <Integration />;
+  else if (topic === "projects") scene = <ProjectPreview />;
   else if (topic === "workers" || topic === "privacy")
     scene = <WorkerPreview privacy={topic === "privacy"} />;
   else if (topic === "epics") scene = <NewWorkPreview />;

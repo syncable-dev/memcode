@@ -554,9 +554,10 @@ body:has(.sheet-viewer) .viewer-selection > span {
   flex: 1;
   min-height: 0;
   overflow: auto;
+  scrollbar-gutter: stable;
   padding: 35px 24px;
 }
-.slide-stage > div {
+.slide-stage > div > div {
   margin: 0 auto;
   box-shadow: 0 5px 30px #15311710;
 }

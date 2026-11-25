@@ -222,6 +222,17 @@ export async function installNativeBridge(): Promise<void> {
     openSharedProject: (sharedProjectId) =>
       call("sharing:open", { sharedProjectId }),
     joinSharedProject: (input) => call("sharing:join", input),
+    projectInbox: (projectId) => call("sharing:inbox", { projectId }),
+    addToSlack: (projectId) => call("sharing:add-to-slack", { projectId }),
+    disconnectSlack: (input) => call("sharing:disconnect-slack", input),
+    linkSlackChannel: (input) => call("sharing:link-slack", input),
+    unlinkSlackChannel: (input) => call("sharing:unlink-slack", input),
+    decideInboxItem: (input) => call("sharing:decide-inbox-item", input),
+    inboxFile: (input) => call("sharing:inbox-file", input),
+    inboxThumbnail: (input) => call("inbox:thumbnail", input),
+    showInboxFile: (input) => call("inbox:show-file", input),
+    openInboxFile: (input) => call("sharing:open-inbox-file", input),
+    openInboxLink: (input) => call("sharing:open-inbox-link", input),
     teamsList: () => call("team:list"),
     createTeamWorkspace: (input) => call("team:create-workspace", input),
     shareTeamProject: (input) => call("team:share-project", input),
@@ -313,12 +324,17 @@ export async function installNativeBridge(): Promise<void> {
     retrievalStatus: () => call("retrieval:status"),
     installRetrieval: () => call("retrieval:setup"),
     configureRetrieval: (settings) => call("retrieval:configure", settings),
-    sendFollowup: (taskId, text, ids) =>
-      call("review:send", { taskId, text, ids }),
+    sendFollowup: (taskId, text, ids, attachments) =>
+      call("review:send", { taskId, text, ids, attachments }),
+    addAttachment: (input) => call("attachment:add", input),
+    attachmentBytes: (file) => call("attachment:read", file),
+    attachmentThumbnail: (file) => call("attachment:thumbnail", file),
+    showAttachment: (input) => call("attachment:show", input),
+    openAttachment: (file) => call("attachment:open", file),
     saveReviewComment: (input) => call("review:save", input),
     deleteReviewComment: (taskId, id) => call("review:delete", { taskId, id }),
-    shareReviewComments: (taskId, ids, text) =>
-      call("review:share", { taskId, ids, text }),
+    shareReviewComments: (taskId, ids, text, attachments) =>
+      call("review:share", { taskId, ids, text, attachments }),
     resolveFile: (taskId, href, basePath) =>
       call("file:resolve", { taskId, href, basePath }),
     onReview: (listener) => {
@@ -360,8 +376,8 @@ export async function installNativeBridge(): Promise<void> {
       call("intelligence:refresh", { projectId, refreshIndex }),
     queryIntelligence: (projectId, section, input) =>
       call("intelligence:query", { projectId, section, input }),
-    addMessage: (id, text, references) =>
-      call("task:message", { id, text, references }),
+    addMessage: (id, text, references, attachments) =>
+      call("task:message", { id, text, references, attachments }),
     qualifyTask: (id) => call("task:qualify", id),
     startWorker: (id) => call("worker:start", id),
     getCodeReview: (taskId) => call("code-review:get", { taskId }),

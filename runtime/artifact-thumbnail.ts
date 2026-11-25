@@ -47,6 +47,10 @@ function decode(value: string) {
     },
   );
 }
+/** The words of a piece of XML, without its tags. */
+export function xmlText(value: string) {
+  return text(value);
+}
 function text(value: string) {
   return decode(value.replace(/<[^>]*>/g, ""))
     .replace(/\s+/g, " ")
@@ -154,7 +158,7 @@ function office(
 }
 
 export async function readArtifactThumbnail(
-  artifact: Artifact,
+  artifact: Pick<Artifact, "name" | "path">,
   roots: string[],
 ): Promise<ArtifactThumbnail> {
   const path = await realpath(artifact.path);

@@ -73,7 +73,10 @@ export default function Presentation({ bytes }: { bytes: ArrayBuffer }) {
           {error}
         </div>
       )}
-      <div className="slide-stage" data-page={slide + 1} ref={container} />
+      <div className="slide-stage" data-page={slide + 1}>
+        {/* The slide is fitted to this, which has no padding of its own. */}
+        <div ref={container} />
+      </div>
     </div>
   );
 }

@@ -16,6 +16,7 @@ import { initialState } from "../src/seed.ts";
 import { WorkerChangeJournal } from "../runtime/changes.ts";
 import { git } from "../runtime/local.ts";
 import { nativeEnv, nativeBinary } from "./tauri-env.mjs";
+import { connectWorkerPages } from "./worker-pages.mjs";
 
 const fixtureDirectory = resolve(
   process.env.MEMCODE_REVIEW_FIXTURE_DIR ?? "tmp/verification-fixtures",
@@ -694,10 +695,11 @@ try {
     "Browser",
   );
   let page;
+  const workers = await connectWorkerPages(profile);
   await expect
     .poll(
       () => {
-        page = browser
+        page = workers
           .contexts()
           .flatMap((c) => c.pages())
           .find((p) => p.url() === webURL);
