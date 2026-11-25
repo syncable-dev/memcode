@@ -574,3 +574,26 @@
     animation: none;
   }
 }
+.nw-ask.long {
+  min-height: 190px;
+}
+.nw-reported {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.nw-attach {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.nw-attach > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.nw-body .attached-files {
+  padding: 0;
+}

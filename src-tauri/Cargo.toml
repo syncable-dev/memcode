@@ -1,6 +1,6 @@
 [package]
 name = "memcode"
-version = "0.4.0-beta.23"
+version = "0.4.0-beta.24"
 license = "PolyForm-Noncommercial-1.0.0"
 edition = "2021"
 rust-version = "1.90"
@@ -33,7 +33,7 @@ tauri = { version = "=2.12.5", features = ["test"] }
 wry = "=0.57.2"
 webview2-com = "=0.39.1"
 windows = { version = "=0.62.2", features = ["Win32_Foundation", "Win32_System_Com", "Win32_System_Com_StructuredStorage"] }
-windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_NetworkManagement_IpHelper", "Win32_Networking_WinSock", "Win32_UI_WindowsAndMessaging"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = "=3.7.0"

@@ -214,6 +214,8 @@ export interface Message {
   text: string;
   at: string;
   references?: import("./review").ReviewReference[];
+  /** Files the person put into the message. */
+  attachments?: import("./attachments").Attachment[];
   commentIds?: string[];
   reviewText?: string;
   /** Included in a successfully spawned worker brief, not proof it was applied. */
@@ -433,6 +435,8 @@ export interface TeamInvite {
 export interface AppState {
   /** Which shared project each local project's board belongs to, on this computer. */
   sharedProjectLinks?: import("./sharing").SharedProjectLink[];
+  /** The Inboxes of projects that are not shared. */
+  inboxLinks?: import("./sharing").InboxLink[];
   /** How each connected board stands right now. Worked out again on every start. */
   sharedBoards?: import("./sharing").SharedBoardStatus[];
   reviewWorkflows?: Record<
@@ -517,6 +521,8 @@ export interface CreateTask extends TaskPlanningFields {
   runbook?: string[];
   /** Files the task plans to change. Its edits to them are recorded as its own. */
   scope?: string[];
+  /** Files the request came with. */
+  attachments?: import("./attachments").Attachment[];
 }
 export interface ProjectInput {
   mode: "existing" | "new";
@@ -557,6 +563,53 @@ export interface MemCodeAPI extends CodeReviewAPI {
   ): Promise<import("./local-analysis").LocalAnalysisDiagnostics>;
   /** The signed-in person's shared projects and invitations, or why they cannot be shown. */
   sharingOverview(): Promise<import("./sharing").SharingOverview>;
+  /** A shared project's Inbox of reports from Slack, and its linked channels. */
+  projectInbox(projectId: string): Promise<import("./inbox").ProjectInbox>;
+  /** Opens Slack's install page; approving it connects the workspace to the project. */
+  addToSlack(projectId: string): Promise<void>;
+  disconnectSlack(input: {
+    projectId: string;
+    teamId: string;
+  }): Promise<import("./inbox").ProjectInbox>;
+  linkSlackChannel(input: {
+    projectId: string;
+    code: string;
+  }): Promise<import("./inbox").ProjectInbox>;
+  unlinkSlackChannel(input: {
+    projectId: string;
+    teamId: string;
+    channelId: string;
+  }): Promise<import("./inbox").ProjectInbox>;
+  decideInboxItem(input: {
+    projectId: string;
+    itemId: string;
+    decision: import("./inbox").InboxDecision;
+  }): Promise<import("./inbox").ProjectInbox>;
+  inboxFile(input: {
+    projectId: string;
+    sha256: string;
+  }): Promise<{ base64: string }>;
+  /** A small, inert preview of a file a report brought. */
+  inboxThumbnail(input: {
+    projectId: string;
+    sha256: string;
+    name: string;
+  }): Promise<import("./artifact-thumbnail").ArtifactThumbnail>;
+  /** Shows a document a report brought in the isolated viewer, over this part of the window. */
+  showInboxFile(input: {
+    projectId: string;
+    sha256: string;
+    name: string;
+    bounds: PreviewInput["bounds"];
+  }): Promise<void>;
+  /** Opens a file a report brought in this computer's own program for it. */
+  openInboxFile(input: {
+    projectId: string;
+    sha256: string;
+    name: string;
+  }): Promise<void>;
+  /** Opens a link that a report in the project's Inbox holds, in the person's browser. */
+  openInboxLink(input: { projectId: string; url: string }): Promise<void>;
   acceptSharedInvitation(input: {
     projectId: string;
     invitationId: string;
@@ -801,7 +854,32 @@ export interface MemCodeAPI extends CodeReviewAPI {
     taskId: string,
     text: string,
     commentIds?: string[],
+    attachments?: import("./attachments").Attachment[],
   ): Promise<{ messageId: string }>;
+  /** Keeps a file someone attached, in MemCode's own folder. */
+  addAttachment(input: {
+    name: string;
+    mime: string;
+    base64: string;
+    text?: string;
+    from?: string;
+  }): Promise<import("./attachments").Attachment>;
+  attachmentBytes(file: {
+    sha256: string;
+    name: string;
+  }): Promise<{ base64: string }>;
+  attachmentThumbnail(file: {
+    sha256: string;
+    name: string;
+  }): Promise<import("./artifact-thumbnail").ArtifactThumbnail>;
+  /** Shows an attached document in the isolated viewer, over this part of the window. */
+  showAttachment(file: {
+    sha256: string;
+    name: string;
+    bounds: PreviewInput["bounds"];
+  }): Promise<void>;
+  /** Opens an attached file in this computer's own program for it. */
+  openAttachment(file: { sha256: string; name: string }): Promise<void>;
   saveReviewComment(input: {
     id?: string;
     taskId: string;
@@ -813,6 +891,7 @@ export interface MemCodeAPI extends CodeReviewAPI {
     taskId: string,
     ids: string[],
     text: string,
+    attachments?: import("./attachments").Attachment[],
   ): Promise<string>;
   resolveFile(
     taskId: string,
@@ -877,6 +956,7 @@ export interface MemCodeAPI extends CodeReviewAPI {
     id: string,
     text: string,
     references?: import("./review").ReviewReference[],
+    attachments?: import("./attachments").Attachment[],
   ): Promise<void>;
   qualifyTask(id: string): Promise<void>;
   startWorker(id: string): Promise<void>;
@@ -899,6 +979,7 @@ export interface MemCodeAPI extends CodeReviewAPI {
   planGoal(input: {
     projectId: string;
     request: string;
+    attachments?: import("./attachments").Attachment[];
     harness: Harness;
   }): Promise<import("./goal-plan").WorkPlan>;
   updateGoalFromBase(epicId: string): Promise<{

@@ -1,0 +1,227 @@
+.integrations {
+  display: grid;
+  gap: 14px;
+  color: var(--ink);
+}
+.integrations-intro {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.integrations-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.integrations-search {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 7px;
+  min-width: 180px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--white);
+  color: var(--muted);
+}
+.integrations-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+}
+.integrations-filter {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--white);
+}
+.integrations-filter button {
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+.integrations-filter button.active {
+  background: var(--mint-wash);
+  color: var(--ink);
+}
+.integrations-list {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--white);
+}
+.integration-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 14px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+.integration-row + .integration-row {
+  border-top: 1px solid var(--line);
+}
+.integration-row:hover {
+  background: var(--paper);
+}
+.integration-row-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.integration-row-text strong {
+  font-size: 14px;
+}
+.integration-row-text span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.integration-chevron {
+  color: var(--muted);
+}
+.integration-mark {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  background: var(--paper);
+  color: var(--muted);
+}
+.integration-mark.slack {
+  background: #fff;
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.integration-mark.large {
+  width: 44px;
+  height: 44px;
+  border-radius: 11px;
+}
+.integration-state {
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: var(--paper);
+  color: var(--muted);
+  font-size: 11px;
+  font-style: normal;
+  white-space: nowrap;
+}
+.integration-state.on {
+  background: var(--mint-wash);
+  color: var(--mint-ink);
+}
+.integration-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 2px 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.integrations-list .integration-note {
+  padding: 16px 14px;
+}
+.integration-back {
+  display: inline-flex;
+  justify-self: start;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+.integration-back:hover {
+  color: var(--ink);
+}
+.integration-page {
+  display: grid;
+  gap: 18px;
+}
+.integration-page-header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 14px;
+}
+.integration-page-header h3 {
+  margin: 0 0 4px;
+  font-size: 18px;
+}
+.integration-page-header p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.integration-page section {
+  display: grid;
+  gap: 8px;
+}
+.integration-page h4 {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.integration-connection {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--white);
+}
+.integration-connection > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.integration-connection strong {
+  font-size: 13px;
+}
+.integration-connection span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.integration-how {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.55;
+}

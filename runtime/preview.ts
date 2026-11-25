@@ -62,6 +62,8 @@ interface Resource {
     line?: number;
     focusedCommentId?: string;
     focusVersion?: number;
+    /** It belongs to no task: it is shown, and cannot be commented on. */
+    readOnly?: boolean;
   };
 }
 
@@ -140,24 +142,9 @@ export class PreviewManager {
           line: input.line,
         };
         if (format !== "html") {
-          const development = join(this.appPath, "dist-artifact-viewer");
-          const packaged = join(this.appPath, "artifact-viewer");
-          const viewer = await realpath(
-            await stat(development)
-              .then(() => development)
-              .catch(() => packaged),
-          );
-          if (
-            !(
-              await stat(join(viewer, "index.html")).catch(() => null)
-            )?.isFile()
-          )
-            throw Error(
-              "Build the artifact viewer before opening this document.",
-            );
           resource = {
             ...resource,
-            root: viewer,
+            root: await this.viewerFolder(),
             entry: "index.html",
             document: {
               path,
@@ -208,6 +195,61 @@ export class PreviewManager {
         ? this.state().artifacts.find((a) => a.id === input.artifactId)?.name
         : "Local preview",
     });
+  }
+  /** Shows a saved file that belongs to no task, in the same isolated viewer. */
+  async showFile(input: {
+    path: string;
+    name: string;
+    revision: string;
+    bounds: PreviewInput["bounds"];
+  }): Promise<void> {
+    const generation = ++this.generation;
+    const format = artifactFormat(input.name);
+    if (format === "html" || format === "unsupported")
+      throw new Error("MemCode does not show this kind of file.");
+    const key = `file:${input.path}:${input.revision}`;
+    if (key !== this.key) {
+      const resource: Resource = {
+        token: randomBytes(20).toString("hex"),
+        root: await this.viewerFolder(),
+        entry: "index.html",
+        document: {
+          path: await realpath(input.path),
+          format,
+          name: input.name,
+          taskId: "",
+          revision: input.revision,
+          readOnly: true,
+        },
+      };
+      if (generation !== this.generation) return;
+      this.resources.set(resource.token, resource);
+      while (this.resources.size > 16)
+        this.resources.delete(this.resources.keys().next().value!);
+      this.resource = resource;
+      this.key = key;
+    }
+    await this.listen();
+    if (generation !== this.generation) return;
+    this.owner = "";
+    this.bounds = input.bounds;
+    this.visible = true;
+    await this.native(generation, "preview_show", {
+      url: `${this.origin}/p/${this.resource!.token}/index.html`,
+      bounds: input.bounds,
+    });
+  }
+  private async viewerFolder() {
+    const development = join(this.appPath, "dist-artifact-viewer");
+    const packaged = join(this.appPath, "artifact-viewer");
+    const viewer = await realpath(
+      await stat(development)
+        .then(() => development)
+        .catch(() => packaged),
+    );
+    if (!(await stat(join(viewer, "index.html")).catch(() => null))?.isFile())
+      throw Error("Build the artifact viewer before opening this document.");
+    return viewer;
   }
   async hide(): Promise<void> {
     const generation = ++this.generation;
@@ -359,6 +401,7 @@ export class PreviewManager {
               name: resource.document.name,
               line: resource.document.line,
               revision: resource.document.revision,
+              readOnly: resource.document.readOnly,
             }),
           );
           return;
@@ -389,6 +432,8 @@ export class PreviewManager {
             request.headers.origin !== this.origin
           )
             throw Error("Comments must originate in the open file viewer.");
+          if (resource.document.readOnly)
+            throw Error("This file cannot be commented on.");
           let body = "";
           for await (const chunk of request) {
             body += chunk.toString("utf8");

@@ -204,3 +204,47 @@ test("the planner asks the chosen harness read-only, with the request and the re
   assert.deepEqual(context.relevantFiles, ["src/theme.ts"]);
   assert.equal(context.project.name, "Acme");
 });
+
+test("the planner is told what was attached: where from, what it shows and a document's words", async () => {
+  const contexts: string[] = [];
+  const planner = new GoalPlanner({
+    dataDir: "/tmp/profile",
+    state: () => ({ projects: [{ id: "p1", name: "Acme", description: "" }] }) as unknown as AppState,
+    resolveCommand: async () => ({ command: "claude", prefix: [] }),
+    relatedFiles: async () => [],
+    attachmentText: async (file) =>
+      file.name.endsWith(".xlsx") ? "Sheet: Phones\n" + "x".repeat(40_000) : undefined,
+    ask: async (_dataDir, _state, question) => {
+      contexts.push(question.context);
+      return { harness: question.harness, model: "sonnet", text: "{}" };
+    },
+  });
+  const file = (name: string) => ({
+    id: "1b0f7f40-62a6-4a8e-9b3f-0d8c4a1e2f11",
+    name,
+    mime: "",
+    size: 1,
+    sha256: "a".repeat(64),
+  });
+  await planner.plan({
+    projectId: "p1",
+    request: "Fix login",
+    harness: "claude",
+    attachments: [
+      { ...file("login.png"), note: "The dead button", from: "Sam's comment" },
+      ...Array.from({ length: 6 }, (_, n) => file(`${n}.xlsx`)),
+    ],
+  });
+  const { attachments } = JSON.parse(contexts[0]);
+  assert.deepEqual(attachments[0], {
+    name: "login.png",
+    kind: "Image",
+    from: "Sam's comment",
+    shows: "The dead button",
+  });
+  assert.equal(attachments[1].text.length, 15_000);
+  const total = attachments.reduce((sum: number, one: { text?: string }) => sum + (one.text?.length ?? 0), 0);
+  assert.equal(total, 60_000);
+  await planner.plan({ projectId: "p1", request: "Fix login", harness: "claude" });
+  assert.equal("attachments" in JSON.parse(contexts[1]), false);
+});

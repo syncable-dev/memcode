@@ -63,6 +63,26 @@
   background: #e5f1e6;
   color: #215e41;
 }
+.docs-index nav .docs-integration > button {
+  justify-content: flex-start;
+  gap: 9px;
+  color: #526c50;
+}
+.docs-index nav .docs-integration > button > span {
+  flex: 1;
+  min-width: 0;
+}
+.docs-index nav .docs-integration > button > img {
+  flex: none;
+}
+.docs-index nav .docs-integration > button.within {
+  color: #215e41;
+}
+.docs-integration-pages {
+  margin: 2px 0 6px 17px;
+  padding-left: 9px;
+  border-left: 1px solid #dce5d9;
+}
 .docs-article {
   min-width: 0;
   max-width: 860px;

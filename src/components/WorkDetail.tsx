@@ -32,6 +32,8 @@ import { ConversationMessages } from "./ConversationMessage";
 import { OthersRun } from "./OthersRun";
 import { followsConversationTail } from "../conversation-performance";
 import { useConversationDraft } from "../useConversationDraft";
+import { filesOnly } from "../attachments";
+import { AttachButton, AttachedFiles, useAttach } from "./Attachments";
 import { modifierLabel, primaryModifier, shortcutLabel } from "../platform";
 import "../styles-review.css";
 import "../styles-worker-input.css";
@@ -215,7 +217,10 @@ export function WorkDetail({
     attachedComments,
     setAttachedComments,
     clearSubmitted,
+    files: draftFiles,
+    setFiles: setDraftFiles,
   } = useConversationDraft(task.id);
+  const attach = useAttach(draftFiles, setDraftFiles, notify);
   const [commentFocus, setCommentFocus] = useState(0);
   const [commentsOpen, setCommentsOpen] = useState(false),
     [focusedCommentId, setFocusedCommentId] = useState<string>(),
@@ -342,7 +347,11 @@ export function WorkDetail({
       notify(teamBlock);
       return;
     }
-    const submitted = { draft, comments: [...attachedComments] };
+    const submitted = {
+      draft,
+      comments: [...attachedComments],
+      files: draftFiles,
+    };
     followConversation.current = true;
     const request = {
       taskId: task.id,
@@ -351,14 +360,22 @@ export function WorkDetail({
     };
     setStartRequest(request);
     try {
-      if (draft.trim()) {
+      if (draft.trim() || draftFiles.length) {
+        const text = draft.trim() || filesOnly(draftFiles.length);
         if (attachedComments.length)
           await window.memcode.shareReviewComments(
             task.id,
             attachedComments,
-            draft.trim(),
+            text,
+            draftFiles.length ? draftFiles : undefined,
           );
-        else await window.memcode.addMessage(task.id, draft.trim());
+        else
+          await window.memcode.addMessage(
+            task.id,
+            text,
+            undefined,
+            draftFiles.length ? draftFiles : undefined,
+          );
         clearSubmitted(submitted);
       }
       await window.memcode.startWorker(task.id);
@@ -385,8 +402,12 @@ export function WorkDetail({
       );
       return;
     }
-    if (!draft.trim()) return;
-    const submitted = { draft, comments: [...attachedComments] };
+    if (!draft.trim() && !draftFiles.length) return;
+    const submitted = {
+      draft,
+      comments: [...attachedComments],
+      files: draftFiles,
+    };
     followConversation.current = true;
     if (
       !remote &&
@@ -401,8 +422,9 @@ export function WorkDetail({
     await act(async () => {
       await window.memcode.sendFollowup(
         task.id,
-        draft.trim(),
+        draft.trim() || filesOnly(draftFiles.length),
         attachedComments.length ? attachedComments : undefined,
+        draftFiles.length ? draftFiles : undefined,
       );
       clearSubmitted(submitted);
       // Sent to another computer: the message shows how it stands instead.
@@ -979,9 +1001,18 @@ export function WorkDetail({
                       <div
                         className={
                           "composer-box " +
-                          (dictation.phase === "recording" ? "recording" : "")
+                          (dictation.phase === "recording"
+                            ? "recording"
+                            : "") +
+                          (attach.over ? " attach-over" : "")
                         }
+                        {...attach.drop}
                       >
+                        <AttachedFiles
+                          items={draftFiles}
+                          setItems={setDraftFiles}
+                          notify={notify}
+                        />
                         {attachedComments.length > 0 && (
                           <div className="followup-comment-chips">
                             {attachedComments.map((id) => {
@@ -1020,6 +1051,7 @@ export function WorkDetail({
                           }
                           value={draft}
                           onChange={(e) => setDraft(e.target.value)}
+                          {...attach.paste}
                           onKeyDown={(e) => {
                             if (e.key === "Enter" && primaryModifier(e)) {
                               e.preventDefault();
@@ -1044,6 +1076,10 @@ export function WorkDetail({
                             )}
                           </div>
                           <div>
+                            <AttachButton
+                              attach={attach}
+                              disabled={!health.available || !!elsewhere}
+                            />
                             <button
                               className={"dictation-button " + dictation.phase}
                               title={
@@ -1089,7 +1125,8 @@ export function WorkDetail({
                               }
                               disabled={
                                 !health.available ||
-                                !draft.trim() ||
+                                (!draft.trim() && !draftFiles.length) ||
+                                attach.adding > 0 ||
                                 (!remote && !active && !!teamBlock) ||
                                 (!remote &&
                                   !task.example &&

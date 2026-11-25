@@ -1,9 +1,11 @@
 import { useCallback, useState, type SetStateAction } from "react";
+import type { Attachment } from "./attachments";
 import {
   ConversationDrafts,
   type ConversationDraft,
 } from "./conversation-drafts";
 
+const noFiles: Attachment[] = [];
 const drafts = new ConversationDrafts(() =>
   typeof window === "undefined" ? undefined : window.sessionStorage,
 );
@@ -37,6 +39,15 @@ export function useConversationDraft(taskId: string) {
     },
     [taskId],
   );
+  const setFiles = useCallback(
+    (change: (files: Attachment[]) => Attachment[]) => {
+      const previous = drafts.read(taskId);
+      const files = change(previous.files ?? []);
+      drafts.write(taskId, { ...previous, files });
+      refresh((version) => version + 1);
+    },
+    [taskId],
+  );
   const clearSubmitted = useCallback(
     (submitted: ConversationDraft) => {
       if (drafts.clearSubmitted(taskId, submitted))
@@ -47,8 +58,10 @@ export function useConversationDraft(taskId: string) {
   return {
     ...current,
     attachedComments: current.comments,
+    files: current.files ?? noFiles,
     setDraft,
     setAttachedComments,
+    setFiles,
     clearSubmitted,
   };
 }

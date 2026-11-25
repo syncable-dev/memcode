@@ -1,0 +1,374 @@
+.inbox-page {
+  max-width: 1440px;
+  margin: 0 auto;
+  padding-bottom: 22px;
+  color: var(--ink);
+}
+.inbox-channels {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 18px;
+  padding: 12px 0 14px;
+  border-bottom: 1px solid var(--line);
+}
+.inbox-channel-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.inbox-channel {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 4px 3px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--white);
+  font-size: 12px;
+}
+.inbox-channel small {
+  color: var(--muted);
+}
+.inbox-channel button {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.inbox-channel button:hover {
+  background: var(--mint-wash);
+  color: var(--ink);
+}
+.inbox-channels-note {
+  color: var(--muted);
+  font-size: 12px;
+}
+.inbox-link-form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.inbox-link-form label {
+  color: var(--muted);
+}
+.inbox-link-form input {
+  width: 190px;
+  padding: 6px 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--white);
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.inbox-link-form input::placeholder {
+  font-family: inherit;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.inbox-link-form button,
+.inbox-actions button,
+.inbox-decline button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 11px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--white);
+  color: var(--ink);
+  font-size: 12px;
+  cursor: pointer;
+}
+.inbox-link-form button:disabled,
+.inbox-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.inbox-problem {
+  margin: 12px 0;
+  color: #a2463a;
+  font-size: 12px;
+}
+.inbox-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 24px 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.inbox-columns {
+  display: grid;
+  grid-template-columns: minmax(260px, 360px) minmax(0, 1fr);
+  gap: 22px;
+  padding-top: 16px;
+}
+
+.inbox-columns {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.inbox-filters {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+.inbox-filters button {
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+.inbox-filters button span {
+  margin-left: 3px;
+  font-variant-numeric: tabular-nums;
+}
+.inbox-filters button.active {
+  background: var(--mint-wash);
+  color: var(--ink);
+}
+.inbox-none {
+  padding: 18px 2px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.inbox-row {
+  position: relative;
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.inbox-row + .inbox-row {
+  margin-top: 2px;
+}
+.inbox-row:hover {
+  background: var(--white);
+}
+.inbox-row.selected {
+  border-color: var(--line);
+  background: var(--white);
+}
+.inbox-row strong {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.inbox-row > span {
+  color: var(--muted);
+  font-size: 11px;
+}
+.inbox-row .inbox-chip {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+}
+.inbox-row:has(.inbox-chip) strong {
+  padding-right: 64px;
+}
+.inbox-chips {
+  display: flex;
+  gap: 6px;
+}
+.inbox-chip {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--paper);
+  color: var(--muted);
+  font-size: 11px;
+  font-style: normal;
+}
+.inbox-chip.new {
+  background: var(--mint-wash);
+  color: var(--mint-ink);
+}
+.inbox-chip.urgent {
+  background: #fbe9e4;
+  color: #a2463a;
+}
+.inbox-report {
+  min-width: 0;
+  padding: 18px 22px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--white);
+}
+.inbox-report.empty {
+  border-style: dashed;
+  background: transparent;
+}
+.inbox-report h2 {
+  margin: 10px 0 4px;
+  font-size: 20px;
+  line-height: 1.3;
+  text-wrap: balance;
+}
+.inbox-report h3 {
+  margin: 20px 0 8px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.inbox-meta {
+  color: var(--muted);
+  font-size: 12px;
+}
+.inbox-meta a,
+.inbox-links a {
+  color: var(--mint-ink);
+}
+.inbox-fields {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 8px 16px;
+  margin: 16px 0 0;
+  font-size: 13px;
+}
+.inbox-fields dt {
+  color: var(--muted);
+}
+.inbox-fields dd {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.inbox-links {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.inbox-report h3 > span {
+  margin-left: 6px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.inbox-thread {
+  display: grid;
+  gap: 14px;
+  margin: 0;
+  padding: 2px 0 0;
+  list-style: none;
+}
+.inbox-comment {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  gap: 10px;
+}
+.inbox-avatar {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  background: var(--mint-wash);
+  color: var(--mint-ink);
+  font-size: 11px;
+  font-weight: 600;
+}
+.inbox-comment > div {
+  padding: 9px 13px 11px;
+  border: 1px solid var(--line);
+  border-radius: 4px 12px 12px;
+  background: var(--paper);
+}
+.inbox-comment.new > div {
+  border-color: var(--mint-ink);
+  background: var(--mint-wash);
+}
+.inbox-comment header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 7px;
+  font-size: 13px;
+}
+.inbox-comment header > span {
+  color: var(--muted);
+  font-size: 11px;
+}
+.inbox-comment header .inbox-chip {
+  margin-left: auto;
+}
+.inbox-comment p {
+  margin: 4px 0 0;
+  font-size: 14px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.inbox-row > .inbox-fresh {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--mint-ink);
+  font-weight: 600;
+}
+.inbox-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 5px;
+  border-radius: 50%;
+  background: var(--mint-ink);
+  vertical-align: middle;
+}
+.inbox-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 22px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+.inbox-decline {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  font-size: 12px;
+}
+.inbox-decline textarea {
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  font: inherit;
+  resize: vertical;
+}
+.inbox-decline > div {
+  display: flex;
+  gap: 8px;
+}
+.inbox-outcome {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.inbox-comment .file-tiles,
+.inbox-comment .inbox-links {
+  margin-top: 9px;
+}

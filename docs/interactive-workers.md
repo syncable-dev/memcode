@@ -87,6 +87,14 @@ without taking focus or showing another card's page. Native captures and same-pa
 CDP fallback are bounded. If both fail, DOM observations remain available with an
 explicit no-image diagnostic.
 
+On Windows, workers' pages run in a browser of their own, with its files in
+`webview-workers` next to MemCode's own `webview`. The runtime drives them over a local
+debugging port, which the system picks and which is there only while a page is open. It
+reaches workers' pages alone. MemCode's window has no such port: a development build, or a
+profile of its own (`MEMCODE_DATA_DIR`), can ask for one with
+`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`, and nothing MemCode starts inherits that.
+`scripts/worker-port-check.mjs` checks all of it against a running build.
+
 ## Verification
 
 - All three transports have child-process protocol fixtures for exact request IDs,

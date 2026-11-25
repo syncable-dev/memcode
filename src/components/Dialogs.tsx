@@ -1,4 +1,7 @@
 import { Select } from "./Select";
+import { Integrations } from "./Integrations";
+import type { Attachment } from "../attachments";
+import { AttachButton, AttachedFiles, useAttach } from "./Attachments";
 import { ModelSelect } from "./ModelSelect";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -49,7 +52,13 @@ import type { AppState } from "../shared";
 import "../styles-setup-settings.css";
 
 export type SettingsSection =
-  "account" | "workers" | "dictation" | "retrieval" | "updates" | "privacy";
+  | "account"
+  | "workers"
+  | "integrations"
+  | "dictation"
+  | "retrieval"
+  | "updates"
+  | "privacy";
 
 export function Modal({
   title,
@@ -145,6 +154,8 @@ export function NewTaskDialog({
   initialStatusId,
   cycles = [],
   parent,
+  initialDescription = "",
+  initialFiles = [],
   onClose,
   onCreated,
   notify,
@@ -156,12 +167,16 @@ export function NewTaskDialog({
   initialStatusId?: string;
   cycles?: Cycle[];
   parent?: WorkItem;
+  initialDescription?: string;
+  initialFiles?: Attachment[];
   onClose: () => void;
   onCreated: (task: WorkItem) => void;
   notify: (s: string) => void;
 }) {
   const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
+  const [description, setDescription] = useState(initialDescription);
+  const [files, setFiles] = useState<Attachment[]>(initialFiles);
+  const attach = useAttach(files, setFiles, notify);
   const [harness, setHarness] = useState<Harness>(defaultHarness);
   const [assignment, setAssignment] = useState("auto");
   const [epicId, setEpicId] = useState(
@@ -201,6 +216,7 @@ export function NewTaskDialog({
             ? { statusId: initialStatusId }
             : {}),
           description: description.trim(),
+          ...(files.length ? { attachments: files } : {}),
           harness,
           assignment: assignment === "auto" ? "auto" : "manual",
           epicId: epicId === "none" ? null : epicId,
@@ -266,13 +282,25 @@ export function NewTaskDialog({
               )}
             </p>
           </div>
-          <div className="brief-input-wrap">
+          <div
+            className={
+              "brief-input-wrap" + (attach.over ? " attach-over" : "")
+            }
+            {...attach.drop}
+          >
             <textarea
               aria-label="Work item brief"
               placeholder="Describe the outcome, context, and what good looks like…"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
+              {...attach.paste}
               maxLength={20000}
+            />
+            <AttachedFiles
+              items={files}
+              setItems={setFiles}
+              notify={notify}
+              notes
             />
             <div className="brief-input-footer">
               <span>
@@ -280,6 +308,7 @@ export function NewTaskDialog({
                   ? "A few clear sentences are a good start."
                   : dictation.label}
               </span>
+              <AttachButton attach={attach} />
               <button
                 type="button"
                 className={"dictation-button " + dictation.phase}
@@ -722,6 +751,7 @@ export function SettingsDialog({
             [
               ["account", "Account"],
               ["workers", "Workers"],
+              ["integrations", "Integrations"],
               ["dictation", "Dictation"],
               ["retrieval", "Local retrieval"],
               ["updates", "Updates"],
@@ -782,6 +812,9 @@ export function SettingsDialog({
             </>
           )}
           {section === "privacy" && <TelemetrySettings notify={notify} />}
+          {section === "integrations" && (
+            <Integrations state={state} notify={notify} />
+          )}
           {section === "account" && (
             <details className="settings-engine-advanced">
               <summary>Advanced · use an existing Memtrace CLI</summary>

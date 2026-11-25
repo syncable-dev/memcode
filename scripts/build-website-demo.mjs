@@ -9,6 +9,7 @@ await build({ configFile: false, root: resolve(root, 'website-demo'), base: './'
 await mkdir(resolve(root, 'dist-website-demo/adapters'), { recursive: true });
 await cp(resolve(root, 'public/adapters'), resolve(root, 'dist-website-demo/adapters'), { recursive: true });
 await cp(resolve(root, 'public/guide'), resolve(root, 'dist-website-demo/guide'), { recursive: true });
+await cp(resolve(root, 'public/integrations'), resolve(root, 'dist-website-demo/integrations'), { recursive: true });
 for (const file of ['LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md']) await cp(resolve(root, file), resolve(root, 'dist-website-demo', file));
 await cp(resolve(root, 'third_party'), resolve(root, 'dist-website-demo/third_party'), { recursive: true });
 console.log('Built actual MemCode renderer with a web-only, in-memory example adapter.');

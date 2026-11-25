@@ -10,6 +10,7 @@ import type {
   PendingInvitation,
   SharedPerson,
   SharedProject,
+  InboxLink,
   SharedProjectLink,
   SharingOverview,
 } from "../../src/sharing";
@@ -23,6 +24,8 @@ import { BoardSync } from "./board/sync";
 import { CardActivity } from "./cards/activity";
 import type { WritingDevice } from "./cards/entries";
 import { LARGEST_SHARED_FILE, previewKindOf } from "./cards/files";
+import { diskName } from "../attachments";
+import { markDownloaded } from "../downloaded-mark";
 import { within } from "../local";
 import { MemsyncBoards, type BoardsApi } from "./memsync/boards-api";
 import { MemsyncCards, type CardsApi } from "./memsync/cards-api";
@@ -37,6 +40,20 @@ import {
 } from "./memsync/projects-api";
 import { SignedCalls } from "./memsync/signed-calls";
 import {
+  MemsyncSlackChannels,
+  type SlackChannelsApi,
+} from "./memsync/slack-api";
+import {
+  decisionEntry,
+  filesOf,
+  INBOX_CARD,
+  inboxItems,
+  OPENABLE,
+  type InboxDecision,
+  type InboxLogEntry,
+  type ProjectInbox,
+} from "../../src/inbox";
+import {
   SharingRefused,
   SharingSignedOut,
   SharingUnavailable,
@@ -44,6 +61,14 @@ import {
 
 export interface SharingOptions {
   state(): AppState;
+  /** Opens Slack's install page in the person's browser. */
+  openSlackInstall?(url: string): Promise<unknown>;
+  /** Where files that reports brought are put before they are opened, and how each is. */
+  inboxFiles?: {
+    folder: string;
+    openFile(path: string): Promise<unknown>;
+    openLink(url: string): Promise<unknown>;
+  };
   /** Saves the workspace and tells the app's window. */
   changed(): Promise<unknown>;
   /**
@@ -81,6 +106,7 @@ interface Service {
   projects: ProjectsApi;
   boards: BoardsApi;
   cards: CardsApi;
+  slack: SlackChannelsApi;
 }
 export interface CardHost {
   /** The latest code review report of a task on this computer. */
@@ -127,6 +153,21 @@ const platformName = (): WritingDevice["name"] =>
 /** How long connecting waits for board sync to say how the two boards stand. */
 const FIRST_WORD_MS = 8000;
 const NOT_OFFERED = "Sharing is not available right now. Try again later.";
+/** One file of a report: its bytes by their hash, and the name it came with. */
+export interface InboxFileInput {
+  projectId: string;
+  sha256: string;
+  name: string;
+}
+/** What a project Slack was never connected to shows. */
+const NO_INBOX = (): ProjectInbox => ({
+  items: [],
+  channels: [],
+  workspaces: [],
+  channelsUnavailable: false,
+});
+const isGone = (problem: unknown) =>
+  problem instanceof SharingRefused && problem.rule === "no_such_project";
 
 const shownPerson = (
   person: PersonRecord,
@@ -181,6 +222,11 @@ export class Sharing {
   private readonly boards = new Map<string, RunningBoard>();
   /** Projects already reported gone, so each is reported once. */
   private readonly toldGone = new Set<string>();
+  private readonly keepingFiles = new Map<string, Promise<void>>();
+  private readonly startingInboxes = new Map<
+    string,
+    ReturnType<Sharing["startInbox"]>
+  >();
   private matching: Promise<void> = Promise.resolve();
   private device?: Promise<WritingDevice>;
   private cardsTimer?: NodeJS.Timeout;
@@ -225,7 +271,9 @@ export class Sharing {
         state: "ready",
         accountId,
         service: service.address,
-        projects: projects.map((project) => shownProject(project, accountId)),
+        projects: projects
+          .filter((project) => !this.isOnlyAnInbox(project.id, service))
+          .map((project) => shownProject(project, accountId)),
         invitations: invitations.map(shownInvitation),
       };
     } catch (problem) {
@@ -254,8 +302,9 @@ export class Sharing {
 
   /**
    * Shares a project on this computer: the first time, a shared project of
-   * the same name is started for it and its board is written there. After
-   * that, it answers the link it has.
+   * the same name is started for it and its board is written there. A project
+   * that already has an Inbox of its own is shared where that Inbox is, so its
+   * reports and Slack connections stay. After that, it answers the link it has.
    */
   async shareProject(projectId: string): Promise<SharedProjectLink> {
     const service = await this.requiredService();
@@ -265,8 +314,17 @@ export class Sharing {
     const local = state.projects.find((project) => project.id === projectId);
     if (!local) throw new Error("Project not found.");
     assertMayBeShared(local, state);
-    const started = await service.projects.startProject(local.name);
-    return this.connect({ projectId, sharedProjectId: started.id });
+    const { accountId } = await service.access.current();
+    const inbox = this.inboxLinkOf(projectId, service, accountId);
+    if (inbox && !(await this.stillThere(inbox, service)))
+      await this.forgetInbox(inbox);
+    const sharedProjectId =
+      this.inboxLinkOf(projectId, service, accountId)?.sharedProjectId ??
+      (await service.projects.startProject(local.name)).id;
+    const link = await this.connect({ projectId, sharedProjectId });
+    const own = this.inboxLinkOf(projectId, service, accountId);
+    if (own) await this.forgetInbox(own);
+    return link;
   }
 
   /** Invites someone by email, sharing the project first if it is not shared yet. */
@@ -301,6 +359,7 @@ export class Sharing {
    * connected under another account, only the link here goes.
    */
   async removeForAccount(projectId: string): Promise<void> {
+    await this.removeInbox(projectId);
     const link = (this.options.state().sharedProjectLinks ?? []).find(
       (candidate) => candidate.projectId === projectId,
     );
@@ -321,8 +380,7 @@ export class Sharing {
         await service.projects.deleteProject(sharedProjectId);
       else await service.projects.leaveProject(sharedProjectId);
     } catch (problem) {
-      const alreadyGone = problem instanceof SharingRefused && problem.rule === "no_such_project";
-      if (!alreadyGone) throw problem;
+      if (!isGone(problem)) throw problem;
     }
   }
 
@@ -391,6 +449,303 @@ export class Sharing {
     const link = this.linkOf(projectId, service);
     if (!link) throw new Error("This project is not shared.");
     return { service, link };
+  }
+
+  // ── The Inbox ─────────────────────────────────────────────────────────────
+
+  private inboxLinkOf(projectId: string, service: Service, accountId: string) {
+    return this.options
+      .state()
+      .inboxLinks?.find(
+        (link) =>
+          link.projectId === projectId &&
+          link.service === service.address &&
+          link.accountId === accountId,
+      );
+  }
+
+  /** Whether a project on the sharing service only holds the Inbox of a project here. */
+  private isOnlyAnInbox(sharedProjectId: string, service: Service) {
+    return !!this.options
+      .state()
+      .inboxLinks?.some(
+        (link) =>
+          link.sharedProjectId === sharedProjectId &&
+          link.service === service.address,
+      );
+  }
+
+  private async stillThere(link: InboxLink, service: Service) {
+    try {
+      await service.projects.getProject(link.sharedProjectId);
+      return true;
+    } catch (problem) {
+      if (isGone(problem)) return false;
+      throw problem;
+    }
+  }
+
+  private async forgetInbox(gone: InboxLink) {
+    const state = this.options.state();
+    state.inboxLinks = (state.inboxLinks ?? []).filter((link) => link !== gone);
+    await this.options.changed();
+  }
+
+  /** Where a project's Inbox is: its shared project, or one that is only its Inbox. */
+  private async inboxHome(projectId: string) {
+    const state = this.options.state();
+    const known = (link: { projectId: string }) => link.projectId === projectId;
+    if (!state.sharedProjectLinks?.some(known) && !state.inboxLinks?.some(known))
+      return null;
+    const service = await this.requiredService();
+    const link = this.linkOf(projectId, service);
+    if (link) return { service, sharedProjectId: link.sharedProjectId };
+    const { accountId } = await service.access.current();
+    const own = this.inboxLinkOf(projectId, service, accountId);
+    return own && { service, sharedProjectId: own.sharedProjectId, own };
+  }
+
+  private async requiredInbox(projectId: string) {
+    const home = await this.inboxHome(projectId);
+    if (!home)
+      throw new Error("This project has no Inbox yet. Connect Slack to it first.");
+    return home;
+  }
+
+  /**
+   * The project's Inbox, started if it has none. It is a project of the person's own on
+   * the sharing service with no board in it, so connecting Slack shares nothing else.
+   */
+  private async startedInbox(projectId: string) {
+    const known = await this.inboxHome(projectId);
+    if (known && (!known.own || (await this.stillThere(known.own, known.service))))
+      return known;
+    if (known?.own) await this.forgetInbox(known.own);
+    // Two presses start one Inbox.
+    let starting = this.startingInboxes.get(projectId);
+    if (!starting) {
+      starting = this.startInbox(projectId).finally(() =>
+        this.startingInboxes.delete(projectId),
+      );
+      this.startingInboxes.set(projectId, starting);
+    }
+    return starting;
+  }
+
+  private async startInbox(projectId: string) {
+    const service = await this.requiredService();
+    const { accountId } = await service.access.current();
+    const state = this.options.state();
+    const local = state.projects.find((project) => project.id === projectId);
+    if (!local) throw new Error("Project not found.");
+    if (local.example)
+      throw new Error(
+        "The example project cannot get reports. Open one of your own projects first.",
+      );
+    const { id } = await service.projects.startProject(local.name);
+    const own: InboxLink = {
+      projectId,
+      sharedProjectId: id,
+      accountId,
+      service: service.address,
+      startedAt: this.now(),
+    };
+    (state.inboxLinks ??= []).push(own);
+    await this.options.changed();
+    return { service, sharedProjectId: id, own };
+  }
+
+  /**
+   * Before a project is deleted on this computer: an Inbox that is only its own goes
+   * with its reports and Slack connections, when it belongs to whoever is signed in.
+   */
+  private async removeInbox(projectId: string) {
+    const links = (this.options.state().inboxLinks ?? []).filter(
+      (link) => link.projectId === projectId,
+    );
+    if (!links.length) return;
+    const service = await this.serviceInUse();
+    if (service) {
+      const { accountId } = await service.access.current();
+      const own = this.inboxLinkOf(projectId, service, accountId);
+      if (own) await this.endSharing(service, own.sharedProjectId, accountId);
+    }
+    for (const link of links) await this.forgetInbox(link);
+  }
+
+  /**
+   * A project's Inbox: what people reported from Slack, and the channels that report
+   * into it. The Inbox is the card log of the nil card (MemSync ADR-0020). A project
+   * Slack was never connected to has none, and nobody is asked about it.
+   */
+  async inbox(projectId: string): Promise<ProjectInbox> {
+    const home = await this.inboxHome(projectId);
+    if (!home) return NO_INBOX();
+    try {
+      return await this.readInbox(home.service, home.sharedProjectId);
+    } catch (problem) {
+      if (!home.own || !isGone(problem)) throw problem;
+      // It was deleted from another computer.
+      await this.forgetInbox(home.own);
+      return NO_INBOX();
+    }
+  }
+
+  private async readInbox(
+    service: Service,
+    sharedProjectId: string,
+  ): Promise<ProjectInbox> {
+    const entries: InboxLogEntry[] = [];
+    for (let after = 0; ; ) {
+      const page = await service.cards.readAfter(
+        sharedProjectId,
+        INBOX_CARD,
+        after,
+      );
+      if (!page.length) break;
+      entries.push(...page);
+      after = page[page.length - 1].sequence;
+    }
+    // An older MemSync has no Slack connections; the Inbox still reads.
+    const slack = await service.slack.list(sharedProjectId).catch(() => null);
+    return {
+      items: inboxItems(entries),
+      channels: slack?.channels ?? [],
+      workspaces: slack?.workspaces ?? [],
+      channelsUnavailable: slack === null,
+    };
+  }
+
+  /**
+   * Opens Slack's page for adding MemCode to a workspace, in the person's browser.
+   * Approving it there connects the workspace to this project (MemSync ADR-0021).
+   * The project does not have to be shared: one that is not gets an Inbox of its own.
+   */
+  async addToSlack(projectId: string) {
+    if (!this.options.openSlackInstall)
+      throw new Error("This copy of MemCode cannot open Slack. Update MemCode.");
+    const { service, sharedProjectId } = await this.startedInbox(projectId);
+    const url = await service.slack.startInstall(sharedProjectId);
+    await this.options.openSlackInstall(url);
+  }
+
+  /** Stops a Slack workspace, and every channel of it, sending reports here. */
+  async disconnectSlack(input: { projectId: string; teamId: string }) {
+    const { service, sharedProjectId } = await this.requiredInbox(input.projectId);
+    await service.slack.disconnect(sharedProjectId, input.teamId);
+    return this.inbox(input.projectId);
+  }
+
+  /** Links the Slack channel that gave this code with `/memcode link`. */
+  async linkSlackChannel(input: { projectId: string; code: string }) {
+    const { service, sharedProjectId } = await this.requiredInbox(input.projectId);
+    await service.slack.link(sharedProjectId, input.code);
+    return this.inbox(input.projectId);
+  }
+
+  async unlinkSlackChannel(input: {
+    projectId: string;
+    teamId: string;
+    channelId: string;
+  }) {
+    const { service, sharedProjectId } = await this.requiredInbox(input.projectId);
+    await service.slack.unlink(
+      sharedProjectId,
+      input.teamId,
+      input.channelId,
+    );
+    return this.inbox(input.projectId);
+  }
+
+  /** Records what became of a report: picked up as a goal, declined, or reopened. */
+  async decideInboxItem(input: {
+    projectId: string;
+    itemId: string;
+    decision: InboxDecision;
+  }) {
+    const { service, sharedProjectId } = await this.requiredInbox(input.projectId);
+    const entry = decisionEntry(input.itemId, input.decision);
+    const payload = new TextEncoder().encode(JSON.stringify(entry));
+    await service.cards.append(sharedProjectId, INBOX_CARD, [
+      { id: randomUUID(), payload },
+    ]);
+    return this.inbox(input.projectId);
+  }
+
+  /** A file a report brought, from the project's files, to show in the window. */
+  async inboxFile(input: { projectId: string; sha256: string }) {
+    const { service, sharedProjectId } = await this.requiredInbox(input.projectId);
+    const { content } = await service.cards.download(
+      sharedProjectId,
+      input.sha256,
+    );
+    return { base64: Buffer.from(content).toString("base64") };
+  }
+
+  /**
+   * A file a report brought, kept on this computer to be previewed or opened. Only kinds
+   * of files that hold no program of their own, and marked as having come from outside.
+   */
+  async keptInboxFile(input: InboxFileInput): Promise<{
+    path: string;
+    name: string;
+    folder: string;
+  }> {
+    const place = this.options.inboxFiles;
+    const name = diskName(input.name);
+    if (!place || !OPENABLE.test(name))
+      throw new Error("MemCode does not open this kind of file. Open it in Slack.");
+    const folder = join(place.folder, input.sha256);
+    const path = join(folder, name);
+    // A preview and a click may ask for the same file at once.
+    let keeping = this.keepingFiles.get(path);
+    if (!keeping) {
+      keeping = this.keepInboxFile(input, folder, path).finally(() =>
+        this.keepingFiles.delete(path),
+      );
+      this.keepingFiles.set(path, keeping);
+    }
+    await keeping;
+    return { path, name, folder };
+  }
+
+  private async keepInboxFile(
+    input: InboxFileInput,
+    folder: string,
+    path: string,
+  ) {
+    const here = await readFile(path).catch(() => null);
+    if (here && createHash("sha256").update(here).digest("hex") === input.sha256)
+      return;
+    const { service, sharedProjectId } = await this.requiredInbox(input.projectId);
+    const { content } = await service.cards.download(
+      sharedProjectId,
+      input.sha256,
+    );
+    await mkdir(folder, { recursive: true });
+    await writeFile(path, content);
+    await markDownloaded(path);
+  }
+
+  /** Opens a file a report brought in this computer's own program for it. */
+  async openInboxFile(input: InboxFileInput) {
+    const { path } = await this.keptInboxFile(input);
+    await this.options.inboxFiles!.openFile(path);
+  }
+
+  /** Opens a link a report holds, and no other, in the person's browser. */
+  async openInboxLink(input: { projectId: string; url: string }) {
+    const { items } = await this.inbox(input.projectId);
+    const held = items.some(
+      (item) =>
+        item.permalink === input.url ||
+        item.links.includes(input.url) ||
+        item.replies.some((reply) => reply.links.includes(input.url)) ||
+        filesOf(item).some((file) => file.slackUrl === input.url),
+    );
+    if (!held || !this.options.inboxFiles)
+      throw new Error("That link is not in this project's Inbox.");
+    await this.options.inboxFiles.openLink(input.url);
   }
 
   /** Records that a local project's board belongs to a shared project the person is on. */
@@ -929,6 +1284,7 @@ export class Sharing {
       boards: new MemsyncBoards(calls),
       // A whole file goes in one call, so a call is given longer.
       cards: new MemsyncCards(new SignedCalls(channel, access, 60_000)),
+      slack: new MemsyncSlackChannels(calls),
     };
     return this.service;
   }

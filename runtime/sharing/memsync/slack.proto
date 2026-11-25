@@ -1,0 +1,94 @@
+syntax = "proto3";
+
+package memsync.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// Slack workspaces and channels whose reports go to a project's Inbox (ADR-0020, 0021).
+//
+// A member chooses Add to Slack in MemCode, which opens the address StartSlackInstall
+// gives. Approving the install in Slack connects the workspace to the project, and
+// @MemCode in any of its channels then reports there, written as that member. A channel
+// remembers the project its reports go to. A code from /memcode link still links one
+// channel.
+//
+// Calls are signed in and turned down as in the Projects service. Only someone on the
+// project may link, list or unlink its channels; to anyone else the project does not
+// exist. Refusal rules: `unknown_link_code` when the code is unknown, used or expired,
+// and `invalid_link_code` when it is not a code at all.
+service SlackChannels {
+  // Slack's page for adding the app to a workspace, connecting it to this project.
+  // Refused as unavailable when the service has no Slack app set up.
+  rpc StartSlackInstall(StartSlackInstallRequest) returns (StartSlackInstallResponse);
+  // Stops a workspace, and every channel of it, sending reports to the project.
+  rpc DisconnectWorkspace(DisconnectWorkspaceRequest) returns (DisconnectWorkspaceResponse);
+  // Links the channel that gave this code to the project, replacing whatever project it
+  // was linked to before. A code works once, within 15 minutes of being given.
+  rpc LinkChannel(LinkChannelRequest) returns (SlackChannel);
+  // The project's connected workspaces and linked channels, oldest first.
+  rpc ListChannels(ListChannelsRequest) returns (ListChannelsResponse);
+  // Stops a channel sending reports to the project. Unlinking a channel that is not
+  // linked to it does nothing.
+  rpc UnlinkChannel(UnlinkChannelRequest) returns (UnlinkChannelResponse);
+}
+
+message SlackChannel {
+  // Slack's ids for the workspace and the channel.
+  string team_id = 1;
+  string channel_id = 2;
+  // The channel's name when it was linked, without the #.
+  string channel_name = 3;
+  // The workspace's name when the app was installed. Empty if not known.
+  string team_name = 4;
+  // The member reports are written as.
+  string linked_by_account_id = 5;
+  google.protobuf.Timestamp linked_at = 6;
+}
+
+message LinkChannelRequest {
+  string project_id = 1;
+  // As /memcode link showed it. Case, spaces and dashes do not matter.
+  string code = 2;
+}
+
+message ListChannelsRequest {
+  string project_id = 1;
+}
+
+message ListChannelsResponse {
+  repeated SlackChannel channels = 1;
+  repeated SlackWorkspace workspaces = 2;
+}
+
+message SlackWorkspace {
+  string team_id = 1;
+  // Empty if not known.
+  string team_name = 2;
+  // The member reports from it are written as.
+  string connected_by_account_id = 3;
+  google.protobuf.Timestamp connected_at = 4;
+}
+
+message StartSlackInstallRequest {
+  string project_id = 1;
+}
+
+message StartSlackInstallResponse {
+  // https://slack.com/oauth/v2/authorize?…, good for 30 minutes.
+  string install_url = 1;
+}
+
+message DisconnectWorkspaceRequest {
+  string project_id = 1;
+  string team_id = 2;
+}
+
+message DisconnectWorkspaceResponse {}
+
+message UnlinkChannelRequest {
+  string project_id = 1;
+  string team_id = 2;
+  string channel_id = 3;
+}
+
+message UnlinkChannelResponse {}

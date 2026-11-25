@@ -22,10 +22,12 @@ function namesTogether(names: string[]): string {
 export function projectDeletionNote(
   project: { name: string; path?: string | null; example?: boolean },
   sharing: ProjectSharing,
+  /** The project is not shared and has an Inbox of its own on the sharing service. */
+  hasInbox = false,
 ): string {
   if (project.example)
     return "This removes the example project and its sample tasks from MemCode.";
-  const contents = "its board, tasks, goals, cycles, conversations and reviews.";
+  const contents = `its board, tasks, goals, cycles, conversations and reviews${hasInbox ? ", and its Inbox with every report from Slack" : ""}.`;
   const folder = project.path
     ? ` The folder ${project.path} and everything in it stay on your computer.`
     : "";
