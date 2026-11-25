@@ -342,7 +342,7 @@ test("a merge made on GitHub is noticed, also by the task that starts next", asy
     c.github.pr = onGitHub(7, "MERGED");
     // As the app does before a worker enters the branch.
     two.run = { ...two.run, state: "preparing", startedAt: AT };
-    await c.service.noticeMerges((goal) => goal.id === "goal", "t2");
+    await c.service.noticeMerges((goal) => goal.id === "goal", { taskId: "t2" });
     assert.equal(record.state, "merged");
     assert.equal(c.state.tasks[0].stage, "done");
     await c.work(two);
@@ -365,7 +365,7 @@ test("a follow-up to a task that merged on GitHub starts on a new branch", async
     Object.assign(c.state.pullRequests![0], { number: 7, state: "open" });
     c.github.pr = onGitHub(7, "MERGED");
     one.run = { ...one.run, state: "preparing", startedAt: AT };
-    await c.service.noticeMerges((goal) => goal.id === "goal", "t1");
+    await c.service.noticeMerges((goal) => goal.id === "goal", { taskId: "t1" });
     await c.work(one, "follow-up.ts");
     assert.equal(c.goal.branch, "feat/show-the-total");
     assert.equal(one.stage, "review");
@@ -696,4 +696,59 @@ test("tidying up a shipped branch leaves the goal's new one alone", async () => 
   } finally {
     await t.end();
   }
+});
+
+test("a merge GitHub tells too late leaves the worker that has started on its branch", async () => {
+  const t = await team();
+  try {
+    const c = await t.computer("a");
+    await c.work(c.task("t1", "Show the total"));
+    const two = c.task("t2", "Pay by card");
+    await c.create();
+    Object.assign(c.state.pullRequests![0], { number: 7, state: "open" });
+    c.github.pr = onGitHub(7, "MERGED");
+    const starting: { taskId?: string } = { taskId: "t2" };
+    // The start did not wait any longer, and the worker is at work on the branch.
+    starting.taskId = undefined;
+    const branch = c.goal.branch;
+    two.run = { ...two.run, state: "running", startedAt: AT, branch, sessionId: "s", workspace: c.state.tasks[0].run.workspace };
+    two.stage = "working";
+    await c.service.noticeMerges((goal) => goal.id === "goal", starting);
+    assert.equal(c.state.tasks[0].stage, "done");
+    assert.equal(c.goal.branch, branch, "its work is on the goal's branch");
+    assert.equal(two.run.shipped, undefined);
+  } finally {
+    await t.end();
+  }
+});
+
+test("work finished after the last push of a pull request an older MemCode made is not done by its merge", async () => {
+  const t = await team();
+  try {
+    const c = await t.computer("a");
+    await c.work(c.task("t1", "Show the total"));
+    await c.create();
+    const record = c.state.pullRequests![0];
+    Object.assign(record, { number: 7, state: "open", updatedAt: "2026-11-25T08:00:00.000Z" });
+    delete record.pushedAt;
+    delete record.revision;
+    const two = await c.work(c.task("t2", "Pay by card"), "card.ts");
+    two.run.finishedAt = "2026-11-25T09:00:00.000Z";
+    c.state.tasks[0].run.finishedAt = "2026-11-25T07:00:00.000Z";
+    c.github.pr = onGitHub(7, "MERGED");
+    await c.service.noticeMerges(() => true);
+    assert.equal(c.state.tasks[0].stage, "done");
+    assert.equal(two.stage, "review");
+    assert.equal(two.run.shipped, undefined);
+    assert.ok(c.goal.branch);
+  } finally {
+    await t.end();
+  }
+});
+
+test("what was being brought into a branch that shipped holds nothing up", () => {
+  const goal = { id: "goal", projectId: "p", identifier: "EP-01", title: "G", branch: "feat/a", resolving: { base: "dev", target: "x", files: ["a.ts"], since: AT, taskId: "t1" } } as never as Epic;
+  const state = { tasks: [], epics: [goal], projects: [], pullRequests: [] } as never as AppState;
+  shipBranch(state, goal, "feat/a", AT);
+  assert.equal(goal.resolving, undefined);
 });

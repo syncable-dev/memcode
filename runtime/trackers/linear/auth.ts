@@ -42,6 +42,14 @@ export interface LinearAuthOptions {
   ports?: number[];
 }
 
+function addressOf(path: string | undefined): URL | undefined {
+  try {
+    return new URL(path ?? "/", "http://localhost");
+  } catch {
+    return undefined;
+  }
+}
+
 export class LinearAuth {
   private renewing = new Map<string, Promise<LinearTokens>>();
   private cancelPending?: () => void;
@@ -68,9 +76,11 @@ export class LinearAuth {
     void answer.catch(() => {});
     this.cancelPending = () => settle.failed(new Error("Connecting Linear was cancelled."));
     const server = createServer((request, response) => {
-      const url = new URL(request.url ?? "/", "http://localhost");
+      // Anything on this computer, a web page too, can ask here: it may be no address at all.
+      const url = addressOf(request.url);
       if (
         request.method !== "GET" ||
+        !url ||
         url.pathname !== CALLBACK_PATH ||
         url.searchParams.get("state") !== state
       ) {

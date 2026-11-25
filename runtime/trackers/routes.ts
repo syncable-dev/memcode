@@ -62,6 +62,7 @@ export function registerTrackers(
   register("tracker:import", z.object({ id, choices: choicesSchema }).strict(), (input) =>
     linear.import(input.id, input.choices),
   );
+  register("tracker:undo-preview", connection, (input) => linear.undoPreview(input.id));
   register("tracker:undo-import", connection, (input) => linear.undoImport(input.id));
   register("tracker:sync", connection, (input) => linear.look(input.id));
   register(

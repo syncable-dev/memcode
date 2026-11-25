@@ -173,7 +173,10 @@ export function applySharedSnapshot(state: AppState, projectId: string, snapshot
       state.tasks.push(local);
     }
     const { revision: _revision, assignedMemberId: _owner, ...fields } = shared;
-    Object.assign(local, fields, { projectId });
+    // A team knows three priorities: what it has of this one may be all it can have.
+    const priority =
+      plainPriority(local.priority) === shared.priority ? local.priority : shared.priority;
+    Object.assign(local, fields, { projectId, priority });
     // A relative shared scope is useful; local absolute workspace bindings remain local.
     local.scope = (shared.scope ?? []).filter(relativeScope);
   }

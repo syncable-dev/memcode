@@ -25,6 +25,7 @@ import {
   layoutOf,
   LOCAL,
   readBoard,
+  withNewerOf,
   writeChanges,
   writeEntryAlone,
   type Board,
@@ -334,9 +335,41 @@ export class BoardSync {
       // What was kept cannot be used. The log and the workspace are still whole.
       read = undefined;
     }
-    if (read) return;
+    if (read) return this.readNewer();
     await this.store.remove();
     this.rebuild({ ...this.nothingKept(at), log: new Uint8Array() });
+  }
+
+  /**
+   * This MemCode was an older one when it last kept the board. What that one did not know is
+   * in the document and not in the workspace: the board's word is taken, once, and nothing
+   * here counts as changed by it.
+   */
+  private async readNewer(): Promise<void> {
+    if (!this.kept.newerUnread) return;
+    const state = this.options.state(),
+      projectId = this.options.projectId;
+    if (
+      !this.kept.joined ||
+      this.isNewer() ||
+      !state.projects.some((one) => one.id === projectId)
+    )
+      return;
+    // What differs here in what the older one knew is this computer's own change.
+    this.kept.seen = withNewerOf(this.kept.seen, boardOf(state, projectId));
+    this.noteOwnChanges();
+    const after = readBoard(this.doc);
+    const before = withNewerOf(after, boardOf(state, projectId));
+    const follows = !sameBoard(before, after);
+    if (follows)
+      applyBoard(state, projectId, before, after, {
+        at: new Date().toISOString(),
+        nameOf: (account) => this.names.get(account),
+        keepTimes: true,
+      });
+    this.kept.seen = boardOf(state, projectId);
+    delete this.kept.newerUnread;
+    await this.keep(false, follows);
   }
 
   private nothingKept(applied: number): Kept {
@@ -587,6 +620,7 @@ export class BoardSync {
     });
     this.stamps.clear();
     this.kept.joined = true;
+    delete this.kept.newerUnread;
     if (!this.isNewer()) {
       this.kept.seen = boardOf(state, projectId);
       if (this.renumber()) this.noteOwnChanges();

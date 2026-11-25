@@ -37,6 +37,7 @@ async function team(context: test.TestContext) {
     const { store } = keptTokens();
     const service = new LinearService({
       state: () => at.state,
+      boardState: () => at.sync?.status().state,
       changed: async () => {
         await at.save();
         await at.sync.capture();
@@ -331,4 +332,168 @@ test("whatever two people and Linear do, with hand-overs in between, all three e
     assert.deepEqual([...new Set(texts)].sort(), [...texts].sort(), told);
     assert.equal(texts.length, linear.comments.size, told);
   }
+});
+
+/** What beta.24 does with the files it finds: it keeps what it knows, and drops the rest. */
+async function keptByAnOlderOne(folder: string) {
+  const { readFile, writeFile } = await import("node:fs/promises");
+  const path = join(folder, "board", "sync.json");
+  const file = JSON.parse(await readFile(path, "utf8"));
+  delete file.newer;
+  delete file.seen.trackers;
+  await writeFile(path, JSON.stringify(file));
+}
+
+test("a MemCode that was older when the project was connected learns everything when it is updated", async (context) => {
+  const { linear, a, b, agree } = await team(context);
+  const project = linear.project("Export", ["First"]);
+  const cycle = linear.cycle("Week 48", "2026-11-19T00:00:00.000Z", "2026-11-26T00:00:00.000Z", { isActive: true });
+  const one = linear.issue({ title: "one", priority: 1, assignee: linear.users.dana.id, project: project.id, milestone: project.milestones[0].id, cycle: cycle.id });
+  linear.comment(one, "Seen it too");
+  linear.issue({ title: "two", priority: 0 });
+  await a.import();
+  await agree();
+  await b.at.quit();
+  await keptByAnOlderOne(b.at.folder);
+  // The older one had the cards without what it does not know.
+  const times = new Map<string, string>();
+  for (const task of b.tasks()) {
+    if (task.priority === "urgent") task.priority = "high";
+    if (task.priority === "none") task.priority = "low";
+    task.assignee = undefined;
+    task.tracker = undefined;
+    times.set(task.id, task.updatedAt);
+  }
+  for (const goal of b.goals()) delete goal.tracker;
+  for (const item of b.at.state.cycles) delete item.tracker;
+  for (const comment of b.at.state.storyComments ?? []) {
+    delete comment.tracker;
+    comment.author = { id: "acct-alex", name: "Alex Berg", source: "memtrace" };
+  }
+  b.at.state.trackerKeepers = undefined;
+  // And its person changed something in it.
+  const two = b.tasks().find((task) => task.title === "two")!;
+  Object.assign(two, { title: "two, by the older one" });
+  await b.at.save();
+  b.at.reopen();
+  await agree();
+  const theirs = b.task(one);
+  assert.equal(theirs.priority, "urgent");
+  assert.equal(theirs.assignee?.name, "Dana Ito");
+  assert.equal(theirs.updatedAt, times.get(theirs.id), "it is no newer for that");
+  assert.equal(b.tasks().find((task) => task.title.startsWith("two"))?.priority, "none");
+  assert.equal(b.goals()[0].tracker?.kind, "milestone");
+  assert.equal(b.at.state.storyComments!.find((comment) => comment.text === "Seen it too")?.author.source, "linear");
+  assert.equal(keptElsewhere(b.at.state, b.at.projectId)?.by, "Alex Berg");
+  await assert.rejects(b.import(), /Alex Berg keeps this project in step/);
+  assert.equal(a.tasks().find((task) => task.title.startsWith("two"))?.title, "two, by the older one");
+  await a.sync();
+  await agree();
+  assert.equal(a.goals().length, 1);
+  assert.equal(b.at.state.cycles.filter((item) => item.projectId === b.at.projectId).length, 1);
+  assert.equal(linear.issues.get(one.id)!.assignee, linear.users.dana.id);
+  assert.equal(linear.issues.get(one.id)!.priority, 1);
+});
+
+test("a MemCode that was an older one for a while takes nobody's work back", async (context) => {
+  const { linear, a, b, agree } = await team(context);
+  const one = linear.issue({ title: "one", priority: 1, assignee: linear.users.dana.id });
+  await a.import();
+  await agree();
+  await b.at.quit();
+  await keptByAnOlderOne(b.at.folder);
+  // Meanwhile it changes there, and here everything is as it was left.
+  linear.edit(one, { assignee: linear.users.alex.id, priority: 0 });
+  await a.sync();
+  b.at.reopen();
+  await agree();
+  assert.equal(b.task(one).assignee?.name, "Alex Berg");
+  assert.equal(b.task(one).priority, "none");
+  await a.sync();
+  assert.equal(linear.issues.get(one.id)!.assignee, linear.users.alex.id);
+});
+
+test("whoever takes over with a part of a long text leaves the whole of it in Linear", async (context) => {
+  const { linear, a, b, agree } = await team(context);
+  const title = "T".repeat(253), text = "x".repeat(30_000) + " THE END";
+  const issue = linear.issue({ title, description: text });
+  const short = linear.issue({ title: "Short", description: "Text" });
+  await a.import();
+  await agree();
+  assert.equal(b.task(issue).title.length, 240);
+  const { connection, choices } = await b.connect();
+  await b.service.takeOver(connection.id);
+  await agree();
+  linear.clock += 60_000;
+  await b.service.import(connection.id, choices);
+  await b.sync();
+  await b.sync();
+  const there = linear.issues.get(issue.id)!;
+  assert.equal(there.title, title);
+  assert.equal(there.description.length, text.length);
+  assert.equal(b.task(issue).title, title, "it has the whole title now");
+  assert.equal(b.task(issue).tracker?.kept, undefined);
+  await b.edit(b.task(issue), { description: b.task(issue).description + " and more" });
+  await b.sync();
+  assert.equal(linear.issues.get(issue.id)!.description.length, text.length, "a part is never sent");
+  await b.edit(b.task(short), { title: "Shorter" });
+  await b.sync();
+  assert.equal(linear.issues.get(short.id)!.title, "Shorter");
+});
+
+test("without the shared board nothing goes to or from Linear: somebody else may do it now", async (context) => {
+  const { linear, a, b, agree } = await team(context);
+  const issue = linear.issue({ title: "Export", description: "Two lines." });
+  await a.import();
+  await agree();
+  a.at.goOffline();
+  await a.at.quit();
+  const { connection, choices } = await b.connect();
+  await b.service.takeOver(connection.id);
+  linear.clock += 60_000;
+  await b.service.import(connection.id, choices);
+  linear.edit(issue, { description: "Two lines about import and more." });
+  await b.sync();
+  // It starts without the board: it would not know that it is not its turn.
+  a.at.reopen();
+  await a.sync();
+  await assert.rejects(a.service.look(a.connection.id), /shared board is not connected/);
+  assert.equal(a.task(issue).description, "Two lines.");
+  a.at.comeBack();
+  await agree();
+  await a.sync();
+  await b.sync();
+  await agree();
+  assert.equal(linear.issues.get(issue.id)!.description, "Two lines about import and more.");
+  assert.equal(a.task(issue).description, "Two lines about import and more.");
+  assert.equal(keptElsewhere(a.at.state, a.at.projectId)?.connection, b.connection.id);
+});
+
+test("a goal's branch another computer put on the board is that one's to change", async (context) => {
+  const { a, b, agree } = await team(context);
+  const of = (one: typeof a) => one.goals().find((goal) => goal.id === "goal")!;
+  await b.at.edit((state) =>
+    state.epics.push({ id: "goal", projectId: b.at.projectId, identifier: "EP-01", title: "Export", description: "", phase: "now", color: "mint", order: 1, branch: "feat/export", baseRevision: "a".repeat(40) }),
+  );
+  await agree();
+  assert.equal(of(a).branch, "feat/export");
+  // A starts a task on a branch of its own, and that one ships.
+  await a.at.edit((state) => {
+    of(a).branch = "feat/export-csv";
+    state.tasks.push({ id: "ours", identifier: "MC-050", projectId: a.at.projectId, title: "CSV", description: "", stage: "working", priority: "medium", category: "Work", kind: "feature", harness: "claude", checklist: [], messages: [], epicId: "goal", run: { state: "running", branch: "feat/export-csv", sessionId: "s" }, createdAt: "2026-11-21T10:00:00.000Z", updatedAt: "2026-11-21T10:00:00.000Z" });
+  });
+  await agree();
+  assert.equal(of(b).branch, "feat/export");
+  await a.at.edit(() => {
+    delete of(a).branch;
+  });
+  await agree();
+  assert.equal(of(b).branch, "feat/export");
+  // Its own computer takes it away, and everyone hears so.
+  await b.at.edit(() => {
+    delete of(b).branch;
+  });
+  await agree();
+  assert.equal(of(a).branch, undefined);
+  assert.equal(of(a).boardBranch, undefined);
 });

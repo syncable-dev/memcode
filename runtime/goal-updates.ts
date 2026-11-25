@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { access, readFile, writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { z } from "zod";
 import type { AppState, Epic, WorkItem } from "../src/shared";
@@ -92,8 +92,16 @@ export class GoalUpdates {
     const ask = this.deps.askWorker;
     if (!ask) throw new Error("Workers are not available.");
     let savedWork = false;
-    if (epic.resolving) await this.left(epic.resolving, worktree);
-    else {
+    if (epic.resolving) {
+      const { resolving } = epic;
+      const left = await this.left(resolving, worktree);
+      // Without a marker it is resolved only if the worker got to its end.
+      if (!left.length && tasks.some((task) => task.id === resolving.taskId && isDone(task))) {
+        await this.commit(epic, worktree);
+        return { merged: true, savedWork };
+      }
+      if (left.length) resolving.files = left;
+    } else {
       const base = epic.baseBranch ?? (await detectBranchStrategy(worktree)).base;
       const target = await integrationCommit(worktree, {
         base,
@@ -107,12 +115,19 @@ export class GoalUpdates {
         return { merged: true, savedWork };
       }
       epic.resolving = { base, target, files, since: now(), taskId: "" };
+      const marked = await this.left(epic.resolving, worktree);
+      const whole = files.filter((file) => !marked.includes(file));
+      if (whole.length) {
+        // Deleted on one side, or not text: nothing in it shows whether it was resolved.
+        await git(worktree, ["merge", "--abort"]);
+        delete epic.resolving;
+        await this.deps.changed();
+        throw new Error(
+          `${whole.join(", ")}: one side deleted or replaced the whole file, so a worker cannot resolve it. Nothing was changed. Merge ${base} into ${epic.branch ?? "the goal's branch"} yourself, then go on here.`,
+        );
+      }
     }
     const resolving = epic.resolving!;
-    if (!resolving.files.length) {
-      await this.commit(epic, worktree);
-      return { merged: true, savedWork };
-    }
     const task = await this.closestTo(tasks, resolving.files);
     resolving.taskId = task.id;
     ask(
@@ -127,9 +142,11 @@ export class GoalUpdates {
     const epic = this.deps.state().epics.find((item) => item.id === task.epicId);
     if (!epic?.resolving || epic.resolving.taskId !== task.id || !task.run.workspace)
       return;
-    await this.left(epic.resolving, task.run.workspace);
-    if (epic.resolving.files.length) await this.deps.changed();
-    else await this.commit(epic, task.run.workspace);
+    const left = await this.left(epic.resolving, task.run.workspace);
+    if (left.length) {
+      epic.resolving.files = left;
+      await this.deps.changed();
+    } else if (isDone(task)) await this.commit(epic, task.run.workspace);
   }
   async undo(epicId: string): Promise<void> {
     const { epic, worktree } = this.target(epicId);
@@ -142,18 +159,31 @@ export class GoalUpdates {
   private async left(
     resolving: NonNullable<Epic["resolving"]>,
     worktree: string,
-  ): Promise<void> {
+  ): Promise<string[]> {
     const checked = await Promise.all(
       resolving.files.map(async (file) =>
         (await hasConflict(join(worktree, file))) ? [file] : [],
       ),
     );
-    resolving.files = checked.flat();
+    return checked.flat();
   }
   private async commit(epic: Epic, worktree: string): Promise<void> {
     const { base, target } = epic.resolving!;
-    await git(worktree, ["add", "-A"]);
-    await git(worktree, ["commit", "--no-edit", "-m", `Update from ${base}`]);
+    const merging = await access(await gitPath(worktree, "MERGE_HEAD")).then(
+      () => true,
+      () => false,
+    );
+    if (!merging && !(await contains(worktree, target))) {
+      delete epic.resolving;
+      await this.deps.changed();
+      throw new Error(
+        `The merge of ${base} was ended in the goal's folder. Its files are as they were left there. Update from ${base} again.`,
+      );
+    }
+    if (merging) {
+      await git(worktree, ["add", "-A"]);
+      await git(worktree, ["commit", "--no-edit", "-m", `Update from ${base}`]);
+    }
     epic.baseRevision = target;
     delete epic.resolving;
     delete epic.mergedRevision;
@@ -207,6 +237,9 @@ export class GoalUpdates {
     return { epic, worktree, tasks: worked };
   }
 }
+
+/** Its worker got to the end of what it was asked. */
+const isDone = (task: WorkItem) => task.run.state === "finished";
 
 /** Why work on the branch waits while the base is being brought in. */
 export const stillResolving = (resolving: NonNullable<Epic["resolving"]>) =>

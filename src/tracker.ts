@@ -166,6 +166,9 @@ export interface TrackerConnection {
   statuses?: TrackerStatus[];
   people?: Person[];
   importedAt?: string;
+  /** Since when changes here are sent, and new tasks become issues: never what was before. */
+  sendsSince?: string;
+  createsSince?: string;
   /** Until when the import can be taken back. */
   undoUntil?: string;
   lastCheckedAt?: string;

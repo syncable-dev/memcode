@@ -57,6 +57,58 @@ export const emptyBoard = (): Board =>
 const same = (left: unknown, right: unknown) =>
   left === right || JSON.stringify(left) === JSON.stringify(right);
 
+/**
+ * What MemCodes before 0.4.0-beta.25 neither write nor read. Such a MemCode leaves it alone
+ * on the board, as long as it never had it in its own: what it had and does not have now, it
+ * takes for something a person removed.
+ */
+const newerCollections: readonly Collection[] = ["trackers"];
+const newerFields: Partial<Record<Collection, readonly string[]>> = {
+  goals: ["tracker"],
+  cycles: ["tracker"],
+  tasks: ["urgency", "assignee", "closedAs", "tracker", "keepHere"],
+  comments: ["outside", "tracker"],
+};
+function split(board: Board): { known: Board; newer: Board } {
+  const known = emptyBoard(),
+    newer = emptyBoard();
+  for (const collection of collections) {
+    if (newerCollections.includes(collection)) {
+      newer[collection] = board[collection] ?? {};
+      continue;
+    }
+    const names = newerFields[collection] ?? [];
+    for (const [id, entry] of Object.entries(board[collection] ?? {})) {
+      const all = Object.entries(entry.fields);
+      const more = all.filter(([name]) => names.includes(name));
+      known[collection][id] = more.length
+        ? { ...entry, fields: Object.fromEntries(all.filter(([name]) => !names.includes(name))) }
+        : entry;
+      if (more.length)
+        newer[collection][id] = { fields: Object.fromEntries(more), texts: {}, sets: {} };
+    }
+  }
+  return { known, newer };
+}
+/** The board without it, for a file an older MemCode may read. */
+export const withoutNewer = (board: Board): Board => split(board).known;
+/** Only that, beside it. */
+export const newerOf = (board: Board): Board => split(board).newer;
+/** The board, with that part as another board has it. */
+export function withNewerOf(board: Board, other: Board): Board {
+  const known = withoutNewer(board),
+    newer = newerOf(other);
+  for (const collection of newerCollections) known[collection] = newer[collection];
+  for (const collection of Object.keys(newerFields) as Collection[])
+    for (const [id, { fields }] of Object.entries(newer[collection]))
+      if (known[collection][id])
+        known[collection][id] = {
+          ...known[collection][id],
+          fields: { ...known[collection][id].fields, ...fields },
+        };
+  return known;
+}
+
 /** The layout the document was written in, or nothing for a document nobody has laid out. */
 export function layoutOf(doc: Y.Doc): number | undefined {
   const layout = doc.getMap(META).get(LAYOUT_KEY);

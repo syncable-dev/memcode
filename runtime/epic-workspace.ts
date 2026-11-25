@@ -219,6 +219,9 @@ export class EpicWorkspace {
       shared ||
       !!elsewhere ||
       !!this.state().pullRequests?.some((item) => item.epicId === epic.id);
+    // Not this computer's: what the shared board says stays there for the one it belongs to.
+    if (elsewhere && shared)
+      epic.boardBranch ??= { branch: elsewhere, baseRevision: epic.baseRevision };
     delete epic.branch;
     delete epic.baseRevision;
     const detected = await this.strategyFor(path);

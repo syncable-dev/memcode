@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { replaceWorkspace } from "../../persistence";
-import { collections, type Board } from "./document";
+import { collections, newerOf, withNewerOf, withoutNewer, type Board } from "./document";
 import type { NotApplied } from "./updates";
 
 /** A change this computer made that is not in the log yet. */
@@ -37,6 +37,8 @@ export interface KeptBoard {
   arrived: Record<string, number>;
   /** The document as the log has built it. */
   log: Uint8Array;
+  /** An older MemCode kept it last: what it does not know has still to be read from the document. */
+  newerUnread?: boolean;
 }
 /** A save. Leaving `log` out says the document is as it was last saved. */
 export type BoardToKeep = Omit<KeptBoard, "log"> & { log?: Uint8Array };
@@ -57,6 +59,8 @@ interface StateFile {
   applied: number;
   joined: boolean;
   seen: Board;
+  /** What of it an older MemCode does not know. It drops this when it keeps the board. */
+  newer?: Board;
   unsent: Array<{ id: string; payload: string }>;
   leftOut: LeftOutUpdate[];
   arrived?: Record<string, number>;
@@ -106,7 +110,7 @@ export class BoardStore {
     try {
       const read: unknown = JSON.parse(await readFile(this.path(name), "utf8"));
       const seen = (read as Partial<StateFile> | null)?.seen;
-      // Kept by a MemCode from before boards said who keeps them in step with a tracker.
+      // A MemCode from before boards said who keeps them in step with a tracker knows none.
       if (seen && typeof seen === "object") seen.trackers ??= {};
       return isStateFile(read) ? read : undefined;
     } catch (problem) {
@@ -148,7 +152,8 @@ export class BoardStore {
       cursor: file.cursor,
       applied: file.applied,
       joined: file.joined,
-      seen: file.seen,
+      seen: file.newer ? withNewerOf(file.seen, file.newer) : file.seen,
+      ...(file.newer ? {} : { newerUnread: true }),
       unsent: file.unsent.map((update) => ({
         id: update.id,
         payload: Buffer.from(update.payload, "base64"),
@@ -172,7 +177,8 @@ export class BoardStore {
       cursor: kept.cursor,
       applied: kept.applied,
       joined: kept.joined,
-      seen: kept.seen,
+      seen: withoutNewer(kept.seen),
+      ...(kept.newerUnread ? {} : { newer: newerOf(kept.seen) }),
       unsent: kept.unsent.map((update) => ({
         id: update.id,
         payload: Buffer.from(update.payload).toString("base64"),
