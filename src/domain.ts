@@ -106,15 +106,15 @@ export function restartSafeState(state: AppState): AppState {
           }
         : input,
     ),
-    projects: state.projects.map((project) =>
-      ["connecting", "indexing"].includes(project.analysis)
-        ? {
-            ...project,
-            analysis: "idle",
-            analysisNote: "Analysis was interrupted. Reconnect to continue.",
-          }
-        : project,
-    ),
+    projects: state.projects.map((project) => {
+      if (!["connecting", "indexing"].includes(project.analysis)) return project;
+      const { analysisProgress: _interrupted, ...rest } = project;
+      return {
+        ...rest,
+        analysis: "idle",
+        analysisNote: "Analysis was interrupted. Reconnect to continue.",
+      };
+    }),
     tasks: state.tasks.map((original) => {
       const task = {
         ...original,

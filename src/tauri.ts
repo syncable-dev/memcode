@@ -5,6 +5,7 @@ import type { AppState, MemCodeAPI } from "./shared";
 import { errorMessage } from "./errors";
 import { runtimeHealth } from "./runtime-health";
 import { applyStatePatch, type StatePatch } from "./state-patch";
+import { markAnalysisFailure } from "./analysis-progress";
 
 const traceWorkspace = (stage: number, sequence: number, value = 0) => {
   if (import.meta.env.VITE_MEMCODE_TRACE_TRANSPORT === "1")
@@ -385,7 +386,10 @@ export async function installNativeBridge(): Promise<void> {
     selectFolder: () => call("project:select-folder"),
     createProject: (input) => call("project:create", input),
     selectProject: (id) => call("project:select", id),
-    analyzeProject: (id) => call("project:analyze", id),
+    analyzeProject: (id) =>
+      call<void>("project:analyze", id).catch((error) => {
+        throw markAnalysisFailure(error);
+      }),
     createTask: (input) => call("task:create", input),
     updateTask: (id, patch) => call("task:update", { id, patch }),
     bulkUpdateTasks: (ids, patch) => call("task:bulk-update", { ids, patch }),

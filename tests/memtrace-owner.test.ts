@@ -504,6 +504,37 @@ test("native recovery progress reaches the connection observer before readiness"
   await f.owners.close();
 });
 
+test("the first index's steps reach the connection observer while the engine starts", async () => {
+  const f = fixture(),
+    notes: string[] = [];
+  let probes = 0;
+  await f.owners.ready(
+    scope,
+    command,
+    {},
+    async () => {
+      if (++probes < 4) {
+        if (probes === 2)
+          f.child.stdout!.emit(
+            "data",
+            Buffer.from(
+              "\u001b[35m◆\u001b[0m  Indexing app — persist · Writing 23518 symbols and 116212 relationships · 88% · 21s\r",
+            ),
+          );
+        throw pending();
+      }
+    },
+    (note) => notes.push(note),
+  );
+  assert.ok(
+    notes.some((note) =>
+      /Indexing app — persist · Writing 23518 symbols and 116212 relationships · 88%/.test(note),
+    ),
+    notes.join(" | "),
+  );
+  await f.owners.close();
+});
+
 test("first model download and embedding setup progress is visible, bounded and redacted before readiness", async () => {
   const f = fixture(),
     notes: string[] = [];

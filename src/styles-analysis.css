@@ -1,0 +1,301 @@
+/* Code analysis progress: the sidebar card while it runs, and its panel. */
+
+.analysis-meter {
+  position: relative;
+  display: block;
+  height: 4px;
+  border-radius: 999px;
+  background: #e3ece4;
+  overflow: hidden;
+}
+.analysis-meter > span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--mint) 0%, var(--cyan) 100%);
+  transition: width 600ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.analysis-meter.unmeasured > span {
+  width: 34%;
+  animation: analysis-sweep 1.6s cubic-bezier(0.45, 0, 0.35, 1) infinite;
+}
+.analysis-meter.stopped > span {
+  background: #e28b7b;
+  animation: none;
+}
+.analysis-meter.stopped.unmeasured > span {
+  width: 100%;
+  opacity: 0.35;
+}
+@keyframes analysis-sweep {
+  from {
+    transform: translateX(-110%);
+  }
+  to {
+    transform: translateX(300%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .analysis-meter.unmeasured > span {
+    animation: none;
+    width: 100%;
+    opacity: 0.45;
+  }
+  .analysis-spin {
+    animation: none !important;
+  }
+}
+
+/* Sidebar card */
+.engine-card.analyzing,
+.engine-card.stopped {
+  position: relative;
+  overflow: hidden;
+  padding-bottom: 14px;
+}
+.engine-card.analyzing .engine-orb {
+  background: var(--mint-wash);
+  color: var(--mint-ink);
+}
+.engine-card.stopped {
+  border-color: #efd5cd;
+  background: #fff8f5;
+}
+.engine-card.stopped .engine-orb {
+  background: #fbe4dd;
+  color: #b0533f;
+}
+.engine-card.stopped small {
+  color: #b0533f;
+}
+.engine-card .analysis-meter {
+  position: absolute;
+  left: 9px;
+  right: 9px;
+  bottom: 6px;
+  height: 3px;
+}
+.engine-card-percent {
+  font-size: 10px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--mint-ink);
+}
+.engine-card small {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Panel */
+.analysis-panel {
+  gap: 22px;
+}
+.analysis-summary {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 22px;
+  padding: 16px 18px;
+  border: 1px solid #e3ece2;
+  border-radius: 11px;
+  background: linear-gradient(180deg, #ffffff 0%, #f6fbf7 100%);
+}
+.analysis-summary.stopped {
+  border-color: #f0dcd4;
+  background: linear-gradient(180deg, #ffffff 0%, #fff7f4 100%);
+}
+.analysis-clock {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 108px;
+}
+.analysis-clock strong {
+  font-size: 21px;
+  font-weight: 560;
+  letter-spacing: -0.6px;
+  color: #1d3326;
+  font-variant-numeric: tabular-nums;
+}
+.analysis-clock span,
+.analysis-summary-meter > span {
+  font-size: 11px;
+  color: #87958b;
+}
+.analysis-summary-meter {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  min-width: 0;
+}
+.analysis-summary-meter .analysis-meter {
+  height: 6px;
+}
+.analysis-summary-meter > span {
+  font-variant-numeric: tabular-nums;
+}
+
+.analysis-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.analysis-step {
+  position: relative;
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  gap: 14px;
+  padding-bottom: 17px;
+}
+.analysis-step:last-child {
+  padding-bottom: 0;
+}
+/* The thread between steps. */
+.analysis-step:not(:last-child)::before {
+  content: "";
+  position: absolute;
+  left: 10.5px;
+  top: 24px;
+  bottom: 2px;
+  width: 1px;
+  background: #e1e9e1;
+}
+.analysis-step.done:not(:last-child)::before {
+  background: #9fdccd;
+}
+.analysis-step-mark {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid #dbe5db;
+  background: #fff;
+  color: #9aa79d;
+}
+.analysis-step.done .analysis-step-mark {
+  border-color: transparent;
+  background: var(--mint);
+  color: #fff;
+}
+.analysis-step.active .analysis-step-mark {
+  border-color: #aee6d9;
+  background: var(--mint-wash);
+  color: var(--mint-ink);
+  box-shadow: 0 0 0 4px #18c8b514;
+}
+.analysis-step.stopped .analysis-step-mark {
+  border-color: transparent;
+  background: #e07a66;
+  color: #fff;
+}
+.analysis-step-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #cfdacf;
+}
+.analysis-spin {
+  animation: spin 1.1s linear infinite;
+}
+.analysis-step-text {
+  min-width: 0;
+  padding-top: 2px;
+}
+.analysis-step-text strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 540;
+  color: #253b2e;
+}
+.analysis-step.upcoming .analysis-step-text strong {
+  color: #8a988e;
+  font-weight: 480;
+}
+.analysis-step-text > p {
+  margin: 4px 0 0;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: #8a988e;
+}
+.analysis-step.upcoming .analysis-step-text > p {
+  display: none;
+}
+.analysis-step.done .analysis-step-text > p {
+  display: none;
+}
+.analysis-live {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-top: 8px !important;
+  padding: 7px 10px;
+  border-radius: 7px;
+  background: #f1f7f2;
+  font-family: var(--mono);
+  font-size: 10.5px !important;
+  color: #4f6457 !important;
+  overflow-wrap: anywhere;
+}
+.analysis-step.stopped .analysis-live {
+  background: #fdf1ed;
+  color: #8c4a3c !important;
+}
+.analysis-live b {
+  font-weight: 600;
+  color: var(--mint-ink);
+}
+
+.analysis-said {
+  border: 1px solid #f0dcd4;
+  border-radius: 10px;
+  background: #fffaf8;
+  overflow: hidden;
+}
+.analysis-said header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 12px;
+  border-bottom: 1px solid #f4e4de;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: #a2604f;
+}
+.analysis-said header button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  color: #8c5a4c;
+  padding: 3px 6px;
+  border-radius: 5px;
+}
+.analysis-said header button:hover {
+  background: #fbeae4;
+}
+.analysis-said p {
+  margin: 0;
+  padding: 11px 12px 12px;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.6;
+  color: #5d3a31;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.analysis-actions {
+  display: flex;
+  gap: 8px;
+}
