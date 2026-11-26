@@ -185,7 +185,7 @@ test("a worker whose turn ends while the person still has to decide is paused, a
     assert.equal(await exists(join(f.repo, "two.txt")), false, "it did not reshape the code on its own");
 
     await f.manager.decide(decision.id, "Use the second shape.", second.id);
-    await until(() => second.run.state === "finished");
+    await until(() => second.messages.some((message) => /^Worker finished/.test(message.text)));
     assert.equal(await readFile(join(f.repo, "two.txt"), "utf8"), "Reshaped by two");
     const told = second.messages.find((message) => message.role === "user")!;
     assert.match(told.text, /^Decision on contract: Use the second shape\./);
@@ -236,6 +236,35 @@ test("a decision made while the worker writes its last message still brings it b
     const told = second.messages.find((message) => message.role === "user")!;
     assert.match(told.text, /^Decision on contract: Use the second shape\. Your change goes ahead/);
     assert.equal(second.messages.filter((message) => message.role === "user").length, 1, "once");
+    assert.equal(second.stage, "review");
+  } finally {
+    await f.cleanup();
+  }
+});
+
+/** The stage each turn's wrap-up shows the board, while MemCode collects what the worker left. */
+function stagesWhileTurnsWrapUp(manager: WorkerManager, task: WorkItem): string[] {
+  const seen: string[] = [];
+  const collect = (manager as any).collectArtifacts.bind(manager);
+  (manager as any).collectArtifacts = async (item: WorkItem, project: unknown) => {
+    if (item.id === task.id && item.run.activity?.phase === "finishing") seen.push(item.stage);
+    return collect(item, project);
+  };
+  return seen;
+}
+
+test("a worker that carries on after a decision stays in working while its turn wraps up", async () => {
+  const f = await fixture(true, slowToEnd);
+  try {
+    const [first, second] = f.tasks;
+    const wrapUps = stagesWhileTurnsWrapUp(f.manager, second);
+    await f.manager.start(first, f.project);
+    await until(() => first.run.state === "finished");
+    await f.manager.start(second, f.project);
+    await until(() => f.state.fleetConflicts[0]?.needs === "decide");
+    await f.manager.decide(f.state.fleetConflicts[0].id, "Use the second shape.", second.id);
+    await until(() => second.messages.some((message) => /^Worker finished/.test(message.text)));
+    assert.deepEqual(wrapUps, ["working", "working"]);
     assert.equal(second.stage, "review");
   } finally {
     await f.cleanup();
