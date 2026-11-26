@@ -189,8 +189,13 @@ export function incompletePublication(value: Json | undefined) {
   );
 }
 
-/** Bind the checkout, its complete file inventory and the native publication boundary. */
-function matchedOwnedPublication(
+/**
+ * Bind the checkout, its complete file inventory and the native publication
+ * boundary. A goal checkout and a project folder both qualify: the engine
+ * publishes a finished index only after its linking pass settles, which can
+ * take longer than the plain verification window.
+ */
+function matchedPublication(
   value: Json,
   project: Project,
   repoId: string,
@@ -199,7 +204,6 @@ function matchedOwnedPublication(
   const boundary = value?._meta?.graph_revision;
   const published = status === "published";
   return (
-    project.analysisCheckout === "owned-worktree-v1" &&
     exactRevisionSource(value, project, repoId) &&
     value.ready === published &&
     value.status === (published ? "complete" : "partial") &&
@@ -370,7 +374,7 @@ export async function waitForIndexPublication(
     expectedSource: string | undefined,
     delay = pollMs;
   let first = true,
-    waitingForOwnedPublication = false;
+    waitingForPublication = false;
   while (now() < deadline) {
     assertActive();
     // Allow the first read the native request budget even if the shorter
@@ -449,10 +453,10 @@ export async function waitForIndexPublication(
     if (
       options.completedJob &&
       !expectedSource &&
-      matchedOwnedPublication(revision, project, repoId, "partial")
+      matchedPublication(revision, project, repoId, "partial")
     ) {
       expectedSource = revision.source_revision;
-      waitingForOwnedPublication = true;
+      waitingForPublication = true;
       deadline = Math.min(
         hardDeadline,
         started + (options.publicationMs ?? 120_000),
@@ -464,8 +468,8 @@ export async function waitForIndexPublication(
         : verifiedIndexRevision;
     if (
       verify(revision, project, repoId) &&
-      (!waitingForOwnedPublication ||
-        matchedOwnedPublication(revision, project, repoId, "published"))
+      (!waitingForPublication ||
+        matchedPublication(revision, project, repoId, "published"))
     )
       return repoId;
     reason =
