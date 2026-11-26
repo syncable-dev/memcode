@@ -15,9 +15,12 @@ export function DeleteProject({
   project,
   sharing,
   hasInbox,
+  last = false,
   onDeleted,
 }: {
   project: Project;
+  /** The only project left: the example comes back, ready to start a new one. */
+  last?: boolean;
   /** Whom else deleting it reaches, which the confirmation names. */
   sharing: ProjectSharing;
   /** Whether an Inbox of its own goes with it. */
@@ -66,6 +69,8 @@ export function DeleteProject({
           <div className="modal-body">
             <p className="delete-explanation">
               {projectDeletionNote(project, sharing, hasInbox)}
+              {last &&
+                " It is your last project, so MemCode shows the example again and helps you start a new one."}
             </p>
             {error && (
               <p role="alert" className="worker-input-error">

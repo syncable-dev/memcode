@@ -38,6 +38,7 @@ import {
   type RuntimeInfo,
   type WorkItem,
   type Artifact,
+  type Project,
 } from "./shared";
 import { isActive, tasksForProject } from "./domain";
 import { NoticeMerges } from "./components/NoticeMerges";
@@ -119,6 +120,15 @@ import {
 } from "./components/Dialogs";
 import { hasTeamPage } from "./team-presentation";
 import { DeleteProject } from "./components/DeleteProject";
+import { StartProject } from "./components/StartProject";
+import {
+  AnalysisMeter,
+  AnalysisPanel,
+  analysisCardLine,
+  isAnalyzing,
+  useNow,
+} from "./components/AnalysisProgress";
+import { isAnalysisFailure } from "./analysis-progress";
 
 type View =
   | "inbox"
@@ -228,9 +238,15 @@ export function App() {
   const [storyStatus, setStoryStatus] = useState<string | undefined>();
   const [storyParent, setStoryParent] = useState<string | undefined>();
   const [dialog, setDialog] = useState<
-    "task" | "project" | "settings" | "search" | "welcome" | null
+    "task" | "project" | "settings" | "search" | "welcome" | "analysis" | null
   >(null);
   const [projectMenu, setProjectMenu] = useState(false);
+  /** Which kind of folder the new-project dialog opens on. */
+  const [projectMode, setProjectMode] = useState<"existing" | "new">("existing");
+  /** Why the last analysis this window asked for could not run, for its panel. */
+  const [analysisMessage, setAnalysisMessage] = useState<string>();
+  /** The person chose to look around the example before starting a project. */
+  const [startDismissed, setStartDismissed] = useState(false);
   const [joinTeamRequest, setJoinTeamRequest] = useState(0);
   const [localSetupProjectId, setLocalSetupProjectId] = useState("");
   const [docsArticle, setDocsArticle] = useState("start");
@@ -256,7 +272,11 @@ export function App() {
       try {
         await action();
       } catch (error) {
-        notify((error as Error).message);
+        // A failed analysis is explained where its steps are, not in a passing message.
+        if (isAnalysisFailure(error)) {
+          setAnalysisMessage((error as Error).message);
+          setDialog("analysis");
+        } else notify((error as Error).message);
       }
     },
     [notify],
@@ -440,6 +460,12 @@ export function App() {
     state.projects.find((p) => p.id === state.activeProjectId) ??
     state.projects[0];
   const guideProgress = projectGuide(state, project.id);
+  // Nothing of their own left: offer to start a project before the example board.
+  const showStart =
+    view === "board" &&
+    !!project.example &&
+    !startDismissed &&
+    !state.projects.some((item) => !item.example);
   const guideProject = project;
   const tasks = tasksForProject(state, project.id);
   const epics = state.epics.filter((epic) => epic.projectId === project.id);
@@ -484,6 +510,7 @@ export function App() {
       setDialog("settings");
       return;
     }
+    setDialog("analysis");
     await window.memcode.analyzeProject(project.id);
   };
   const updateGuide = (patch: OnboardingPatch) => {
@@ -810,8 +837,10 @@ export function App() {
                         </span>
                         {project.id === item.id && <Check size={13} />}
                       </button>
+                      {!(item.example && state.projects.length === 1) && (
                       <DeleteProject
                         project={item}
+                        last={state.projects.length === 1}
                         sharing={projectSharingAsKnown(item, state, sharing.overview)}
                         hasInbox={
                           !!state.inboxLinks?.some((link) => link.projectId === item.id)
@@ -820,8 +849,10 @@ export function App() {
                           setSelectedId(null);
                           setProjectMenu(false);
                           void sharing.refresh();
+                          setStartDismissed(false);
                         }}
                       />
+                      )}
                     </div>
                   ))}
                 </div>
@@ -871,44 +902,15 @@ export function App() {
           ))}
         </nav>
         <div className="sidebar-bottom">
-          <button
-            type="button"
-            className="engine-card"
-            disabled={
-              project.analysis === "connecting" ||
-              project.analysis === "indexing"
-            }
-            onClick={() => {
+          <EngineCard
+            project={project}
+            onOpen={() => {
               if (project.analysis === "ready") setView("insights");
+              else if (isAnalyzing(project) || project.analysis === "error")
+                setDialog("analysis");
               else void act(openCodeAnalysis);
             }}
-          >
-            <span
-              className={`engine-orb ${project.analysis === "ready" ? "connected" : ""}`}
-            >
-              <GitBranch size={15} />
-            </span>
-            <span className="engine-card-label">
-              <strong>Powered by Memtrace</strong>
-              <small>
-                {project.analysis === "ready"
-                  ? "Code context connected"
-                  : project.analysis === "error"
-                    ? "Retry code analysis"
-                    : project.analysis === "connecting" ||
-                        project.analysis === "indexing"
-                      ? "Analyzing code…"
-                      : project.example
-                        ? "Your code. Understood."
-                        : "Connect your code context"}
-              </small>
-            </span>
-            {project.analysis === "ready" ? (
-              <span className="live-dot" />
-            ) : (
-              <ArrowUpRight size={13} />
-            )}
-          </button>
+          />
           <div className="sidebar-footer">
             <button onClick={() => setDialog("settings")}>
               <Settings2 size={15} />
@@ -1033,7 +1035,17 @@ export function App() {
               }}
             />
           )}
+          {showStart && (
+            <StartProject
+              start={(mode) => {
+                setProjectMode(mode);
+                setDialog("project");
+              }}
+              explore={() => setStartDismissed(true)}
+            />
+          )}
           {view === "board" &&
+            !showStart &&
             !project.path &&
             isSharedHere(state, project.id) && (
               <div className="share-folder">
@@ -1148,7 +1160,7 @@ export function App() {
               notify={notify}
             />
           )}
-          {view === "board" && (
+          {view === "board" && !showStart && (
             <Workspace
               state={state}
               project={project}
@@ -1471,14 +1483,39 @@ export function App() {
           notify={notify}
         />
       )}
+      {dialog === "analysis" && (
+        <AnalysisPanel
+          project={project}
+          message={analysisMessage}
+          onClose={() => {
+            setDialog(null);
+            setAnalysisMessage(undefined);
+          }}
+          onRetry={() => {
+            setAnalysisMessage(undefined);
+            void window.memcode
+              .analyzeProject(project.id)
+              .catch((error: Error) => setAnalysisMessage(error.message));
+          }}
+          onOpenInsights={() => {
+            setDialog(null);
+            setView("insights");
+          }}
+        />
+      )}
       {dialog === "project" && (
         <NewProjectDialog
+          initialMode={projectMode}
           needsEngine={
             !runtime.memtraceAvailable && betaStatus?.state !== "connected"
           }
-          onClose={() => setDialog(null)}
+          onClose={() => {
+            setDialog(null);
+            setProjectMode("existing");
+          }}
           onCreated={() => {
             setDialog(null);
+            setProjectMode("existing");
             setView("board");
             setSelectedId(null);
           }}
@@ -1589,5 +1626,51 @@ export function App() {
         </div>
       )}
     </div>
+  );
+}
+
+/** The sidebar's Memtrace card: how the code context stands, and how far an analysis is. */
+function EngineCard({ project, onOpen }: { project: Project; onOpen: () => void }) {
+  const running = isAnalyzing(project);
+  const stopped = project.analysis === "error";
+  const now = useNow(running);
+  const percent = project.analysisProgress?.percent;
+  return (
+    <button
+      type="button"
+      className={`engine-card ${running ? "analyzing" : ""} ${stopped ? "stopped" : ""}`}
+      onClick={onOpen}
+      title={running ? "See how far code analysis is" : undefined}
+    >
+      <span
+        className={`engine-orb ${project.analysis === "ready" ? "connected" : ""}`}
+      >
+        <GitBranch size={15} />
+      </span>
+      <span className="engine-card-label">
+        <strong>
+          {running ? "Analyzing code" : stopped ? "Analysis stopped" : "Powered by Memtrace"}
+        </strong>
+        <small>
+          {project.analysis === "ready"
+            ? "Code context connected"
+            : stopped
+              ? "See what happened"
+              : running
+                ? analysisCardLine(project, now)
+                : project.example
+                  ? "Your code. Understood."
+                  : "Connect your code context"}
+        </small>
+      </span>
+      {project.analysis === "ready" ? (
+        <span className="live-dot" />
+      ) : running && percent !== undefined ? (
+        <span className="engine-card-percent">{percent}%</span>
+      ) : (
+        <ArrowUpRight size={13} />
+      )}
+      {running && <AnalysisMeter progress={project.analysisProgress} />}
+    </button>
   );
 }

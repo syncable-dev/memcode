@@ -6,7 +6,15 @@ import {
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import type { Evidence, Project, WorkItem } from "../src/shared";
+import {
+  reportFromEngineLine,
+  reportFromJob,
+  type AnalysisReport,
+} from "../src/analysis-progress";
 import { childEnv, findCommand, now } from "./local";
+
+/** A note for the person, and the step it belongs to when one is known. */
+export type AnalysisUpdate = (note: string, report?: AnalysisReport) => void;
 import {
   resolveMcpWorkspace,
   projectMcpWorkspace,
@@ -100,7 +108,7 @@ export class MemtraceEngine {
   private closing = false;
   private opening = new Map<string, Promise<Client>>();
   private bindingPaths = new Map<string, string>();
-  private connectionProgress = new Map<string, Set<(note: string) => void>>();
+  private connectionProgress = new Map<string, Set<AnalysisUpdate>>();
   private scopes = new Map<string, MemtraceScopeBinding>();
   private bindingGenerations = new Map<string, number>();
   private retiring = new Set<string>();
@@ -398,7 +406,7 @@ export class MemtraceEngine {
   }
   async connect(
     project: Project,
-    update?: (note: string) => void,
+    update?: AnalysisUpdate,
   ): Promise<Client> {
     if (this.closing) throw Error("The Memtrace connection is closing.");
     if (this.retiring.has(project.id))
@@ -680,9 +688,11 @@ export class MemtraceEngine {
         ),
       );
     const reportProgress = (note: string) => {
+      // The engine prints its first index while it starts: follow its steps.
+      const report = reportFromEngineLine(note);
       for (const listener of this.connectionProgress.get(project.id) ?? []) {
         try {
-          listener(note);
+          listener(note, report);
         } catch {
           /* Progress cannot change connection ownership. */
         }
@@ -927,7 +937,7 @@ export class MemtraceEngine {
   }
   async analyze(
     project: Project,
-    update: (note: string) => void,
+    update: AnalysisUpdate,
     force = false,
     previousFailure = project.analysis === "error"
       ? project.analysisNote
@@ -951,7 +961,7 @@ export class MemtraceEngine {
   }
   private async index(
     project: Project,
-    update: (note: string) => void,
+    update: AnalysisUpdate,
     force: boolean,
     retryPublication: boolean,
     signal?: AbortSignal,
@@ -959,7 +969,7 @@ export class MemtraceEngine {
   ): Promise<string> {
     const selectedPath = project.path,
       selectedBranch = project.branch;
-    update("Connecting to the local Memtrace engine…");
+    update("Connecting to the local Memtrace engine…", { step: "starting" });
     await this.connect(project, update);
     signal?.throwIfAborted();
     const result = await this.call(
@@ -1050,7 +1060,9 @@ export class MemtraceEngine {
           wait,
         );
     }
-    update("Reading the project structure and building its code graph…");
+    update("Reading the project structure and building its code graph…", {
+      step: "reading",
+    });
     const queueIndex = () =>
       this.call(
         project,
@@ -1100,7 +1112,10 @@ export class MemtraceEngine {
         project, "check_job_status", { job_id: job.job_id }, signal,
       );
       assertActive();
-      update(`Analyzing code · ${status.stage ?? status.status ?? "working"}`);
+      update(
+        `Analyzing code · ${status.stage ?? status.status ?? "working"}`,
+        reportFromJob(status),
+      );
       if (status.status === "failed") {
         // A later replay can already have certified the same checkout. The
         // original failed job remains available in engine diagnostics.

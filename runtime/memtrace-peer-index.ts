@@ -1,4 +1,5 @@
 import { setTimeout as pause } from "node:timers/promises";
+import { reportFromJob, type AnalysisReport } from "../src/analysis-progress";
 import type { Project } from "../src/shared";
 
 type Json = Record<string, any>;
@@ -334,7 +335,7 @@ export async function waitForIndexPublication(
   client: PeerIndexClient,
   project: Project,
   repoId: string,
-  update: (note: string) => void,
+  update: (note: string, report?: AnalysisReport) => void,
   options: PeerIndexWaitOptions = {},
   initialRevision?: Json,
 ): Promise<string> {
@@ -473,6 +474,7 @@ export async function waitForIndexPublication(
       expectedSource
         ? `Memtrace is finishing the code graph for ${branch}. Work will continue automatically once the source is verified.`
         : `Waiting for Memtrace to verify code context on branch ${branch}…`,
+      { step: "checking" },
     );
     if (now() >= deadline) break;
     await sleep(Math.min(delay, Math.max(0, deadline - now())));
@@ -494,7 +496,7 @@ export async function waitForPeerIndex(
   project: Project,
   response: Json,
   existingRepoId: string | undefined,
-  update: (note: string) => void,
+  update: (note: string, report?: AnalysisReport) => void,
   options: PeerIndexWaitOptions = {},
 ): Promise<string> {
   const now = options.now ?? Date.now,
@@ -693,6 +695,7 @@ export async function waitForPeerIndex(
       backgroundObserved
         ? "Waiting for Memtrace startup to publish verified code context…"
         : "Memtrace reported an index owner; checking for this checkout's active job…",
+      backgroundObserved ? { step: "checking" } : undefined,
     );
     await sleep(Math.min(pollMs, Math.max(0, waitUntil - now())));
   }
@@ -742,6 +745,7 @@ export async function waitForPeerIndex(
         : "";
     update(
       `Following Memtrace job ${followed.id} · ${followed.stage ?? followed.status}${measured}${followed.message ? " · " + String(followed.message).slice(0, 300) : ""}`,
+      reportFromJob(followed),
     );
     if (now() >= deadline) break;
     await sleep(Math.min(pollMs, Math.max(0, deadline - now())));

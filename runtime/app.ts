@@ -23,6 +23,7 @@ import { repoRelativePath } from "./context/source";
 import type { AppState, DshSetupStatus, Epic, Project, WorkItem } from "../src/shared";
 import { maxWorkerSlots } from "../src/worker-slots";
 import { isActive, pendingPrerequisites } from "../src/domain";
+import { nextProgress, progressNote } from "../src/analysis-progress";
 import { LocalStore, exists, findCommand, git, now, within } from "./local";
 import { findDesktopApp, refreshWindowsUserPath } from "./commands";
 import { observePersistence } from "./persistence";
@@ -638,6 +639,7 @@ export async function createRuntime(
       item.analysis === "error" ? item.analysisNote : undefined;
     item.analysis = "connecting";
     item.analysisNote = "Connecting to local Memtrace…";
+    item.analysisProgress = nextProgress(undefined, { step: "starting" }, now());
     await changed();
     try {
       signal.throwIfAborted();
@@ -645,10 +647,12 @@ export async function createRuntime(
       signal.throwIfAborted();
       const repoId = await engine.analyze(
         item,
-        (note) => {
+        (note, report) => {
           if (signal.aborted) return;
           item.analysis = "indexing";
-          item.analysisNote = note;
+          item.analysisNote = report ? progressNote(report) : note;
+          if (report)
+            item.analysisProgress = nextProgress(item.analysisProgress, report, now());
           void changed();
         },
         false,
@@ -659,11 +663,14 @@ export async function createRuntime(
       item.repoId = repoId;
       item.analysis = "ready";
       item.analysisNote = "Project code context is connected.";
+      delete item.analysisProgress;
       await changed();
     } catch (error) {
       signal.throwIfAborted();
       item.analysis = "error";
       item.analysisNote = (error as Error).message;
+      if (item.analysisProgress)
+        item.analysisProgress = { ...item.analysisProgress, stoppedAt: now() };
       await changed();
       throw error;
     }
@@ -781,6 +788,7 @@ export async function createRuntime(
           item.repoId = undefined;
           item.analysisNote =
             "The engine account changed. Refresh local code context.";
+          delete item.analysisProgress;
         }
       betaNeedsAnalysis = true;
       await changed();
@@ -1991,6 +1999,7 @@ export async function createRuntime(
     item.analysis = "ready";
     item.analysisNote =
       "Memtrace verified the current source and graph for this checkout.";
+    delete item.analysisProgress;
     await changed();
   });
   registerAppUpdates(register, appUpdateGate, changed, () =>

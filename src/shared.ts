@@ -367,6 +367,8 @@ export interface Project {
   repoId?: string;
   analysis: "idle" | "connecting" | "indexing" | "ready" | "error";
   analysisNote?: string;
+  /** How far the analysis under way is, or where it stopped. Gone once it is ready. */
+  analysisProgress?: import("./analysis-progress").AnalysisProgress;
   createdAt: string;
   example?: boolean;
 }
