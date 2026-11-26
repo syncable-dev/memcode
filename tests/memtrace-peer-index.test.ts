@@ -1258,3 +1258,129 @@ test("matched files alone do not start a worker and cannot renew its publication
   );
   assert.equal(elapsed, 120_000);
 });
+
+// A project folder MemCode analyzes in place, as the engine answers it while
+// its linking pass is still publishing the finished index.
+const pendingProjectPublication = {
+  _meta: {
+    graph_revision: {
+      publication_unchanged_during_call: false,
+      status: "partial",
+      token: "project-publication",
+    },
+  },
+  ambiguous_indexed_files: false,
+  branch: "main",
+  default_branch_matches: true,
+  default_query_branch: "main",
+  indexed_file_count: 1,
+  indexing_revision: "project-indexing-revision",
+  mismatched_files: 0,
+  mismatched_paths: [],
+  publication: { status: "partial", token: "project-publication" },
+  ready: false,
+  repo_id: "fixture",
+  requested_revision_matches: true,
+  requested_source_matches: true,
+  retry_query_group: false,
+  source_commit: "project-commit",
+  source_file_count: 1,
+  source_revision: "project-source-revision",
+  source_unchanged_during_observation: true,
+  status: "partial",
+  token: "project-query-token",
+  worktree: project.path,
+};
+const publishedProject = {
+  ...pendingProjectPublication,
+  _meta: {
+    graph_revision: {
+      publication_unchanged_during_call: true,
+      status: "published",
+      token: "project-publication",
+    },
+  },
+  publication: { status: "published", token: "project-publication" },
+  ready: true,
+  status: "complete",
+};
+
+test("a completed project index waits past 30 seconds while the engine still publishes the same source", async () => {
+  let elapsed = 0;
+  assert.equal(
+    await waitForIndexPublication(
+      {
+        call: async (_project, _name, args) => {
+          if (elapsed > 0)
+            assert.equal(
+              args.expected_source_revision,
+              pendingProjectPublication.source_revision,
+            );
+          return elapsed < 45_000 ? pendingProjectPublication : publishedProject;
+        },
+      },
+      project,
+      "fixture",
+      () => {},
+      {
+        completedJob: true,
+        now: () => elapsed,
+        sleep: async (ms) => {
+          elapsed += ms;
+        },
+      },
+    ),
+    "fixture",
+  );
+  assert.ok(elapsed >= 45_000 && elapsed < 50_000);
+});
+
+test("a project publication that never finishes is still bounded and can be retried", async () => {
+  let elapsed = 0;
+  await assert.rejects(
+    waitForIndexPublication(
+      { call: async () => pendingProjectPublication },
+      project,
+      "fixture",
+      () => {},
+      {
+        completedJob: true,
+        now: () => elapsed,
+        sleep: async (ms) => {
+          elapsed += ms;
+        },
+      },
+    ),
+    /still verifying the graph for main after an index write\. Retry/,
+  );
+  assert.equal(elapsed, 120_000);
+});
+
+test("a project's partial graph with unmatched or failed files does not extend the wait", async () => {
+  for (const change of [
+    { reason: "unrecognized" },
+    { mismatched_files: 1 },
+    { indexed_file_count: 0 },
+    { error: "failed" },
+    { checkout_mode: "owned-worktree-v1", graph_scope: "owned_worktree_graph" },
+    { publication: { status: "partial", token: "different" } },
+  ]) {
+    let elapsed = 0;
+    await assert.rejects(
+      waitForIndexPublication(
+        { call: async () => ({ ...pendingProjectPublication, ...change }) },
+        project,
+        "fixture",
+        () => {},
+        {
+          completedJob: true,
+          now: () => elapsed,
+          sleep: async (ms) => {
+            elapsed += ms;
+          },
+        },
+      ),
+    );
+    assert.equal(elapsed, 30_000, JSON.stringify(change));
+  }
+});

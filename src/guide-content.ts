@@ -75,9 +75,9 @@ export const guideArticles: GuideArticle[] = [
     steps: [
       "Open the project selector at the top left and choose Add a project.",
       "For a new idea, pick where it should live, give it a name and say what it’s for. MemCode sets up the folder and an empty board.",
-      "For existing code, pick its folder. Memtrace reads the code so later work has context.",
+      "For existing code, pick its folder. Memtrace reads the code so later work has context. While it reads, the Memtrace card at the bottom left shows the step and the time; choose it to see every step, or why it stopped.",
       "Switch projects from the same selector. Each project keeps its own goals, tasks and results.",
-      "To remove a project you no longer need, point at it in the selector and choose the bin. Its folder stays on your computer.",
+      "To remove a project you no longer need, point at it in the selector and choose the bin. Its folder stays on your computer. Delete the last one and MemCode shows the example again, with a way to start your next project.",
       "Under each project's name, the selector shows its GitHub repository, or its folder when it has none.",
     ],
     note: "Adding or deleting a project never changes your files. Work you haven’t saved to Git stays as it is.",

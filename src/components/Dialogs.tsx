@@ -519,13 +519,16 @@ export function NewProjectDialog({
   onCreated,
   notify,
   needsEngine = false,
+  initialMode = "existing",
 }: {
   onClose: () => void;
   onCreated: () => void;
   notify: (s: string) => void;
   needsEngine?: boolean;
+  /** Open on a folder that exists, or on a new one. */
+  initialMode?: "existing" | "new";
 }) {
-  const [mode, setMode] = useState<"existing" | "new">("existing");
+  const [mode, setMode] = useState<"existing" | "new">(initialMode);
   const [parent, setParent] = useState("");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
