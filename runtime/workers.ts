@@ -1415,7 +1415,6 @@ export class WorkerManager {
               : "finished";
           task.run.exitCode = code ?? undefined;
           task.run.finishedAt = now();
-          task.stage = "review";
           if (error || (!stopped && code !== 0))
             task.run.error =
               error?.message || stderr || `Harness exited with code ${code}`;
@@ -1462,7 +1461,9 @@ export class WorkerManager {
               ? this.outcomeFor(task, owed.settled)
               : freedInstruction(owed.freed);
           if (waits || carriesOn) task.run.state = "blocked";
-          if (paused || waits || carriesOn) task.stage = "working";
+          // Only now is it known whether the worker is done: one that carries on never
+          // shows in review, where Linear and teammates would see it too.
+          task.stage = paused || waits || carriesOn ? "working" : "review";
           if (
             task.run.state === "failed" ||
             task.run.state === "blocked" ||

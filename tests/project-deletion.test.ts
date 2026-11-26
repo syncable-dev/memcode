@@ -233,16 +233,31 @@ test("when its team can't be left, the project is not deleted and says why", asy
   assert.ok(w.state.projects.some((item) => item.id === WEBSITE));
 });
 
-test("the last project is not deleted", async () => {
+test("deleting the last project brings the example back, ready to start a new one", async () => {
   const w = workspace();
   await w.deleteProject("example");
+  await w.deleteProject(WEBSITE);
+  assert.deepEqual(
+    w.state.projects.map((item) => item.id),
+    ["example"],
+  );
+  assert.equal(w.state.activeProjectId, "example");
+  assert.ok(w.state.tasks.length > 0);
+  assert.ok(
+    w.state.tasks.every((task) => task.projectId === "example" && task.example),
+  );
+});
+
+test("the example alone is not deleted", async () => {
+  const w = workspace();
+  await w.deleteProject(WEBSITE);
   await assert.rejects(
-    () => w.deleteProject(WEBSITE),
-    /Add another project before deleting the last one\./,
+    () => w.deleteProject("example"),
+    /The example stays until you add a project of your own\./,
   );
   assert.deepEqual(
     w.state.projects.map((item) => item.id),
-    [WEBSITE],
+    ["example"],
   );
 });
 

@@ -10,6 +10,7 @@ import {
   type DeletionResult,
 } from "../src/deletion";
 import { ensureTaskEpic } from "./epic-workspace";
+import { initialState } from "../src/seed";
 
 type Register = (
   name: string,
@@ -228,7 +229,9 @@ export interface ProjectDeletionSharing {
  * Removes a project from MemCode on this computer: its board and everything kept
  * for it. Its folder, its code and the files workers made stay on disk. A shared
  * project is taken off the sharing service first (deleted for everyone by its
- * owner, left by anyone else), and a Team Sync project leaves its team.
+ * owner, left by anyone else), and a Team Sync project leaves its team. When it
+ * was the last project, the example comes back, as on a first start, and the app
+ * offers to start a new one.
  */
 export async function deleteProject(
   state: AppState,
@@ -237,8 +240,8 @@ export async function deleteProject(
 ): Promise<DeletionResult> {
   const project = state.projects.find((item) => item.id === id);
   if (!project) throw Error("Project not found.");
-  if (state.projects.length === 1)
-    throw Error("Add another project before deleting the last one.");
+  if (project.example && state.projects.length === 1)
+    throw Error("The example stays until you add a project of your own.");
   const tasks = state.tasks.filter((task) => task.projectId === id);
   if (tasks.some(isActive))
     throw Error(`Stop the workers running in ${project.name} before deleting it.`);
@@ -251,8 +254,23 @@ export async function deleteProject(
   if (state.sharedProjectLinks?.some(isOfThis) || state.inboxLinks?.some(isOfThis))
     await sharing.removeSharing?.(id);
   removeStories(state, new Set(tasks.map((task) => task.id)));
+  if (state.projects.length === 1) restoreExample(state);
   removeProjectRecords(state, id);
   return { deletedIds: [id], reassignedStoryIds: [] };
+}
+
+/** The example project and its sample tasks, as a first start has them. */
+function restoreExample(state: AppState): void {
+  const fresh = initialState();
+  const example = fresh.projects.find((item) => item.example)!;
+  if (state.projects.some((item) => item.id === example.id)) return;
+  state.projects.push(example);
+  const kept = new Set(state.tasks.map((task) => task.id));
+  state.tasks.push(
+    ...fresh.tasks.filter(
+      (task) => task.projectId === example.id && !kept.has(task.id),
+    ),
+  );
 }
 
 /** Everything the workspace keeps for a project other than its tasks. */
